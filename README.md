@@ -220,7 +220,7 @@ deployment detail.
 ## Acknowledgments
 
 Developed as part of the **InfiniTech** prosthetic hand capstone project at
-**METU (Middle East Technical University)**, EE/Mechatronics, 2026.
+**METU (Middle East Technical University)**, Electrical - Electronics Engineering, 2026.
 
 ## License
 
