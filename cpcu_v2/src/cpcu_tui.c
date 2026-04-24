@@ -3,11 +3,12 @@
  *  @brief      Terminal User Interface — multi-page live system monitor.
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    3.2-linetrace (build marker: LTRACE-APR23)
+ *  @version    3.3-dataset (build marker: DSET-APR24)
+ *  @version    3.2-linetrace
  *  @version    3.1
  *
- *  @details    Reads /dev/shm/cpcu_ipc (read-only) and displays a real-time
- *              dashboard with 4 switchable pages:
+ *  @details    Reads /dev/shm/cpcu_ipc (read-only on pages 1-6) and displays
+ *              a real-time dashboard with 7 switchable pages:
  *
  *              Page 1 (Overview)   :  System state, radio, EMG bars, servos,
  *                                     battery, DSP summary, ML classification.
@@ -15,18 +16,38 @@
  *                                     retry distribution, raw packet dump.
  *              Page 3 (DSP/AI)     :  DSP pipeline, gesture classification,
  *                                     per-class confidence, filtered RMS, servos.
- *              Page 4 (Waveforms)  :  Live 8-channel Unicode waveform plots,
+ *              Page 4 (Waveforms)  :  Live 8-channel line-trace plots,
  *                                     per-channel Vpp/DC, detail view with TAB.
+ *              Page 5 (Config)     :  Static compile-time + hardware spec sheet.
+ *              Page 6 (Health)     :  10-row traffic-light rollup.
+ *              Page 7 (Dataset)    :  v2.1 — capture 8-channel CSV recordings
+ *                                     labelled by gesture. LEFT/RIGHT cycles
+ *                                     the label, s/SPACE starts/stops, r
+ *                                     cancels (deletes partial), t toggles
+ *                                     RAW ADC ↔ FILTERED output. Works fully
+ *                                     in --demo mode against synthetic data.
  *
  *              Supports --demo mode with synthetic data (no hardware needed).
- *              Zero impact on real-time processes (only reads shared memory).
+ *              Pages 1-6 are read-only peek-access; page 7 opens a CSV file
+ *              for writing when capture is armed.
  *              Runs on Core 0 alongside cpcu_kernel or via SSH.
+ *
+ *              v3.3 changes (2026-04):
+ *                  - PAGE_DATASET (page 7): interactive EMG capture UI that
+ *                    produces files byte-compatible with the output of
+ *                    bsau_dataset_collector.py (RAW mode) or matching the
+ *                    voltage-domain output of cpcu_dsp.py (FILTERED mode).
+ *                  - Capture works in --demo mode against synthetic packets
+ *                    (same codec path as real RX) so the DSP/AI team can
+ *                    rehearse the workflow without a BSAU in the loop.
+ *                  - Footer hotkey hint updated to "1-7:pg".
+ *
+ *              v3.2 changes (2026-04):
+ *                  - Line-trace waveform renderer for Page 4 (see §draw_waveform).
  *
  *              v3.1 changes (2026-04):
  *                  - Full-screen dynamic layout — respects getmaxyx() on every
  *                    frame, so pages fill whatever terminal size you give them.
- *                  - Unicode block-character waveforms for Page 4 (8x vertical
- *                    resolution vs the old `/` `\` ASCII).
  *                  - Splash screen on startup (--no-splash to skip).
  *                  - Demo mode now produces 100 ring entries per 10 Hz tick,
  *                    i.e. a true 1 kHz synthetic packet stream, so Page 4
@@ -39,7 +60,7 @@
  *  Run:        ./cpcu_tui                (live, needs cpcu_kernel)
  *              ./cpcu_tui --demo         (synthetic data, no hardware)
  *              ./cpcu_tui --no-splash    (skip splash screen)
- *  Pages:      1 = Overview, 2 = Radio/IO, 3 = DSP/AI, 4 = Waveforms
+ *  Pages:      1=Overview 2=Radio/IO 3=DSP/AI 4=Waves 5=Config 6=Health 7=Dataset
  *  Quit:       press 'q'
  */
 
@@ -52,6 +73,11 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+#include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "cpcu_ipc.h"
 #include "wireless_packet.h"
@@ -120,6 +146,7 @@ typedef enum {
     PAGE_WAVES,
     PAGE_CONFIG,
     PAGE_HEALTH,
+    PAGE_DATASET,
     PAGE_COUNT
 } Page;
 
@@ -130,6 +157,7 @@ static const char *PAGE_TITLES[] = {
     "WAVES",
     "CONFIG",
     "HEALTH",
+    "DATASET",
 };
 
 /*============= GLOBALS ====================================================================*/
@@ -381,6 +409,320 @@ static void demo_tick(IPC_Context *ipc)
         ipc->dsp_export->class_confidence[c] = (c == demo_gesture) ? 0.94f : 0.01f;
     for(int ch = 0; ch < WL_NUM_CHANNELS; ch++)
         ipc->dsp_export->channel_rms[ch] = 0.28f + 0.04f * (ch % 3);
+}
+
+/*============= DATASET CAPTURE (Page 7) ===================================================
+ *
+ *  Interactive 8-channel EMG recorder. Produces one CSV file per capture
+ *  under DATASET_OUT_DIR, auto-incrementing the trailing index so nothing
+ *  ever overwrites:
+ *
+ *      ./datasets/REST_0.csv
+ *      ./datasets/REST_1.csv    (next run, same label)
+ *      ./datasets/H_OPN_0.csv   (different label, index resets)
+ *
+ *  RAW mode      : 8 comma-separated uint16 ADC readings per row,
+ *                  byte-compatible with bsau_dataset_collector.py output.
+ *  FILTERED mode : 8 comma-separated floats (volts) after the same
+ *                  high-pass / low-pass cascade the production DSP uses —
+ *                  see DatasetFilter below. Approximates cpcu_dsp.py for
+ *                  ground-truth comparison without requiring Python to
+ *                  be in the loop.
+ *
+ *  Demo mode: the ring is fed by demo_push_packet() at ~1 kHz with
+ *  synthetic packets that have already round-tripped WL_Pack/WL_Unpack,
+ *  so the capture path is indistinguishable from the real RX path.
+ *  This lets the whole workflow be rehearsed without a BSAU attached.
+ *
+ *  Reads from the sensor ring WITHOUT advancing sensor_tail (peek-only,
+ *  same discipline as Page 4) — so page 7 never steals entries from the
+ *  real consumer (cpcu_dsp.py) when running live.
+ *===========================================================================================*/
+
+#define DATASET_OUT_DIR     "./datasets"
+#define DATASET_LABEL_COUNT 10
+#define DATASET_PATH_MAX    256
+#define DATASET_LINE_MAX    192     /* 8 cols * ~20 chars + commas + CRLF */
+
+typedef enum {
+    DS_IDLE = 0,        /* Waiting for user to pick a label and press s */
+    DS_COLLECTING,      /* Writing to ds_file; counters tick up */
+    DS_SAVED,           /* Transient (~2 s) 'SAVED' banner after stop */
+    DS_CANCELLED,       /* Transient 'CANCELLED' banner after r */
+} DatasetState;
+
+typedef enum {
+    DS_MODE_FILTERED = 0,
+    DS_MODE_RAW,
+} DatasetMode;
+
+/*----- One-pole IIR cascade. Crude but cheap alternative to scipy sosfilt.
+ *      HP at 20 Hz (DC removal)  +  LP at 450 Hz (band limit).  Applied
+ *      per channel in filtered mode; state lives in DatasetFilter. ------*/
+typedef struct {
+    double hp_prev_x;       /* Input memory for high-pass         */
+    double hp_prev_y;       /* Output memory for high-pass        */
+    double lp_prev_y;       /* Output memory for low-pass         */
+} DatasetFilter;
+
+/* alpha values for Fs=2000 Hz; see design note at filter apply site. */
+#define DS_HP_ALPHA         0.9409      /* ~20 Hz HP   */
+#define DS_LP_ALPHA         0.7520      /* ~450 Hz LP  */
+
+static DatasetState ds_state        =   DS_IDLE;
+static DatasetMode  ds_mode         =   DS_MODE_FILTERED;
+static int          ds_label_idx    =   0;
+static FILE        *ds_file         =   NULL;
+static char         ds_path[DATASET_PATH_MAX] = {0};
+static uint32_t     ds_samples      =   0;
+static uint32_t     ds_gaps         =   0;
+static uint32_t     ds_missed       =   0;
+static uint32_t     ds_last_head    =   0;
+static uint64_t     ds_start_ms     =   0;
+static uint64_t     ds_msg_until    =   0;
+static uint8_t      ds_prev_seq     =   0;
+static bool         ds_seq_seeded   =   false;
+static DatasetFilter ds_filter[WL_NUM_CHANNELS];
+
+/**
+ *  Sanitise a label to a filesystem-safe stem. Must match the mapping in
+ *  bsau_dataset_collector.py's sanitize_label() so that a BSAU-side UART
+ *  capture and a CPCU-side radio capture land on filenames that share
+ *  the same stem.
+ */
+static void ds_sanitize(const char *in, char *out, size_t outsz)
+{
+    size_t j = 0;
+    for(size_t i = 0; in[i] && j + 4 < outsz; i++)
+    {
+        char c = in[i];
+        if(c == '.')            { if(j + 1 < outsz) out[j++] = '_'; }
+        else if(c == '<')       { if(j + 3 < outsz) { out[j++]='_'; out[j++]='L'; out[j++]='T'; } }
+        else if(c == '>')       { if(j + 3 < outsz) { out[j++]='_'; out[j++]='G'; out[j++]='T'; } }
+        else if(c == '=')       { if(j + 3 < outsz) { out[j++]='_'; out[j++]='E'; out[j++]='Q'; } }
+        else if(isalnum((unsigned char)c) || c == '_' || c == '-')
+                                { out[j++] = c; }
+        /* else: drop character */
+    }
+    if(j == 0)
+    {
+        const char *fallback = "unlabeled";
+        for(size_t k = 0; fallback[k] && j + 1 < outsz; k++) out[j++] = fallback[k];
+    }
+    out[j] = '\0';
+}
+
+/**
+ *  Scan DATASET_OUT_DIR for files matching "{stem}_N.csv", return max N + 1.
+ *  Returns 0 if the directory doesn't exist or contains no matching files.
+ */
+static int ds_next_index(const char *out_dir, const char *stem)
+{
+    DIR *d = opendir(out_dir);
+    if(!d) return 0;
+
+    size_t stem_len = strlen(stem);
+    int max_n = -1;
+    struct dirent *ent;
+    while((ent = readdir(d)) != NULL)
+    {
+        const char *name = ent->d_name;
+        if(strncmp(name, stem, stem_len) != 0) continue;
+        if(name[stem_len] != '_') continue;
+
+        /* Expect "N.csv" after the underscore. */
+        const char *nstr = name + stem_len + 1;
+        char *endp = NULL;
+        long n = strtol(nstr, &endp, 10);
+        if(endp == nstr) continue;
+        if(strcmp(endp, ".csv") != 0) continue;
+        if(n > max_n) max_n = (int)n;
+    }
+    closedir(d);
+    return max_n + 1;
+}
+
+/**
+ *  Arm capture. Builds the next free filename, opens the file, zeroes
+ *  counters, seeds filter state. Returns 0 on success, -1 on open failure.
+ */
+static int ds_start_capture(IPC_Context *ipc)
+{
+    char stem[32];
+    ds_sanitize(CLS_NAMES[ds_label_idx], stem, sizeof(stem));
+
+    /* Create output directory if missing. mkdir() returns -1/EEXIST if
+     * it already exists, which is fine. */
+    if(mkdir(DATASET_OUT_DIR, 0755) != 0 && errno != EEXIST)
+    {
+        /* Directory creation failed for some other reason — caller will
+         * see the open() failure below, which is enough signal. */
+    }
+
+    int idx = ds_next_index(DATASET_OUT_DIR, stem);
+    snprintf(ds_path, sizeof(ds_path), "%s/%s_%d.csv",
+             DATASET_OUT_DIR, stem, idx);
+
+    ds_file = fopen(ds_path, "w");
+    if(!ds_file)
+    {
+        ds_path[0] = '\0';
+        return -1;
+    }
+
+    /* Line-buffer so tail -f works while capturing. */
+    setvbuf(ds_file, NULL, _IOLBF, 0);
+
+    ds_samples      = 0;
+    ds_gaps         = 0;
+    ds_missed       = 0;
+    ds_seq_seeded   = false;
+    ds_start_ms     = now_ms_wall();
+
+    /* Start draining from the current ring head so we don't replay old entries. */
+    ds_last_head    = atomic_load(&ipc->ctrl->sensor_head);
+
+    memset(ds_filter, 0, sizeof(ds_filter));
+
+    ds_state = DS_COLLECTING;
+    return 0;
+}
+
+/**
+ *  Stop capture. `save = true`  → close file, report SAVED banner.
+ *                `save = false` → close file, unlink the partial, CANCELLED banner.
+ */
+static void ds_stop_capture(bool save)
+{
+    if(ds_file)
+    {
+        fflush(ds_file);
+        fclose(ds_file);
+        ds_file = NULL;
+    }
+
+    if(!save && ds_path[0])
+    {
+        /* Throw away the partial file. remove() is best-effort; if it
+         * fails the user can delete it manually — we don't surface the
+         * error in the UI because the banner is already transient. */
+        (void)remove(ds_path);
+    }
+
+    ds_state     = save ? DS_SAVED : DS_CANCELLED;
+    ds_msg_until = now_ms_wall() + 2000;    /* banner visible for 2 s */
+}
+
+/**
+ *  Apply the HP+LP cascade to one sample on one channel. The alphas are
+ *  tuned for Fs = 2000 Hz, cut-offs ~20 Hz (HP) and ~450 Hz (LP), which
+ *  approximates the scipy 4th-order Butterworth 20-450 Hz bandpass used
+ *  in cpcu_dsp.py. A true SOS cascade would match better, but this is
+ *  good enough for offline CSV inspection — and a drop-in replacement if
+ *  anyone wants to paste real biquad coefficients in later.
+ */
+static double ds_filter_step(DatasetFilter *f, double x)
+{
+    /* High-pass: y[n] = alpha * (y[n-1] + x[n] - x[n-1]) */
+    double y_hp = DS_HP_ALPHA * (f->hp_prev_y + x - f->hp_prev_x);
+    f->hp_prev_x = x;
+    f->hp_prev_y = y_hp;
+
+    /* Low-pass: y[n] = alpha * y[n-1] + (1-alpha) * x[n] */
+    double y_lp = DS_LP_ALPHA * f->lp_prev_y + (1.0 - DS_LP_ALPHA) * y_hp;
+    f->lp_prev_y = y_lp;
+
+    return y_lp;
+}
+
+/**
+ *  Walk the ring from ds_last_head to the current head, writing each
+ *  sample-pair to the CSV file. Safe to call while not collecting (it's
+ *  a no-op). Never advances sensor_tail — that's cpcu_dsp.py's job.
+ */
+static void ds_drain_ring_to_file(IPC_Context *ipc)
+{
+    if(ds_state != DS_COLLECTING || !ds_file) return;
+
+    uint32_t head = atomic_load(&ipc->ctrl->sensor_head);
+    uint32_t new_entries = head - ds_last_head;
+
+    if(new_entries == 0) return;
+
+    /* If the producer lapped us, we lost ring-capacity worth of entries. */
+    if(new_entries > IPC_SENSOR_RING_SIZE)
+    {
+        ds_missed   += new_entries - IPC_SENSOR_RING_SIZE;
+        new_entries  = IPC_SENSOR_RING_SIZE;
+        /* Skip ahead so subsequent iterations see the freshest entries. */
+        ds_last_head = head - IPC_SENSOR_RING_SIZE;
+    }
+
+    char line[DATASET_LINE_MAX];
+
+    for(uint32_t i = 0; i < new_entries; i++)
+    {
+        uint32_t idx = (ds_last_head + i) & IPC_SENSOR_RING_MASK;
+        IPC_SensorEntry *e = &ipc->ring[idx];
+
+        /* Track sequence jumps. Each CPCU ring entry corresponds to one
+         * BSAU packet; seq increments by 1 per packet (mod 256). */
+        if(ds_seq_seeded)
+        {
+            uint8_t expected = (uint8_t)(ds_prev_seq + 1);
+            if(e->seq != expected)
+            {
+                /* Forward gap count, wrap-safe. */
+                uint8_t delta = (uint8_t)(e->seq - expected);
+                ds_gaps += delta;
+            }
+        }
+        ds_prev_seq   = e->seq;
+        ds_seq_seeded = true;
+
+        for(int s = 0; s < WL_SAMPLES_PER_PACKET; s++)
+        {
+            int n = 0;
+            if(ds_mode == DS_MODE_RAW)
+            {
+                /* Raw 12-bit ADC, unsigned. Byte-compatible with BSAU UART
+                 * collector output. */
+                n = snprintf(line, sizeof(line),
+                             "%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                             (unsigned)e->samples[s].ch[0],
+                             (unsigned)e->samples[s].ch[1],
+                             (unsigned)e->samples[s].ch[2],
+                             (unsigned)e->samples[s].ch[3],
+                             (unsigned)e->samples[s].ch[4],
+                             (unsigned)e->samples[s].ch[5],
+                             (unsigned)e->samples[s].ch[6],
+                             (unsigned)e->samples[s].ch[7]);
+            }
+            else
+            {
+                /* Filtered volts. Convert raw ADC -> centered voltage,
+                 * then cascade HP+LP per channel. */
+                double v[WL_NUM_CHANNELS];
+                for(int ch = 0; ch < WL_NUM_CHANNELS; ch++)
+                {
+                    double raw   = (double)e->samples[s].ch[ch];
+                    double volts = raw * 3.3 / 4095.0 - 1.65;
+                    v[ch]        = ds_filter_step(&ds_filter[ch], volts);
+                }
+                n = snprintf(line, sizeof(line),
+                             "%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f\r\n",
+                             v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+            }
+
+            if(n > 0 && (size_t)n < sizeof(line))
+            {
+                if(fwrite(line, 1, (size_t)n, ds_file) == (size_t)n)
+                    ds_samples++;
+            }
+        }
+    }
+
+    ds_last_head = head;
 }
 
 /*============= WAVEFORM BUFFER (Page 4) ===================================================*/
@@ -1881,6 +2223,216 @@ static void draw_page_health(int r, IPC_Context *ipc,
     attroff(COLOR_PAIR(CP_DIM) | A_DIM);
 }
 
+/*============= DRAW: Page 7 — Dataset Capture =============================================*/
+
+static void draw_page_dataset(int r, IPC_Context *ipc)
+{
+    /* Drain is done once per tick in the main loop, not here — so that
+     * captures keep advancing even when the user flips to another page. */
+
+    /* Expire the transient SAVED / CANCELLED banner after its TTL. */
+    if((ds_state == DS_SAVED || ds_state == DS_CANCELLED) &&
+       now_ms_wall() > ds_msg_until)
+    {
+        ds_state = DS_IDLE;
+    }
+
+    /*---- Header row: state | label | mode ------------------------------*/
+    const char *state_tag;
+    int         state_cp;
+    switch(ds_state)
+    {
+        case DS_COLLECTING: state_tag = "* COLLECTING"; state_cp = CP_BAD;  break;
+        case DS_SAVED:      state_tag = "v SAVED";      state_cp = CP_GOOD; break;
+        case DS_CANCELLED:  state_tag = "x CANCELLED";  state_cp = CP_WARN; break;
+        case DS_IDLE:
+        default:            state_tag = "IDLE";         state_cp = CP_DIM;  break;
+    }
+
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(r, 1, "State:");
+    attroff(COLOR_PAIR(CP_DIM));
+    attron(COLOR_PAIR(state_cp) | A_BOLD);
+    mvprintw(r, 8, "%-14s", state_tag);
+    attroff(COLOR_PAIR(state_cp) | A_BOLD);
+
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(r, 26, "Label:");
+    attroff(COLOR_PAIR(CP_DIM));
+    attron(COLOR_PAIR(CP_CYAN) | A_BOLD);
+    mvprintw(r, 33, "[%d] %-8s", ds_label_idx, CLS_NAMES[ds_label_idx]);
+    attroff(COLOR_PAIR(CP_CYAN) | A_BOLD);
+
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(r, 51, "Mode:");
+    attroff(COLOR_PAIR(CP_DIM));
+    attron(A_BOLD);
+    mvprintw(r, 57, "%s", ds_mode == DS_MODE_FILTERED ? "FILTERED" : "RAW");
+    attroff(A_BOLD);
+    r++;
+
+    /*---- Stats row: samples, elapsed, gaps, missed ---------------------*/
+    uint64_t elapsed_ms = 0;
+    if(ds_state == DS_COLLECTING)
+        elapsed_ms = now_ms_wall() - ds_start_ms;
+    else if(ds_state == DS_SAVED || ds_state == DS_CANCELLED)
+        /* Freeze the displayed elapsed when transient — feels right. */
+        elapsed_ms = (ds_msg_until > ds_start_ms + 2000)
+                   ? (ds_msg_until - ds_start_ms - 2000)
+                   : 0;
+
+    double elapsed_s = elapsed_ms / 1000.0;
+
+    attron(COLOR_PAIR(CP_DIM)); mvprintw(r, 1,  "Samples:"); attroff(COLOR_PAIR(CP_DIM));
+    attron(A_BOLD);             mvprintw(r, 10, "%-10u", ds_samples); attroff(A_BOLD);
+
+    attron(COLOR_PAIR(CP_DIM)); mvprintw(r, 22, "Elapsed:"); attroff(COLOR_PAIR(CP_DIM));
+    attron(A_BOLD);             mvprintw(r, 31, "%7.3fs", elapsed_s); attroff(A_BOLD);
+
+    attron(COLOR_PAIR(CP_DIM)); mvprintw(r, 43, "Gaps:"); attroff(COLOR_PAIR(CP_DIM));
+    {
+        int cp = ds_gaps > 0 ? CP_WARN : CP_GOOD;
+        attron(COLOR_PAIR(cp) | A_BOLD);
+        mvprintw(r, 49, "%-6u", ds_gaps);
+        attroff(COLOR_PAIR(cp) | A_BOLD);
+    }
+
+    attron(COLOR_PAIR(CP_DIM)); mvprintw(r, 58, "Missed:"); attroff(COLOR_PAIR(CP_DIM));
+    {
+        int cp = ds_missed > 0 ? CP_BAD : CP_GOOD;
+        attron(COLOR_PAIR(cp) | A_BOLD);
+        mvprintw(r, 66, "%u", ds_missed);
+        attroff(COLOR_PAIR(cp) | A_BOLD);
+    }
+    r++;
+
+    /*---- Paths ---------------------------------------------------------*/
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(r, 1, "Out dir:  %s/", DATASET_OUT_DIR);
+    attroff(COLOR_PAIR(CP_DIM));
+    r++;
+
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(r, 1, "File:     ");
+    attroff(COLOR_PAIR(CP_DIM));
+    if(ds_path[0])
+    {
+        int cp = ds_state == DS_CANCELLED ? CP_WARN
+               : ds_state == DS_COLLECTING ? CP_CYAN
+               : CP_GOOD;
+        attron(COLOR_PAIR(cp));
+        printw("%s", ds_path);
+        attroff(COLOR_PAIR(cp));
+    }
+    else
+    {
+        attron(COLOR_PAIR(CP_DIM) | A_DIM);
+        printw("(none yet)");
+        attroff(COLOR_PAIR(CP_DIM) | A_DIM);
+    }
+    r++;
+
+    /*---- Demo banner ---------------------------------------------------*/
+    if(demo_mode)
+    {
+        attron(COLOR_PAIR(CP_CYAN) | A_DIM);
+        mvprintw(r, 1,
+                 "Demo mode: capture writes real CSV from synthetic %s @ %gHz packets.",
+                 demo_wave_label(demo_wave), (double)demo_freq_hz);
+        attroff(COLOR_PAIR(CP_CYAN) | A_DIM);
+        r++;
+    }
+
+    r++;
+    draw_hline(r, 0, g_tui_w);
+    r++;
+
+    /*---- Label strip ---------------------------------------------------*/
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(r, 1,
+             "Labels (LEFT/RIGHT cycle | s,SPACE start/stop | r cancel | t raw<->filt):");
+    attroff(COLOR_PAIR(CP_DIM));
+    r++;
+
+    /* Lay out labels in one row, each padded to 7 cols so they align. */
+    int x = 2;
+    for(int i = 0; i < DATASET_LABEL_COUNT; i++)
+    {
+        if(i == ds_label_idx)
+        {
+            /* Selected: reverse-video. Disable selection change visually
+             * while collecting so the user knows they can't change labels
+             * mid-capture. */
+            int cp = (ds_state == DS_COLLECTING) ? CP_BAD : CP_CYAN;
+            attron(COLOR_PAIR(cp) | A_REVERSE | A_BOLD);
+            mvprintw(r, x, " %-7s", CLS_NAMES[i]);
+            attroff(COLOR_PAIR(cp) | A_REVERSE | A_BOLD);
+        }
+        else
+        {
+            attron(COLOR_PAIR(CP_DIM));
+            mvprintw(r, x, " %-7s", CLS_NAMES[i]);
+            attroff(COLOR_PAIR(CP_DIM));
+        }
+        x += 8;   /* 1 space + 7 label chars */
+        if(x + 8 > g_tui_w) { r++; x = 2; }   /* wrap if terminal narrow */
+    }
+    r++;
+
+    r++;
+    draw_hline(r, 0, g_tui_w);
+    r++;
+
+    /*---- Live waveforms ------------------------------------------------*/
+    {
+        char fbuf[64];
+        uint32_t head = atomic_load(&ipc->ctrl->sensor_head);
+        uint8_t  last_flags = (head > 0)
+            ? ipc->ring[(head - 1) & IPC_SENSOR_RING_MASK].flags
+            : 0;
+        wl_flags_decode(last_flags, fbuf, sizeof(fbuf));
+        int severe = (last_flags &
+                      (WL_FLAG_CLIPPING | WL_FLAG_ELEC_OFF | WL_FLAG_ADC_OVRN));
+        int cp = (fbuf[0] == '\0') ? CP_GOOD : (severe ? CP_BAD : CP_WARN);
+
+        attron(COLOR_PAIR(CP_DIM));
+        mvprintw(r, 1, "Live waveforms  (raw ADC, 8 ch, BSAU flags:");
+        attroff(COLOR_PAIR(CP_DIM));
+        attron(COLOR_PAIR(cp) | A_BOLD);
+        printw(" %s", fbuf[0] ? fbuf : "OK");
+        attroff(COLOR_PAIR(cp) | A_BOLD);
+        attron(COLOR_PAIR(CP_DIM));
+        printw(")");
+        attroff(COLOR_PAIR(CP_DIM));
+    }
+    r++;
+
+    int half_w = g_tui_w / 2;
+    int plot_w = half_w - 8;
+    if(plot_w < 16) plot_w = 16;
+    int plot_h = 2;
+
+    /* Stop at g_term_h - 3 to leave room for the footer (separator + line). */
+    int max_r = g_term_h - 3;
+
+    for(int i = 0; i < 4 && r + plot_h + 1 <= max_r; i++)
+    {
+        /* Left column: ch 0..3 */
+        attron(COLOR_PAIR(CP_DIM));
+        mvprintw(r, 1, "ch%d", i);
+        attroff(COLOR_PAIR(CP_DIM));
+        draw_waveform(r, 5, plot_w, plot_h, i, CP_GOOD);
+
+        /* Right column: ch 4..7 */
+        attron(COLOR_PAIR(CP_DIM));
+        mvprintw(r, half_w + 1, "ch%d", i + 4);
+        attroff(COLOR_PAIR(CP_DIM));
+        draw_waveform(r, half_w + 5, plot_w, plot_h, i + 4, CP_CYAN);
+
+        r += plot_h + 1;   /* plot rows + axis */
+    }
+}
+
 /*============= DRAW: Footer ===============================================================*/
 
 static void draw_footer(int r)
@@ -1893,17 +2445,22 @@ static void draw_footer(int r)
         /* Extended footer in demo mode: shows fault-injection + waveform hotkeys */
         if(current_page == PAGE_WAVES)
             mvprintw(r, 1,
-                "1-6:pg UP/DN:ch TAB q:quit | w:wave [/]:freq | F=radio B=batt G=gaps O=ring I=i2c R=reset");
+                "1-7:pg UP/DN:ch TAB q:quit | w:wave [/]:freq | F=radio B=batt G=gaps O=ring I=i2c R=reset");
+        else if(current_page == PAGE_DATASET)
+            mvprintw(r, 1,
+                "1-7:pg q:quit | LEFT/RIGHT:label s,SPACE:start/stop r:cancel t:raw/filt | w:wave [/]:freq");
         else
             mvprintw(r, 1,
-                "1-6:pg q:quit | w:wave [/]:freq | FAULT INJ: F=radio B=batt G=gaps O=ring I=i2c R=reset");
+                "1-7:pg q:quit | w:wave [/]:freq | FAULT INJ: F=radio B=batt G=gaps O=ring I=i2c R=reset");
     }
     else
     {
         if(current_page == PAGE_WAVES)
-            mvprintw(r, 1, "1-6:pages  UP/DN:ch  TAB:detail  q:quit  10 Hz");
+            mvprintw(r, 1, "1-7:pages  UP/DN:ch  TAB:detail  q:quit  10 Hz");
+        else if(current_page == PAGE_DATASET)
+            mvprintw(r, 1, "1-7:pg  LEFT/RIGHT:label  s,SPACE:start/stop  r:cancel  t:raw/filt  q:quit");
         else
-            mvprintw(r, 1, "1-6:pages  q:quit  10 Hz  |  read-only (zero RT impact)");
+            mvprintw(r, 1, "1-7:pages  q:quit  10 Hz  |  read-only (zero RT impact)");
     }
     attroff(COLOR_PAIR(CP_DIM) | A_DIM);
 
@@ -2094,6 +2651,11 @@ int main(int argc, char *argv[])
 
         wave_peek_ring(&ipc);
 
+        /* Drain ring to CSV every tick while capture is armed — independent
+         * of which page is currently being rendered, so a capture started on
+         * page 7 keeps running if the user flips to another page. */
+        ds_drain_ring_to_file(&ipc);
+
         erase();
         int r = draw_header(0);
 
@@ -2117,6 +2679,9 @@ int main(int argc, char *argv[])
             case PAGE_HEALTH:
                 draw_page_health(r, &ipc, pkt_rate, loss_rate);
                 break;
+            case PAGE_DATASET:
+                draw_page_dataset(r, &ipc);
+                break;
             default:
                 break;
         }
@@ -2133,6 +2698,7 @@ int main(int argc, char *argv[])
             case '4': current_page = PAGE_WAVES;    break;
             case '5': current_page = PAGE_CONFIG;   break;
             case '6': current_page = PAGE_HEALTH;   break;
+            case '7': current_page = PAGE_DATASET;  break;
             case KEY_UP:
                 if(current_page == PAGE_WAVES)
                     wave_sel_ch = (wave_sel_ch - 1 + WL_NUM_CHANNELS) % WL_NUM_CHANNELS;
@@ -2141,9 +2707,36 @@ int main(int argc, char *argv[])
                 if(current_page == PAGE_WAVES)
                     wave_sel_ch = (wave_sel_ch + 1) % WL_NUM_CHANNELS;
                 break;
+            case KEY_LEFT:
+                /* Page 7: cycle label (blocked while collecting). */
+                if(current_page == PAGE_DATASET && ds_state != DS_COLLECTING)
+                    ds_label_idx = (ds_label_idx - 1 + DATASET_LABEL_COUNT)
+                                 % DATASET_LABEL_COUNT;
+                break;
+            case KEY_RIGHT:
+                if(current_page == PAGE_DATASET && ds_state != DS_COLLECTING)
+                    ds_label_idx = (ds_label_idx + 1) % DATASET_LABEL_COUNT;
+                break;
             case '\t':
                 if(current_page == PAGE_WAVES)
                     wave_detail = !wave_detail;
+                break;
+
+            /*-- Page 7: dataset capture controls -----------------------*/
+            case 's': case 'S': case ' ':
+                if(current_page == PAGE_DATASET)
+                {
+                    if(ds_state == DS_COLLECTING)
+                        ds_stop_capture(true);
+                    else if(ds_state == DS_IDLE)
+                        (void)ds_start_capture(&ipc);
+                    /* else: transient SAVED/CANCELLED banner active — ignore */
+                }
+                break;
+            case 't': case 'T':
+                if(current_page == PAGE_DATASET && ds_state != DS_COLLECTING)
+                    ds_mode = (ds_mode == DS_MODE_FILTERED)
+                            ? DS_MODE_RAW : DS_MODE_FILTERED;
                 break;
 
             /*-- Fault-injection hotkeys (demo mode only) --*/
@@ -2168,7 +2761,13 @@ int main(int argc, char *argv[])
                 if(demo_mode) demo_fault_mask ^= FAULT_I2C_FAIL;
                 break;
             case 'r': case 'R':
-                if(demo_mode)
+                /* On page 7 while collecting: cancel-and-delete.
+                 * Everywhere else in demo mode: reset fault injections. */
+                if(current_page == PAGE_DATASET && ds_state == DS_COLLECTING)
+                {
+                    ds_stop_capture(false);
+                }
+                else if(demo_mode)
                 {
                     /* Full reset — clear fault injections AND zero out the
                      * accumulated counters so the UI immediately snaps back
@@ -2228,6 +2827,17 @@ int main(int argc, char *argv[])
     }
 
     endwin();
+
+    /* Save anything that was being captured when the user quit — better
+     * than silently dropping the file. A partial file is still useful
+     * if it was running for long enough. */
+    if(ds_state == DS_COLLECTING)
+    {
+        ds_stop_capture(true);
+        printf("[TUI] Auto-saved in-progress capture: %s  (%u samples)\n",
+               ds_path, ds_samples);
+    }
+
     if(!demo_mode) IPC_Close(&ipc);
     printf("[TUI] Exited cleanly.\n");
     return 0;
