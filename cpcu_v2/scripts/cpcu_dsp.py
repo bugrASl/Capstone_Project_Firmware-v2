@@ -8,7 +8,7 @@ servo commands via SeqLock.
 
 Launch: taskset -c 1,2 chrt -f 80 python3 cpcu_dsp.py
 
-Author: bugrASl + Aleyna (ML model)
+Author: bugrASl + Aleyna + Kaan (ML model)
 Date:   April 2026
 
 SMP NOTE: CPython's GIL means only one thread runs Python at a time.
