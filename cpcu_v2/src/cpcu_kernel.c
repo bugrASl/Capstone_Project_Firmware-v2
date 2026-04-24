@@ -1,0 +1,323 @@
+/**
+ *  @file       cpcu_kernel.c
+ *  @brief      Core 0 — Supervisor process
+ *  @author     bugrASl
+ *  @date       April 2026
+ *  @version    2.2
+ *  @details    Responsibilities:
+ *                  1. Create shared memory
+ *                  2. fork+exec cpcu_io on Core 3 (SCHED_FIFO 90)
+ *                  3. fork+exec cpcu_dsp.py on Cores 1-2 (SCHED_FIFO 80)
+ *                  4. Monitor heartbeats, restart dead processes
+ *                  5. Pet /dev/watchdog
+ *                  6. Periodic telemetry
+ *
+ *              v2.2 changes:
+ *                  - Uses cpcu_log LOG_* macros everywhere
+ *                  - --log flag enables per-module CSV file output
+ *                  - The --log flag is transparently forwarded to cpcu_io,
+ *                    so kernel and io write to the same /var/log/cpcu/ tree
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <linux/watchdog.h>
+
+#include "cpcu_ipc.h"
+#include "cpcu_log.h"
+
+/*============= CONFIGURATION ==============================================================*/
+
+#define HB_TIMEOUT_MS           2000            /* Heartbeat stale -> kill + respawn */
+#define WDG_PET_S               5               /* Pet /dev/watchdog every N seconds */
+#define LOG_S                   5               /* Telemetry print every N seconds */
+#define READY_TIMEOUT_S         10              /* Max wait for child ready flag */
+
+/* Paths */
+#define CPCU_IO_BIN             "./cpcu_io"
+#define CPCU_DSP_SCRIPT         "/opt/cpcu/scripts/cpcu_dsp.py"
+#define CPCU_DSP_SCRIPT_ALT     "./cpcu_dsp.py"
+#define PYTHON3_BIN             "/usr/bin/python3"
+
+/*============= TIMING =====================================================================*/
+
+static volatile sig_atomic_t g_run  =   1;
+
+static void on_sig(int s)
+{
+    (void)s; g_run = 0;
+}
+
+static uint64_t now_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL;
+}
+
+/*============= GLOBALS ====================================================================*/
+
+static bool g_forward_log_flag = false;
+
+/*============= PROCESS SPAWNING ===========================================================*/
+/**
+ *  Spawn a C binary with CPU affinity and real-time priority.
+ *  If --log was passed to the kernel, pass it through to the child so
+ *  both cpcu_kernel and cpcu_io write CSV logs in /var/log/cpcu/.
+ */
+
+static pid_t spawn_native(const char *label, const char *bin,
+                           const char *cores, int prio)
+{
+    pid_t pid                       =   fork();
+    if(pid == 0)
+    {
+        char p[8];
+        snprintf(p, sizeof(p), "%d", prio);
+        if(g_forward_log_flag)
+        {
+            execlp("taskset", "taskset", "-c", cores,
+                   "chrt", "-f", p, bin, "--log", NULL);
+        }
+        else
+        {
+            execlp("taskset", "taskset", "-c", cores,
+                   "chrt", "-f", p, bin, NULL);
+        }
+        /* execlp returned -> error */
+        fprintf(stderr, "[KERNEL] exec %s failed: %s\n", label, strerror(errno));
+        _exit(1);
+    }
+
+    if(pid > 0)
+        LOG_I("KERN", "spawned %s pid=%d cores=%s prio=%d", label, pid, cores, prio);
+    else
+        LOG_E("KERN", "fork %s failed: %s", label, strerror(errno));
+
+    return pid;
+}
+
+/**
+ *  Spawn a Python script with CPU affinity and real-time priority.
+ */
+
+static pid_t spawn_python(const char *label, const char *script,
+                           const char *cores, int prio)
+{
+    /* Check if script exists at primary path, fall back to alt */
+    const char *actual_script       =   script;
+    if(access(script, F_OK) != 0)
+    {
+        actual_script               =   CPCU_DSP_SCRIPT_ALT;
+        if(access(actual_script, F_OK) != 0)
+        {
+            LOG_E("KERN", "%s: script not found at %s or %s",
+                  label, script, CPCU_DSP_SCRIPT_ALT);
+            return -1;
+        }
+    }
+
+    pid_t pid                       =   fork();
+    if(pid == 0)
+    {
+        char p[8];
+        snprintf(p, sizeof(p), "%d", prio);
+        execlp("taskset", "taskset", "-c", cores,
+               "chrt", "-f", p,
+               PYTHON3_BIN, actual_script, NULL);
+        fprintf(stderr, "[KERNEL] exec %s failed: %s\n", label, strerror(errno));
+        _exit(1);
+    }
+
+    if(pid > 0)
+        LOG_I("KERN", "spawned %s pid=%d cores=%s prio=%d script=%s",
+              label, pid, cores, prio, actual_script);
+    else
+        LOG_E("KERN", "fork %s failed: %s", label, strerror(errno));
+
+    return pid;
+}
+
+/*============= READY WAIT =================================================================*/
+
+static int wait_ready(const char *label, _Atomic uint8_t *flag, int timeout_s)
+{
+    for(int i = 0; i < timeout_s * 10; i++)
+    {
+        if(atomic_load(flag))
+        {
+            LOG_I("KERN", "%s ready", label);
+            return 1;
+        }
+        usleep(100000);
+    }
+
+    LOG_W("KERN", "%s not ready within %ds", label, timeout_s);
+    return 0;
+}
+
+/*============= MAIN =======================================================================*/
+
+int main(int argc, char *argv[])
+{
+    Log_Init("KERN", LOG_INFO);
+
+    /* Parse CLI */
+    for(int i = 1; i < argc; i++)
+    {
+        if(strcmp(argv[i], "--log") == 0)
+        {
+            g_forward_log_flag = true;
+        }
+        else if(strcmp(argv[i], "--debug") == 0)
+        {
+            Log_SetLevel(LOG_DEBUG);
+        }
+    }
+    if(g_forward_log_flag)
+    {
+        Log_EnableFiles(LOG_DIR_DEFAULT);
+        LOG_I("KERN", "file logging enabled -> %s/log_*.csv", LOG_DIR_DEFAULT);
+    }
+
+    LOG_I("KERN", "=== CPCU Kernel Supervisor (Core 0) v2.2 ===");
+    signal(SIGINT,  on_sig);
+    signal(SIGTERM, on_sig);
+
+    /* Create shared memory */
+    IPC_Context ipc;
+    if(IPC_Create(&ipc) != 0)
+    {
+        LOG_F("KERN", "IPC_Create failed");
+        Log_CloseFiles();
+        return 1;
+    }
+
+    /* Hardware watchdog (systemd usually holds it — EBUSY is non-fatal) */
+    int wdg                         =   open("/dev/watchdog", O_WRONLY);
+    if(wdg >= 0)
+    {
+        int timeout                 =   15;
+        if(ioctl(wdg, WDIOC_SETTIMEOUT, &timeout) < 0)
+        {
+            LOG_W("WDG", "WDIOC_SETTIMEOUT failed: %s", strerror(errno));
+        }
+        LOG_I("WDG", "enabled (%ds timeout)", timeout);
+    }
+    else if(errno == EBUSY)
+    {
+        LOG_I("WDG", "held by another process (likely systemd) — skipping");
+    }
+    else
+    {
+        LOG_I("WDG", "not available (non-fatal): %s", strerror(errno));
+    }
+
+    /* Spawn cpcu_io on Core 3 */
+    pid_t io_pid                    =   spawn_native("cpcu_io", CPCU_IO_BIN, "3", 90);
+    if(io_pid < 0)
+    {
+        IPC_Close(&ipc);
+        IPC_Destroy();
+        Log_CloseFiles();
+        return 1;
+    }
+
+    if(!wait_ready("cpcu_io", &ipc.ctrl->io_ready, READY_TIMEOUT_S))
+    {
+        LOG_F("KERN", "cpcu_io failed to become ready");
+        kill(io_pid, SIGTERM);
+        waitpid(io_pid, NULL, 0);
+        IPC_Close(&ipc);
+        IPC_Destroy();
+        Log_CloseFiles();
+        return 1;
+    }
+
+    /* Spawn cpcu_dsp.py on Cores 1-2 */
+    pid_t dsp_pid                   =   spawn_python("cpcu_dsp", CPCU_DSP_SCRIPT, "1,2", 80);
+    if(dsp_pid > 0)
+        wait_ready("cpcu_dsp", &ipc.ctrl->dsp_ready, READY_TIMEOUT_S);
+
+    LOG_I("KERN", "all processes up. Monitoring...");
+
+    /* Monitoring loop */
+    time_t t_log                    =   time(NULL);
+    time_t t_pet                    =   time(NULL);
+
+    while(g_run)
+    {
+        sleep(1);
+        time_t now                  =   time(NULL);
+
+        /* Check if children died */
+        int st;
+        pid_t dead                  =   waitpid(-1, &st, WNOHANG);
+
+        if(dead == io_pid)
+        {
+            LOG_W("KERN", "cpcu_io died (status=%d) — restarting", st);
+            io_pid                  =   spawn_native("cpcu_io", CPCU_IO_BIN, "3", 90);
+        }
+
+        if(dead == dsp_pid)
+        {
+            LOG_W("KERN", "cpcu_dsp died (status=%d) — restarting", st);
+            dsp_pid                 =   spawn_python("cpcu_dsp", CPCU_DSP_SCRIPT, "1,2", 80);
+        }
+
+        /* Heartbeat check (cpcu_io writes every 100ms) */
+        uint64_t hb                 =   atomic_load(&ipc.ctrl->io_heartbeat_us);
+        if(hb > 0 && (now_us() - hb) / 1000 > HB_TIMEOUT_MS)
+        {
+            LOG_E("KERN", "cpcu_io heartbeat stale (%llu ms) — killing",
+                  (unsigned long long)((now_us() - hb) / 1000));
+            kill(io_pid, SIGKILL);
+            waitpid(io_pid, NULL, 0);
+            io_pid                  =   spawn_native("cpcu_io", CPCU_IO_BIN, "3", 90);
+        }
+
+        /* Telemetry */
+        if(now - t_log >= LOG_S)
+        {
+            t_log                   =   now;
+            LOG_I("KERN",
+                  "state=%u pkts=%u gaps=%u ovf=%u inf=%u maxlat=%u "
+                  "ring=%u io_pid=%d dsp_pid=%d",
+                  atomic_load(&ipc.ctrl->system_state),
+                  atomic_load(&ipc.diag->io_pkts_received),
+                  atomic_load(&ipc.diag->io_seq_gaps),
+                  atomic_load(&ipc.diag->io_ring_overflows),
+                  atomic_load(&ipc.diag->dsp_inferences),
+                  atomic_load(&ipc.diag->dsp_max_latency_us),
+                  IPC_SensorCount(&ipc),
+                  io_pid, dsp_pid);
+        }
+
+        /* Pet watchdog */
+        if(wdg >= 0 && now - t_pet >= WDG_PET_S)
+        {
+            t_pet                   =   now;
+            write(wdg, "V", 1);
+        }
+    }
+
+    /* Shutdown */
+    LOG_I("KERN", "shutting down");
+    if(io_pid > 0)  { kill(io_pid, SIGTERM);    waitpid(io_pid, NULL, 0);   }
+    if(dsp_pid > 0) { kill(dsp_pid, SIGTERM);   waitpid(dsp_pid, NULL, 0);  }
+    IPC_Close(&ipc);
+    IPC_Destroy();
+    if(wdg >= 0) close(wdg);
+    Log_CloseFiles();
+
+    return 0;
+}

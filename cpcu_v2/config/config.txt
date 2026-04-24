@@ -1,0 +1,33 @@
+#
+#   config.txt — Raspberry Pi 5 Hardware Configuration for CPCU
+#   Author: bugrASl
+#   Date:   April 2026
+#
+#   INSTRUCTIONS:
+#       sudo nano /boot/firmware/config.txt
+#       Add/modify the lines below at the END of the file.
+#       sudo reboot
+#
+#   DO NOT delete existing lines — only add or modify.
+#
+
+# ── SPI (NRF24L01+ radio on SPI0) ──
+dtparam=spi=on
+
+# ── I2C Fast Mode 400 kHz (PCA9685 servo driver) ──
+dtparam=i2c_arm_baudrate=400000
+
+# ── CPU Overclock: 2.4 GHz -> 2.8 GHz ──
+# Requires active cooling (heatsink + fan).
+# If system is unstable, reduce to 2600.
+arm_freq=2800
+
+# ── Fixed core clock (prevents SPI clock drift under load) ──
+core_freq=750
+
+# ── Disable Bluetooth (frees kernel interrupts on isolated cores) ──
+dtoverlay=disable-bt
+
+# ── Force maximum fan speed (prevent thermal throttle at 85C) ──
+dtparam=fan_temp0=10000
+dtparam=fan_temp0_speed=255

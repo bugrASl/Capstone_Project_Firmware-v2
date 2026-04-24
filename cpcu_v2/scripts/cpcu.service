@@ -1,0 +1,62 @@
+#
+#   cpcu.service — CPCU v2.1 Systemd Unit File
+#   Author: bugrASl
+#   Date:   April 2026
+#
+#   Install:
+#       sudo cp cpcu.service /etc/systemd/system/
+#       sudo systemctl daemon-reload
+#       sudo systemctl enable cpcu
+#       sudo systemctl start cpcu
+#
+#   Monitor:
+#       sudo systemctl status cpcu
+#       journalctl -u cpcu -f
+#
+
+[Unit]
+Description=CPCU v2.1 — EMG Prosthetic Hand Controller
+Documentation=file:///opt/cpcu/docs/CPCU_ARCHITECTURE.md
+After=local-fs.target network.target
+Wants=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/opt/cpcu/scripts/launch.sh
+
+# Restart policy: always restart on failure, with 5s delay
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Run as root (needed for I2C, SPI, SCHED_FIFO, /dev/watchdog)
+User=root
+
+# Working directory
+WorkingDirectory=/opt/cpcu/bin
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+# Logging — stdout/stderr go to journalctl
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cpcu
+
+# Resource limits
+# Allow real-time scheduling (SCHED_FIFO up to prio 90)
+LimitRTPRIO=90
+LimitMEMLOCK=infinity
+
+# Graceful shutdown: send SIGTERM, wait 10s, then SIGKILL
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# Watchdog integration — systemd kills us if we don't pet within 30s
+# (hardware watchdog is handled by cpcu_kernel internally)
+WatchdogSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,252 @@
+#
+#   Prosthetic Hand Capstone — Project Directory Structure (v2.1)
+#   Author: bugrASl
+#   Date:   April 2026
+#
+#   Two codebases live side by side at the repo root:
+#     - bsau_v2/   STM32L432KC firmware. Acquires EMG, TXes over NRF.
+#     - cpcu_v2/   Raspberry Pi 5 application. Receives, DSP, drives hand.
+#
+#   v2.1 adds DATASET mode: BSAU emits raw CSV over UART simultaneously
+#   with wireless TX, and cpcu_tui gains a dataset-capture page. Files
+#   touched by that change are listed in the "v2.1 DATASET mode" section
+#   at the bottom.
+#
+
+# =============================================================================
+# Repo root
+# =============================================================================
+
+./
+├── .git/                                  # Git metadata (not listed)
+├── .gitignore
+├── LICENSE
+├── PROJECT_STRUCTURE.txt                  # (this file)
+├── SYSTEM_GUIDE.md                        # v2.1: ultimate step-by-step guide
+├── bsau_v2/                               # STM32 firmware
+└── cpcu_v2/                               # Raspberry Pi codebase
+
+
+# =============================================================================
+# BSAU — Bio-Signal Acquisition Unit (STM32CubeIDE project)
+# =============================================================================
+
+bsau_v2/
+├── InfiniTech_BSAU_Skeleton_v1.0.ioc      # CubeMX config (clocks, ADC, SPI, TIM)
+├── STM32L432KCUX_FLASH.ld                 # Linker script (flash + SRAM layout)
+│
+├── Core/
+│   ├── Inc/                               # Headers
+│   │   ├── main.h                         # CubeMX-generated top-level
+│   │   ├── stm32l4xx_hal_conf.h           # HAL module enables
+│   │   ├── stm32l4xx_it.h                 # ISR prototypes
+│   │   ├── adc.h                          # CubeMX ADC1 init (7-ch scan, 32x OS)
+│   │   ├── dma.h                          # CubeMX DMA1 (ADC + USART1_TX)
+│   │   ├── spi.h                          # CubeMX SPI1 (NRF bus, 5 MHz)
+│   │   ├── tim.h                          # CubeMX TIM6 (2 kHz ADC trigger)
+│   │   │                                  #   + TIM2 (1 MHz µs counter, v2.1)
+│   │   ├── usart.h                        # CubeMX USART1 (921600 baud, DMA TX)
+│   │   ├── gpio.h                         # CubeMX GPIO (NRF CE/CSN/IRQ, LED)
+│   │   ├── bsau_config.h                  # Per-build mode selector + DATASET knobs
+│   │   ├── bsau_app.h                     # Public BSAU_Init / BSAU_Run
+│   │   ├── bsau_adc.h                     # Public ADC pipeline + globals
+│   │   ├── bsau_test.h                    # Test harness entry points
+│   │   ├── nrf24l01.h                     # NRF driver public API
+│   │   ├── nrf24l01_test.h                # NRF self-test suite (TB-105/TB-106)
+│   │   ├── wireless_packet.h              # WL_Packet v2.1 layout + codec macros
+│   │   └── log.h                          # LOG / LOG_CSV mode-aware macros
+│   │
+│   ├── Src/                               # Sources
+│   │   ├── main.c                         # CubeMX main: calls BSAU_Init / BSAU_Run
+│   │   ├── stm32l4xx_hal_msp.c            # HAL MSP (clocks, low-level init)
+│   │   ├── stm32l4xx_it.c                 # ISRs (ADC DMA half/complete, Error_Handler)
+│   │   ├── system_stm32l4xx.c             # CMSIS system init
+│   │   ├── syscalls.c                     # newlib syscall stubs
+│   │   ├── sysmem.c                       # newlib _sbrk
+│   │   ├── adc.c                          # CubeMX ADC1 init
+│   │   ├── dma.c                          # CubeMX DMA init
+│   │   ├── spi.c                          # CubeMX SPI1 init
+│   │   ├── tim.c                          # CubeMX TIM6 + TIM2 init
+│   │   ├── usart.c                        # CubeMX USART1 init (incl. DMA TX)
+│   │   ├── gpio.c                         # CubeMX GPIO init
+│   │   ├── bsau_app.c                     # App-level: init + main loop (v2.1 fmt)
+│   │   ├── bsau_adc.c                     # ADC pipeline: TIM6 -> DMA -> snapshot
+│   │   ├── bsau_test.c                    # All 5 test-mode entry points
+│   │   ├── nrf24l01.c                     # NRF SPI driver
+│   │   ├── nrf24l01_test.c                # NRF self-test implementation
+│   │   └── wireless_packet.c              # WL_Pack / WL_Unpack (12-bit codec)
+│   │
+│   └── Startup/
+│       └── startup_stm32l432kcux.s        # Cortex-M4 vector table + reset handler
+│
+├── Debug/                                 # CubeIDE build artefacts (gitignored)
+│   ├── Core/                              # Subdir.mk files per source group
+│   ├── Drivers/
+│   ├── Release/                           # (parallel tree for Release config)
+│   ├── makefile
+│   ├── objects.list
+│   ├── objects.mk
+│   └── sources.mk
+│   # After a build: also contains BSAU.elf / .hex / .map / .bin
+│
+├── Drivers/                               # ST-provided HAL + CMSIS (generated)
+│   ├── CMSIS/
+│   │   ├── Device/ST/STM32L4xx/Include/   # stm32l4xx.h, stm32l432xx.h, ...
+│   │   └── Include/                       # core_cm4.h, cmsis_gcc.h, ...
+│   └── STM32L4xx_HAL_Driver/
+│       ├── Inc/                           # HAL headers (hal.h, hal_adc.h, ...)
+│       └── Src/                           # HAL sources
+│
+└── docs/                                  # BSAU-specific docs
+    ├── BSAU_ARCHITECTURE.md               # Full firmware architecture (v2.1)
+    ├── BSAU_RUN_GUIDE.md                  # Build / flash / operate (incl. DATASET)
+    └── BSAU_TEST_GUIDE.md                 # Test walkthrough + TB-XXX reference
+                                           # (merged walkthrough + old testbench spec)
+
+
+# =============================================================================
+# CPCU — Central Prosthetic Control Unit (Raspberry Pi 5 application)
+# =============================================================================
+
+cpcu_v2/
+├── CMakeLists.txt                         # Build system
+├── README.md                              # Quick-start summary
+├── setup_pi.sh                            # One-time Pi configuration
+├── run_tests.sh                           # Master test runner (phases + interactive)
+│
+├── config/                                # Pi configuration references
+│   ├── config.txt                         # /boot/firmware/config.txt additions
+│   └── cmdline_additions.txt              # /boot/firmware/cmdline.txt additions
+│
+├── include/                               # C headers
+│   ├── wireless_packet.h                  # Layer 0: Packet codec (shared w/ BSAU)
+│   ├── nrf24l01_linux.h                   # Layer 1: NRF SPI driver (Linux side)
+│   ├── cpcu_pca9685.h                     # Layer 1: PCA I2C servo driver
+│   ├── cpcu_ipc.h                         # Layer 2: Shared memory IPC
+│   ├── cpcu_smooth.h                      # Layer 2: Servo slew-rate smoother
+│   ├── cpcu_safety.h                      # Layer 3: System-wide safety monitor
+│   ├── cpcu_log.h                         # Layer 3: Structured logging + CSV
+│   └── demo_signals.h                     # Shared 8-waveform generator (demo)
+│
+├── src/                                   # C sources
+│   ├── wireless_packet.c                  # Layer 0 (identical to BSAU's copy)
+│   ├── nrf24l01_linux.c                   # Layer 1
+│   ├── cpcu_pca9685.c                     # Layer 1
+│   ├── cpcu_ipc.c                         # Layer 2
+│   ├── cpcu_smooth.c                      # Layer 2
+│   ├── cpcu_safety.c                      # Layer 3
+│   ├── cpcu_log.c                         # Layer 3
+│   ├── cpcu_io.c                          # Layer 4: Core 3 RT I/O loop
+│   ├── cpcu_kernel.c                      # Layer 4: Core 0 supervisor
+│   └── cpcu_tui.c                         # Layer 5: ncurses dashboard (7 pages, v2.1)
+│
+├── scripts/                               # Python + shell
+│   ├── cpcu_dsp.py                        # Layer 4: Cores 1-2 DSP/ML pipeline
+│   ├── cpcu_ipc_bridge.py                 # Python shared memory bridge
+│   ├── bsau_dataset_collector.py          # v2.1: laptop-side BSAU UART collector
+│   ├── launch.sh                          # Boot script (invoked by systemd)
+│   └── cpcu.service                       # Systemd unit file
+│
+├── test/                                  # Test suite
+│   ├── test_codec.c                       # Phase 1: WL codec round-trip
+│   ├── test_ipc_bridge.py                 # Phase 2: IPC offset validation
+│   ├── test_dsp_pipeline.py               # Phase 1: DSP filter + feature + model
+│   ├── pca_testbench.c                    # Interactive PCA9685 servo calibration
+│   ├── signal_testbench.c                 # End-to-end signal integrity TUI
+│   └── safety_testbench.c                 # Automated safety FSM harness
+│
+├── datasets/                              # v2.1: collected EMG recordings
+│   │                                      # populated at runtime by cpcu_tui
+│   │                                      # page 7 and/or bsau_dataset_collector
+│   └── {label}_{N}.csv                    # e.g. REST_0.csv, H_OPN_3.csv
+│                                          # (see BSAU_ARCHITECTURE.md §14.6)
+│
+├── models/                                # ML model files (gitignored contents)
+│   └── emg_rf_model.pkl                   # Trained RandomForest + scaler
+│
+└── docs/                                  # CPCU-specific docs
+    ├── CPCU_ARCHITECTURE.md               # Pi-side architecture (v3.2)
+    ├── CPCU_RUN_GUIDE.md                  # Pi build / deploy / operate
+    ├── CPCU_TEST_GUIDE.md                 # CPCU phase-by-phase test guide
+    └── export/                            # Rendered design documents (PDF)
+        ├── 01_System_Block_Diagram.pdf
+        ├── 02_System_Flowchart.pdf
+        ├── 03_Safety_Monitor.pdf
+        ├── 04_IPC_Subsystem.pdf
+        ├── 05_DSP_ML_Pipeline.pdf
+        ├── 06_Kernel_Supervisor.pdf
+        ├── 07_NRF24L01_Radio_Driver.pdf
+        ├── 08_PCA9685_Servo_Driver.pdf
+        └── 09_TUI_Dashboard_Mockup.pdf
+
+
+# =============================================================================
+# Deployment layout (after `sudo make install` on Pi)
+# =============================================================================
+#
+#   /opt/cpcu/
+#   ├── bin/
+#   │   ├── cpcu_io                        # Core 3 binary
+#   │   ├── cpcu_kernel                    # Core 0 binary
+#   │   ├── cpcu_tui                       # TUI binary (7 pages in v2.1)
+#   │   ├── pca_testbench                  # Servo calibration TUI
+#   │   ├── signal_testbench               # Signal integrity TUI
+#   │   └── safety_testbench               # Safety FSM harness
+#   ├── scripts/
+#   │   ├── cpcu_dsp.py                    # Python DSP
+#   │   ├── cpcu_ipc_bridge.py             # Python IPC bridge
+#   │   ├── bsau_dataset_collector.py      # v2.1: runs on laptop, staged here
+#   │   └── launch.sh                      # Boot script
+#   ├── models/
+#   │   └── emg_rf_model.pkl
+#   └── test/
+#       ├── test_ipc_bridge.py
+#       └── test_dsp_pipeline.py
+#
+#   /etc/systemd/system/
+#   └── cpcu.service
+#
+#   /var/log/cpcu/
+#   ├── cpcu.log                           # Aggregate systemd journal mirror
+#   ├── log_kern.csv
+#   ├── log_wdg.csv
+#   ├── log_io.csv
+#   ├── log_nrf.csv
+#   └── log_pca.csv
+#
+#   /dev/shm/
+#   └── cpcu_ipc                           # 66 240 bytes, SPSC ring + seqlock
+#
+#   ~/datasets/   (or wherever cpcu_tui is launched from)
+#   └── {label}_{N}.csv                    # v2.1: files from TUI page 7
+
+
+# =============================================================================
+# v2.1 DATASET mode — files that changed or were added
+# =============================================================================
+#
+#   Changed:
+#     bsau_v2/Core/Inc/bsau_config.h         + BSAU_MODE_DATASET
+#                                            + BSAU_DATASET_CSV_DECIMATION
+#     bsau_v2/Core/Inc/log.h                 + DATASET branch (LOG off / CSV on)
+#     bsau_v2/Core/Src/bsau_app.c            rewritten for v2.1 packet format
+#                                            + channels-only CSV emit
+#     cpcu_v2/src/cpcu_tui.c                 + PAGE_DATASET (page 7)
+#                                            + ncurses controls & waveforms
+#                                            + SOS filter matching cpcu_dsp.py
+#     bsau_v2/docs/BSAU_ARCHITECTURE.md      + §12.1 DATASET mode (UART + radio)
+#                                            + §14.6 Dataset Capture Path (CPCU)
+#     bsau_v2/docs/BSAU_TEST_GUIDE.md        + Phase 7 DATASET smoke test
+#                                            + Part B (merged testbench reference)
+#     bsau_v2/docs/BSAU_RUN_GUIDE.md         + §6 DATASET operational workflow
+#     PROJECT_STRUCTURE.txt                  (this file — v2.1 refresh)
+#
+#   Added:
+#     cpcu_v2/scripts/bsau_dataset_collector.py   Laptop-side UART capture
+#     SYSTEM_GUIDE.md                             Root: ultimate step-by-step
+#     cpcu_v2/datasets/                           Output directory (gitignored)
+#
+#   Unchanged but worth noting:
+#     wireless_packet.h / .c                 no schema change (DATASET rides on v2.1)
+#     cpcu_dsp.py                            no change (reads IPC, not CSV)
+#     nrf24l01.c / nrf24l01_linux.c          no change

@@ -1,0 +1,15 @@
+# Build artifacts
+build/
+*.o
+*.elf
+*.bin
+*.a
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# IDE / OS files
+.vscode/
+.cache/
+compile_commands.json
