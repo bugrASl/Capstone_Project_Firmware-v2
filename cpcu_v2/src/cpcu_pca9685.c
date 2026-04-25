@@ -2,8 +2,13 @@
  *  @file       cpcu_pca9685.c
  *  @brief      PCA9685 I2C PWM servo driver
  *  @author     bugrASl
- *  @date       12.04.2026
- *  @version    1.0
+ *  @date       April 2026
+ *  @version    1.1
+ *  @details    v1.1: PCA_SetServo and friends now take a logical servo
+ *              index (0..PCA_SERVO_COUNT-1) and translate to the physical
+ *              PCA9685 channel via PCA_Handle::servo_channel[]. See the
+ *              header for the wiring map. PCA_SetPWM is unchanged — it
+ *              still accepts raw channel 0..15 for low-level access.
  */
 
 #include "cpcu_pca9685.h"
@@ -67,11 +72,13 @@ static PCA_Status pca_write_4(PCA_Handle *p, uint8_t start_reg, const uint8_t da
 
 PCA_Status PCA_Init(PCA_Handle *p, const char *i2c_dev, uint8_t addr)
 {
-    /* Load servo safety limits */
+    /* Load servo safety limits and channel map (v1.1) */
     const uint16_t  mins[]  =   PCA_SERVO_MIN_US;
     const uint16_t  maxs[]  =   PCA_SERVO_MAX_US;
-    memcpy(p->servo_min, mins, sizeof(mins));
-    memcpy(p->servo_max, maxs, sizeof(maxs));
+    const uint8_t   chans[] =   PCA_SERVO_CHANNEL;
+    memcpy(p->servo_min,     mins,  sizeof(mins));
+    memcpy(p->servo_max,     maxs,  sizeof(maxs));
+    memcpy(p->servo_channel, chans, sizeof(chans));
 
     p->addr     =   addr;
     p->i2c_fd   =   -1;
@@ -99,11 +106,11 @@ PCA_Status PCA_Init(PCA_Handle *p, const char *i2c_dev, uint8_t addr)
     if(status != PCA_OK) goto fail;
 
     /* Step 2: Compute and write prescaler (only writable in sleep mode) */
-    p->prescaler    =   (uint8_t)( roundf( (float)(PCA_OSC_CLOCK_HZ) 
+    p->prescaler    =   (uint8_t)( roundf( (float)(PCA_OSC_CLOCK_HZ)
                                          / (float)(PCA_RESOLUTION * PCA_SERVO_FREQ_HZ) ) - 1.0f );
     status  =   PCA_WriteReg(p, PCA_REG_PRE_SCALE, p->prescaler);
     if(status != PCA_OK) goto fail;
-    
+
     /* Step 3: Wake up with auto-increment */
     status  =   PCA_WriteReg(p, PCA_REG_MODE1, PCA_MODE1_AI | PCA_MODE1_ALLCALL);
     if(status != PCA_OK) goto fail;
@@ -133,11 +140,15 @@ PCA_Status PCA_Init(PCA_Handle *p, const char *i2c_dev, uint8_t addr)
     /* Step 7: Set Servos to neutral */
     PCA_SetAllNeutral(p);
 
-    float actual_freq   =   (float)(PCA_OSC_CLOCK_HZ) 
+    float actual_freq   =   (float)(PCA_OSC_CLOCK_HZ)
                           / (float)(PCA_RESOLUTION * ( (uint32_t)(p->prescaler) + 1 ));
-    
+
     printf("[PCA] Init OK: addr=0x%02X | prescaler=%u | freq=%.1f Hz\n",
             addr, p->prescaler, actual_freq);
+    printf("[PCA] Servo map (logical -> PCA channel): "
+           "S0=%u S1=%u S2=%u S3=%u S4=%u S5=%u\n",
+           p->servo_channel[0], p->servo_channel[1], p->servo_channel[2],
+           p->servo_channel[3], p->servo_channel[4], p->servo_channel[5]);
 
     return PCA_OK;
 
@@ -162,6 +173,8 @@ void PCA_Close(PCA_Handle *p)
 
 /*============= PWM Control ==========================================================*/
 
+/*  Raw PCA channel access — caller passes 0..15. Used by pca_testbench
+ *  for register-level poking and by the logical wrappers below. */
 PCA_Status PCA_SetPWM(PCA_Handle *p, uint8_t channel, uint16_t on, uint16_t off)
 {
     if(channel >= PCA_CHANNEL_COUNT)
@@ -178,28 +191,40 @@ PCA_Status PCA_SetPWM(PCA_Handle *p, uint8_t channel, uint16_t on, uint16_t off)
     return pca_write_4(p, PCA_REG_LEDn_ON_L(channel), data);
 }
 
-PCA_Status PCA_SetServo(PCA_Handle *p, uint8_t channel, uint16_t pulse_us)
+/*  v1.1: logical_idx is 0..PCA_SERVO_COUNT-1.
+ *  Translates to physical PCA channel via servo_channel[]. */
+PCA_Status PCA_SetServo(PCA_Handle *p, uint8_t logical_idx, uint16_t pulse_us)
 {
-    uint16_t counts =   PCA_PulseToCounts(pulse_us);
-    return PCA_SetPWM(p, channel, 0, counts);
+    if(logical_idx >= PCA_SERVO_COUNT)
+    {
+        return PCA_ERR_CHANNEL;
+    }
+
+    uint8_t  pca_channel    =   p->servo_channel[logical_idx];
+    uint16_t counts         =   PCA_PulseToCounts(pulse_us);
+
+    return PCA_SetPWM(p, pca_channel, 0, counts);
 }
 
 void PCA_SetAllServos(PCA_Handle *p, const uint16_t pulse_us[PCA_SERVO_COUNT])
 {
-    for(int c = 0; c < PCA_SERVO_COUNT; c++)
+    for(int i = 0; i < PCA_SERVO_COUNT; i++)
     {
-        PCA_SetServo(p, (uint8_t)c, pulse_us[c]);
+        PCA_SetServo(p, (uint8_t)i, pulse_us[i]);
     }
 }
 
 void PCA_SetAllNeutral(PCA_Handle *p)
 {
-    for(int c = 0; c < PCA_SERVO_COUNT; c++)
+    for(int i = 0; i < PCA_SERVO_COUNT; i++)
     {
-        PCA_SetServo(p, (uint8_t)c, PCA_SERVO_NEUTRAL);
+        PCA_SetServo(p, (uint8_t)i, PCA_SERVO_NEUTRAL);
     }
 }
 
+/*  PCA_AllOff hits the global ALL_LED_OFF register, which is per-chip,
+ *  not per-channel — turns off ALL 16 outputs in one transaction.
+ *  Logical/physical mapping is irrelevant here. */
 void PCA_AllOff(PCA_Handle *p)
 {
     PCA_WriteReg(p, PCA_REG_ALL_LED_OFF_H, PCA_LED_FULL_OFF_BIT);
@@ -209,10 +234,10 @@ void PCA_AllOff(PCA_Handle *p)
 
 void PCA_SafetyClamp(PCA_Handle *p, uint16_t pulse_us[PCA_SERVO_COUNT])
 {
-    for(int c = 0; c < PCA_SERVO_COUNT; c++)
+    for(int i = 0; i < PCA_SERVO_COUNT; i++)
     {
-        if(pulse_us[c] < p->servo_min[c])   pulse_us[c] =   p->servo_min[c];
-        if(pulse_us[c] > p->servo_max[c])   pulse_us[c] =   p->servo_max[c];
+        if(pulse_us[i] < p->servo_min[i])   pulse_us[i] =   p->servo_min[i];
+        if(pulse_us[i] > p->servo_max[i])   pulse_us[i] =   p->servo_max[i];
     }
 }
 

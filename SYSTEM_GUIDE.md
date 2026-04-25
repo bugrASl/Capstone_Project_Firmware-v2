@@ -562,16 +562,26 @@ orange = signal. Plug the whole 3-pin connector directly onto one of
 PCA9685's 16 output channels (matching the orientation printed on
 the breakout).
 
-Channel mapping (from `cpcu_pca9685.h`):
+Channel mapping (from `cpcu_pca9685.h` v1.1). The 6 servos are wired to
+**non-contiguous** PCA9685 output terminals — the firmware uses a
+logical-to-physical translation table internally, so callers (and the
+gesture-mapping code in `cpcu_dsp.py`) just refer to the logical index
+S0..S5:
 
-| PCA channel | Function |
-|-------------|----------|
-| 0 | Base (wrist rotate) |
-| 1 | Upper (wrist flex) |
-| 2 | Joint 1 (palm) |
-| 3 | Joint 2 (knuckle) |
-| 4 | Last (fingertip) |
-| 5 | Gripper (thumb) |
+| Logical | Function | PCA terminal | Servo type | Pulse range |
+|---------|----------|--------------|------------|-------------|
+| S0 | Base    | 0  | MG995 |  498–2500 µs |
+| S1 | Upper   | 1  | MG995 | 1074–1953 µs |
+| S2 | Last    | 11 | MG995 | 1074–1953 µs |
+| S3 | Joint-1 | 8  | SG90  | 1001–2002 µs |
+| S4 | Joint-2 | 5  | SG90  | 1001–2002 µs |
+| S5 | Gripper | 4  | SG90  |  976–1733 µs |
+
+When you press `↑`/`↓` in `pca_testbench` to select "S2 Last", the
+driver writes to **PCA9685 channel 11**, not channel 2. Likewise S3
+goes to channel 8, S4 to channel 5, S5 to channel 4. If you reroute
+cables, edit the `PCA_SERVO_CHANNEL` macro in `cpcu_pca9685.h` to
+match — that single line is the source of truth.
 
 The PCA9685 handles the PWM frequency (50 Hz = 20 ms period) and
 pulse width independently per channel; it has its own 25 MHz

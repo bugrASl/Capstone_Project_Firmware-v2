@@ -2410,22 +2410,33 @@ static void draw_page_dataset(int r, IPC_Context *ipc)
     int half_w = g_tui_w / 2;
     int plot_w = half_w - 8;
     if(plot_w < 16) plot_w = 16;
-    int plot_h = 2;
 
     /* Stop at g_term_h - 3 to leave room for the footer (separator + line). */
     int max_r = g_term_h - 3;
 
+    /* Auto-size plot height from what's left. We have 4 plot rows in a 2x4
+     * grid, each consuming (plot_h + 1) rows for the trace + axis line.
+     * Cap at a sane upper bound so a tall window doesn't produce a single
+     * giant plot per channel — at ~6 rows the line trace already gives 30
+     * sub-row resolution which is plenty. */
+    int avail   = max_r - r;          /* rows we can use         */
+    int plot_h  = (avail / 4) - 1;    /* per plot, minus its axis*/
+    if(plot_h < 2)  plot_h = 2;       /* don't go below original */
+    if(plot_h > 6)  plot_h = 6;       /* cap at scope-readable   */
+
     for(int i = 0; i < 4 && r + plot_h + 1 <= max_r; i++)
     {
-        /* Left column: ch 0..3 */
+        /* Left column: ch 0..3. Label aligned to the vertical middle of
+         * the plot so a tall plot doesn't look mislabelled. */
+        int label_row = r + plot_h / 2;
         attron(COLOR_PAIR(CP_DIM));
-        mvprintw(r, 1, "ch%d", i);
+        mvprintw(label_row, 1, "ch%d", i);
         attroff(COLOR_PAIR(CP_DIM));
         draw_waveform(r, 5, plot_w, plot_h, i, CP_GOOD);
 
         /* Right column: ch 4..7 */
         attron(COLOR_PAIR(CP_DIM));
-        mvprintw(r, half_w + 1, "ch%d", i + 4);
+        mvprintw(label_row, half_w + 1, "ch%d", i + 4);
         attroff(COLOR_PAIR(CP_DIM));
         draw_waveform(r, half_w + 5, plot_w, plot_h, i + 4, CP_CYAN);
 
