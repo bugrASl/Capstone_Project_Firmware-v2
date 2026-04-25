@@ -1,34 +1,38 @@
 /**
  *  @file       cpcu_smooth.h
- *  @brief      Non-blocking servo slew rate limiter
+ *  @brief      Per-servo trapezoidal motion profile smoother.
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    1.0
+ *  @version    2.0
  *
- *  @details    Limits the rate of change of servo pulse widths to prevent
- *              mechanical shock and jerk. Runs inside the 50 Hz servo update
- *              cycle in cpcu_io.c — no blocking, no delays.
+ *  v2.0 changes:
+ *      - Trapezoidal velocity profile: accelerate to max_velocity, cruise,
+ *        decelerate to a stop at the target. Replaces v1.0's constant-
+ *        velocity slew which produced the "creeping then jolt" feel.
+ *      - Per-servo `enabled` flag. When false, the smoother is a passthrough:
+ *        target_us is written straight to current[] every tick. Used for
+ *        the Gripper, where smoothing makes the grip-action sluggish.
+ *      - Per-servo max_velocity AND max_accel, both in us/s and us/s².
+ *      - SMOOTH_Snap retained for emergency neutral / init.
  *
- *              Algorithm: Each call, the current position moves toward the
- *              target by at most (max_speed_us_per_s * dt) microseconds.
- *              This gives smooth, predictable motion regardless of how
- *              large the commanded step is.
+ *  Profile geometry (one servo, single move):
  *
- *              Default slew rate: 2000 us/s
- *                  Full range (500-2500 us = 2000 us) in 1.0 second
- *                  Per 50 Hz tick (20 ms): max step = 40 us
+ *           v ↑
+ *   max_v ─ │   ╭─────────────╮
+ *           │  ╱               ╲
+ *           │ ╱                 ╲
+ *           │╱                   ╲
+ *           └────────────────────────→ t
+ *           ↑accel  cruise   decel↑
  *
- *              The smoother also provides a "settled" flag per channel,
- *              indicating when the servo has reached its target. This is
- *              useful for sequencing multi-joint motions.
+ *  For short moves where the cruise phase doesn't fit, the profile
+ *  collapses into a triangle and the peak velocity is whatever the
+ *  symmetric accel/decel can reach in time.
  *
- *  Usage:
- *      SMOOTH_Context sm;
- *      SMOOTH_Init(&sm, 1500);             // Start all at neutral
- *      SMOOTH_SetTarget(&sm, 0, 900);      // Command servo 0 to 900 us
- *      // In 50 Hz loop:
- *      SMOOTH_Update(&sm, dt_us);          // Advance positions
- *      uint16_t *out = sm.current;         // Use sm.current[] for PCA write
+ *  Defaults (SMOOTH_Init):
+ *      max_velocity =   2000 us/s    (full 2000 us span in 1.0 s if cruising)
+ *      max_accel    =   8000 us/s²   (reach max_velocity in 250 ms)
+ *      enabled      =   true         (call SMOOTH_SetEnabled to bypass)
  */
 
 #ifndef CPCU_SMOOTH_H
@@ -43,61 +47,55 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
-/*============= CONFIGURATION ============================*/
+/*============= DEFAULTS ===================================================*/
 
-#define SMOOTH_DEFAULT_SPEED    2000    /* us per second (full range in 1.0s) */
-#define SMOOTH_SETTLE_THRESH    2       /* Within this many us = "settled" */
+#define SMOOTH_DEFAULT_VELOCITY     2000     /* us per second */
+#define SMOOTH_DEFAULT_ACCEL        8000     /* us per second² */
+#define SMOOTH_SETTLE_THRESH        2        /* within this distance = settled */
 
-/*============= CONTEXT ==================================*/
+/*============= CONTEXT ====================================================*/
 
 typedef struct
 {
-    float       current_f[PCA_SERVO_COUNT];     /* Fractional position (us, float for smooth sub-step) */
-    uint16_t    current[PCA_SERVO_COUNT];        /* Integer position sent to PCA (us) */
-    uint16_t    target[PCA_SERVO_COUNT];         /* Commanded target (us) */
-    uint16_t    max_speed[PCA_SERVO_COUNT];      /* Max slew rate per channel (us/s) */
-    bool        settled[PCA_SERVO_COUNT];         /* True when current ~= target */
+    /* Live state per servo */
+    float       current_f[PCA_SERVO_COUNT];     /* sub-us position */
+    float       velocity_f[PCA_SERVO_COUNT];    /* signed, us/s */
+    uint16_t    current[PCA_SERVO_COUNT];       /* integer pose for PCA */
+    uint16_t    target[PCA_SERVO_COUNT];
+
+    /* Configuration per servo */
+    uint16_t    max_velocity[PCA_SERVO_COUNT];  /* us/s */
+    uint16_t    max_accel[PCA_SERVO_COUNT];     /* us/s² */
+    bool        enabled[PCA_SERVO_COUNT];       /* false = bypass smoother */
+
+    /* Status per servo */
+    bool        settled[PCA_SERVO_COUNT];
 } SMOOTH_Context;
 
-/*============= API ======================================*/
+/*============= API ========================================================*/
 
-/**
- *  Initialize all channels to `start_us` with default slew rate.
- */
+/*  Initialise all channels to start_us with the default profile and
+ *  enabled=true. Call SMOOTH_SetEnabled afterwards to bypass specific
+ *  channels (e.g. Gripper).                                              */
 void SMOOTH_Init(SMOOTH_Context *ctx, uint16_t start_us);
 
-/**
- *  Set a new target for one channel.
- *  The smoother will ramp toward it over subsequent Update() calls.
- */
-void SMOOTH_SetTarget(SMOOTH_Context *ctx, int channel, uint16_t target_us);
+/*  Configure one channel. */
+void SMOOTH_SetEnabled (SMOOTH_Context *ctx, int channel, bool enabled);
+void SMOOTH_SetVelocity(SMOOTH_Context *ctx, int channel, uint16_t v_us_per_s);
+void SMOOTH_SetAccel   (SMOOTH_Context *ctx, int channel, uint16_t a_us_per_s2);
 
-/**
- *  Set targets for all channels at once.
- */
+/*  Target setting. */
+void SMOOTH_SetTarget    (SMOOTH_Context *ctx, int channel, uint16_t target_us);
 void SMOOTH_SetAllTargets(SMOOTH_Context *ctx, const uint16_t targets[PCA_SERVO_COUNT]);
 
-/**
- *  Set the slew rate for a specific channel (us per second).
- */
-void SMOOTH_SetSpeed(SMOOTH_Context *ctx, int channel, uint16_t speed_us_per_s);
-
-/**
- *  Advance all channels toward their targets by one time step.
- *  Call this at 50 Hz with dt_us = 20000.
- */
+/*  Advance positions by dt. dt_us = 20000 for 50 Hz tick. */
 void SMOOTH_Update(SMOOTH_Context *ctx, uint32_t dt_us);
 
-/**
- *  Check if all channels have reached their targets.
- */
-bool SMOOTH_AllSettled(const SMOOTH_Context *ctx);
-
-/**
- *  Force all channels to jump immediately to their targets (bypass smoothing).
- *  Use for emergency neutral or init.
- */
+/*  Force every channel to its target now (zero velocity). */
 void SMOOTH_Snap(SMOOTH_Context *ctx);
+
+/*  Diagnostic */
+bool SMOOTH_AllSettled(const SMOOTH_Context *ctx);
 
 #ifdef __cplusplus
 }
