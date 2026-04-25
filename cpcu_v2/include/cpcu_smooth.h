@@ -3,9 +3,14 @@
  *  @brief      Per-servo trapezoidal motion profile smoother.
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.0
+ *  @version    2.0.1
  *
- *  v2.0 changes:
+ *  v2.0.1 (2026-04):
+ *      - Added SMOOTH_SetSpeed as a static-inline alias for
+ *        SMOOTH_SetVelocity. v1.0 callers (pca_testbench, etc.) keep
+ *        compiling unchanged. New code should prefer SMOOTH_SetVelocity.
+ *
+ *  v2.0 (2026-04):
  *      - Trapezoidal velocity profile: accelerate to max_velocity, cruise,
  *        decelerate to a stop at the target. Replaces v1.0's constant-
  *        velocity slew which produced the "creeping then jolt" feel.
@@ -83,6 +88,14 @@ void SMOOTH_Init(SMOOTH_Context *ctx, uint16_t start_us);
 void SMOOTH_SetEnabled (SMOOTH_Context *ctx, int channel, bool enabled);
 void SMOOTH_SetVelocity(SMOOTH_Context *ctx, int channel, uint16_t v_us_per_s);
 void SMOOTH_SetAccel   (SMOOTH_Context *ctx, int channel, uint16_t a_us_per_s2);
+
+/*  v1.0 compatibility shim — old code called this "SetSpeed". Maps to
+ *  SetVelocity in v2.0. Keep using SMOOTH_SetVelocity in new code.      */
+static inline void SMOOTH_SetSpeed(SMOOTH_Context *ctx, int channel,
+                                   uint16_t speed_us_per_s)
+{
+    SMOOTH_SetVelocity(ctx, channel, speed_us_per_s);
+}
 
 /*  Target setting. */
 void SMOOTH_SetTarget    (SMOOTH_Context *ctx, int channel, uint16_t target_us);
