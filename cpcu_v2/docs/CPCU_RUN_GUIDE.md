@@ -1,4 +1,4 @@
-# CPCU Run Guide — v3.2
+# CPCU Run Guide — v3.4
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -234,8 +234,12 @@ downstream will work.
 
 ```bash
 ./cpcu_tui --demo
-# Press 1/2/3/4/5/6 to see all pages. Try w/[/] to cycle waveforms
-# and F/B/G/O/I/R for fault injection. Press q to quit.
+# Press 1/2/3/4/5/6/7 to see all pages.
+#   1=Overview 2=Radio/IO 3=DSP/AI 4=Waves 5=Health 6=Dataset 7=Config
+# Try w/[/] to cycle waveforms and F/B/G/O/I/R for fault injection.
+# Page 6 (Dataset): LEFT/RIGHT to pick a label, s/SPACE to start/stop,
+#                   t to toggle RAW/FILTERED, r to cancel a capture.
+# Press q to quit.
 
 ./signal_testbench --demo
 # See synthetic sine waveforms + Goertzel analysis. Press q to quit.
@@ -441,7 +445,33 @@ electrode looks suspicious.** Page 4 peeks at the ring buffer **read-
 only** — it does **not** consume entries, so it is safe to run
 alongside `cpcu_dsp.py`.
 
-**Page 5 — Config (spec sheet, static)**
+**Page 5 — Health (traffic-light dashboard)**
+Rolls up Page 1's banner into ten full-detail rows, one per subsystem.
+Each row is `[  OK  ]` (green) / `[ WARN ]` (yellow) / `[FAULT ]` (red)
+with a one-line explanation ("why"). Subsystems covered: Safety FSM,
+Radio (nRF), IO loop, IPC ring, Pkt integrity, Battery, DSP pipeline,
+ML export, BSAU sensor (from decoded packet flags), SAFE trips. Top
+banner tallies `N OK | N WARN | N FAULT` and shows the overall verdict.
+This is the page to put on a second monitor during hardware testing —
+glance at it once a minute and you'll catch any regression immediately.
+
+**Page 6 — Dataset (interactive CSV capture, v2.1)**
+Capture 8-channel EMG recordings labelled by gesture, byte-compatible
+with `bsau_dataset_collector.py` (RAW mode) or matching the voltage-
+domain output of `cpcu_dsp.py` (FILTERED mode). Top banner shows the
+current label, mode, capture state (IDLE / COLLECTING / SAVED /
+CANCELLED), filename being written, and live counters: samples,
+elapsed seconds, missed-due-to-overflow count, sequence gaps. Below
+is a label picker (10 classes, current one highlighted) and the
+RAW/FILTERED toggle indicator. The capture state machine drains the
+ring on every TUI tick regardless of which page is rendered, so
+flipping pages mid-capture does **not** lose samples. Output files
+land in `./datasets/` with the naming convention
+`<MODE>_<LABEL>_<NN>.csv` (auto-incremented). **Use this for ML
+dataset collection — the DSP/AI team can stream-collect labelled
+recordings from any laptop on the network via the TUI over SSH.**
+
+**Page 7 — Config (spec sheet, static)**
 Compile-time + hardware reference — what system you're actually looking
 at. BSAU: STM32L432KC Cortex-M4F, 8 EMG channels through Soldered INA333
 front-ends, 12-bit ADC, 2 kHz sample rate, 2 samples/packet at 1000
@@ -460,28 +490,23 @@ neutral 1500 µs on SAFE entry. Safety thresholds: radio-silent
 DSP / ML: 400-sample FFT windows with 50 % stride overlap, features =
 MAV + WL + ZC + SSC + RMS + spectral, RandomForest classifier with
 10 classes. Build: TUI version string, compiler, ISO C standard, build
-date/time.
-
-**Page 6 — Health (traffic-light dashboard)**
-Rolls up Page 1's banner into ten full-detail rows, one per subsystem.
-Each row is `[  OK  ]` (green) / `[ WARN ]` (yellow) / `[FAULT ]` (red)
-with a one-line explanation ("why"). Subsystems covered: Safety FSM,
-Radio (nRF), IO loop, IPC ring, Pkt integrity, Battery, DSP pipeline,
-ML export, BSAU sensor (from decoded packet flags), SAFE trips. Top
-banner tallies `N OK | N WARN | N FAULT` and shows the overall verdict.
-This is the page to put on a second monitor during hardware testing —
-glance at it once a minute and you'll catch any regression immediately.
+date/time. *(v3.4: moved from page 5 to the end of the tab order so
+live data pages occupy the lowest keys.)*
 
 ---
 
 **Keys available on every page**
 
-| Key       | Action                                                           |
-|-----------|------------------------------------------------------------------|
-| `1`..`6`  | Switch page                                                      |
-| `q` `Q`   | Quit                                                             |
-| `UP`/`DN` | Select channel (Page 4 only)                                     |
-| `TAB`     | Toggle grid ↔ single-channel detail (Page 4 only)                |
+| Key        | Action                                                          |
+|------------|-----------------------------------------------------------------|
+| `1`..`7`   | Switch page                                                     |
+| `q` `Q`    | Quit                                                            |
+| `UP`/`DN`  | Select channel (Page 4 only)                                    |
+| `TAB`      | Toggle grid ↔ single-channel detail (Page 4 only)               |
+| `← / →`    | Cycle gesture label (Page 6 only, when not capturing)           |
+| `s` `SPACE`| Start / stop capture (Page 6 only)                              |
+| `t` `T`    | Toggle RAW ↔ FILTERED capture (Page 6 only, when idle)          |
+| `r`        | Cancel + delete in-progress capture (Page 6 only)               |
 
 **Demo-mode-only hotkeys** (`cpcu_tui --demo`)
 
@@ -493,9 +518,9 @@ glance at it once a minute and you'll catch any regression immediately.
 | `F`       | Inject fault: radio freeze (triggers DEGRADED → SAFE after 2.25 s) |
 | `B`       | Inject fault: low battery (triggers SAFE on `VBAT_CRITICAL`)     |
 | `G`       | Inject fault: sequence-gap storm                                 |
-| `O`       | Inject fault: ring overflow                                      |
+| `O`       | Inject fault: ring overflow (auto-clears once burst ends, v2.3)  |
 | `I`       | Inject fault: I²C error streak                                   |
-| `R`       | Reset — clears all injected faults **and** zeros every counter   |
+| `R`       | Reset — clears all injected faults **and** zeros every counter (non-Dataset pages) |
 
 When a fault is active, a red `[INJ:RADIO_FREEZE]` / `[INJ:BATT_LOW]` /
 etc. banner appears at the bottom-right. When no fault is active, that
@@ -556,7 +581,7 @@ sudo /opt/cpcu/bin/signal_testbench
 sudo /opt/cpcu/bin/safety_testbench
 #   Exercises the safety FSM without hardware: radio-loss timeout,
 #   low-battery trip, sequence-gap storm, ring overflow, I2C streak.
-#   Runs 7 test groups / 31 checks, prints PASS/FAIL, exits non-zero
+#   Runs 7 test groups / 33 checks (v2.3), prints PASS/FAIL, exits non-zero
 #   if anything fails. Also registered in CTest (`ctest -R safety_fsm`).
 #   For the interactive version, use `cpcu_tui --demo` and press F/B/G/
 #   O/I to inject faults, R to reset.
@@ -753,7 +778,7 @@ Plain-language definitions of every term in this guide (and in the code).
     nRF TX FIFO saturated (prior packet didn't leave the radio — link is
     flapping). `CAL` = calibration frame (first few packets after boot, not
     user data). `FIRST` = session-first packet (BSAU rebooted). Decoded and
-    colour-coded on `cpcu_tui` Pages 2 and 4 and on Page 6's Health
+    colour-coded on `cpcu_tui` Pages 2 and 4 and on Page 5's Health
     dashboard.
 -   **Core isolation / isolcpus** — A Linux kernel command-line option that
     tells Linux "don't put general-purpose tasks on these cores." We set
@@ -818,7 +843,7 @@ Plain-language definitions of every term in this guide (and in the code).
     its mean per unit time. Gives a quick frequency estimate for periodic
     signals without a full FFT. Page 4 uses ZCR (with 1 % hysteresis) to
     label each mini-plot with a `Hz` reading. Zero for pure noise or DC.
--   **Health traffic-light** — Page 6 of `cpcu_tui`. Ten subsystem rows,
+-   **Health traffic-light** — Page 5 of `cpcu_tui`. Ten subsystem rows,
     each `[OK]` / `[WARN]` / `[FAULT]` with a one-line "why" explanation.
     Overall verdict at the top: `NOMINAL` / `WARNING` / `DEGRADED`. A
     compact six-pill version of the same banner is rolled up to the top

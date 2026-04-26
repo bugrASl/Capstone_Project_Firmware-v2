@@ -3,13 +3,25 @@
  *  @brief      Core 3 — Real-time I/O controller
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.2
+ *  @version    2.3
  *  @details    Deterministic loop:
  *                  1. Busy-poll NRF via spidev         -> read payload
  *                  2. WL_Unpack -> seq/safety/link     -> push to SPSC ring
  *                  3. Rate-limited (50 Hz) PCA servo update via I2C
  *                  4. Safety checks: radio, DSP, I2C, thermal, ring
  *                  5. Heartbeat to shared memory for watchdog
+ *
+ *              v2.3 changes:
+ *                  - Now calls SAFETY_UpdateState() once per loop after the
+ *                    Feed/Check calls. The v2.2 architectural change that
+ *                    moved battery / thermal / i2c / ring transitions out
+ *                    of FeedPacket and into UpdateState was never wired up
+ *                    here; without this call the FSM would update boolean
+ *                    flags but never move out of RUNNING for non-radio
+ *                    faults. SAFETY_CheckSystem already gated on the flags
+ *                    so servos were neutralised correctly, but the TUI
+ *                    state indicator lied during a battery / thermal /
+ *                    ring fault.
  *
  *              v2.2 changes:
  *                  - Uses cpcu_log LOG_* macros everywhere (no more printf)
@@ -274,15 +286,23 @@ int main(int argc, char *argv[])
         /* 3. Safety: DSP stall check */
         SAFETY_CheckDSP(&safety, t);
 
-        /* 4. Safety: ring buffer overflow */
+        /* 4. Safety: ring buffer overflow (v2.3 — recoverable) */
         SAFETY_FeedRingOverflow(&safety, atomic_load(&ipc.diag->io_ring_overflows));
 
-        /* 5. Update system state in shared memory */
+        /* 5. Safety: drive non-radio FSM transitions (v2.3 — was dead in v2.2).
+         * UpdateState owns the RUNNING <-> SAFE transitions for battery /
+         * thermal / dsp / i2c / ring fault flags. Without this call the
+         * boolean flags would update correctly (so SAFETY_CheckSystem()
+         * already neutralises the servos), but the FSM state shown in the
+         * TUI would stay RUNNING through any non-radio fault. */
+        SAFETY_UpdateState(&safety, t);
+
+        /* 6. Update system state in shared memory */
         atomic_store(&ipc.ctrl->system_state,
                      safety.state == RADIO_SAFE ?   IPC_STATE_SAFE :
                      safety.state == RADIO_RUNNING  ?   IPC_STATE_RUNNING : IPC_STATE_INIT);
 
-        /* 6. NRF re-init if failed (full clean-reset sequence) */
+        /* 7. NRF re-init if failed (full clean-reset sequence) */
         if(!nrf_ok && (t - t_reinit) > NRF_REINIT_INTERVAL_US)
         {
             t_reinit    =   t;
@@ -312,7 +332,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        /* 7. Servo update (50 Hz with smoothing) */
+        /* 8. Servo update (50 Hz with smoothing) */
         if((t - t_servo) >= SERVO_INTERVAL_US)
         {
             uint32_t servo_dt   =   (uint32_t)(t - t_servo);
@@ -371,7 +391,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        /* 8. Thermal check */
+        /* 9. Thermal check */
         if((t - t_thermal) >= THERMAL_INTERVAL_US)
         {
             t_thermal   =   t;
@@ -379,14 +399,14 @@ int main(int argc, char *argv[])
             SAFETY_FeedTemperature(&safety, temp);
         }
 
-        /* 9. Heartbeat */
+        /* 10. Heartbeat */
         if((t - t_hb) >= HEARTBEAT_INTERVAL_US)
         {
             t_hb    =   t;
             atomic_store(&ipc.ctrl->io_heartbeat_us, t);
         }
 
-        /* 10. Diagnostics (1 Hz — this is also the only file-log pressure point) */
+        /* 11. Diagnostics (1 Hz — this is also the only file-log pressure point) */
         if((t - t_diag) >= DIAG_INTERVAL_US)
         {
             t_diag      =   t;

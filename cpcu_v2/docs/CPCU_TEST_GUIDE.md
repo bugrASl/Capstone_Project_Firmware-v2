@@ -185,8 +185,17 @@ each failure mode and verifying the expected response.
     `link.loss_rate > 0.05` over the 1 k-packet window. FSM trips
     `SAFE`. Tolerance test: single-packet gaps (gap ≤ 1) do **not**
     trip — absorbed by `SAFETY_SeqGap`.
-5.  **Ring overflow** — push `io_ring_overflows` to ≥ 150 (above
-    threshold 100). FSM trips `SAFE`.
+5.  **Ring overflow** — push `io_ring_overflows` to ≥ 150 (delta of 150
+    above the baseline 0, threshold 100). FSM trips `SAFE`. *(This is
+    one of the 31 testbench checks and continues to pass against the
+    v2.3 logic because the fault threshold is now applied to the
+    delta-since-baseline, which equals the cumulative count when
+    starting from 0.)* **Suggested v2.3 follow-up test (manual):**
+    keep the counter stable for `SAFETY_RING_RECOVER_MS = 5000 ms`
+    and verify `ring.faulted` clears and re-baselines, so a subsequent
+    +101 burst re-triggers cleanly. This proves the pre-v2.3 latching
+    bug — where a single historical burst kept the ring fault asserted
+    forever — is gone.
 6.  **I²C error streak** — simulate 5 consecutive I²C failures. FSM
     trips `SAFE`. Recovery: one successful I²C transaction clears
     both the counter **and** the fault flag.
@@ -194,15 +203,16 @@ each failure mode and verifying the expected response.
     edge (`INIT → RUNNING → DEGRADED → RECOVERING → RUNNING → SAFE`)
     and verify no illegal transitions occur under any input.
 
-**Pass criteria:** stdout shows `[PASS]` for all 31 checks, exit code
-is 0. On fail the binary prints which group and which check, with
-expected vs actual state.
+**Pass criteria:** stdout shows `[PASS]` for all 33 checks (was 31 pre-v2.3
+— TB-SAF02 was extended with `e/f/g` for the v2.2 SAFE-recovery path that
+the original test couldn't see), exit code is 0. On fail the binary prints
+which group and which check, with expected vs actual state.
 
 **Interactive version:** to exercise the same faults live with visual
 feedback, run `./cpcu_tui --demo` and use `F` / `B` / `G` / `O` / `I`
 to inject faults, `R` to reset. Each fault triggers a red
 `[INJ:RADIO_FREEZE]` / `[INJ:BATT_LOW]` / etc. banner in the bottom
-footer; Page 6 Health goes red on the affected subsystem row; overall
+footer; Page 5 Health goes red on the affected subsystem row; overall
 verdict goes `DEGRADED`; Page 1's state row flips to `SAFE` on the
 expected threshold.
 
@@ -218,8 +228,8 @@ expected threshold.
 ./cpcu_tui --demo
 ```
 
-Press `1`/`2`/`3`/`4`/`5`/`6` to verify all pages render correctly. Press `q`
-to quit. You can also exercise the demo waveform selector (`w`, `[`, `]`)
+Press `1`/`2`/`3`/`4`/`5`/`6`/`7` to verify all pages render correctly. Press
+`q` to quit. You can also exercise the demo waveform selector (`w`, `[`, `]`)
 and the fault-injection keys (`F`, `B`, `G`, `O`, `I`, `R`) without
 touching any hardware.
 
@@ -243,16 +253,28 @@ live.
     eight waveforms; each renders recognisably (square has flat top/
     bottom plateaus, triangle has diagonal ramps, noise is scattered
     dots with no pattern, ECG shows sharp periodic R-spikes, etc.).
--   Page 5 (CONFIG) renders four static spec sections (BSAU/CPCU,
-    wireless/IPC, motor/DSP, build info) — nothing changes over time
-    because this is a compile-time reference page.
--   Page 6 (HEALTH) shows ten subsystem rows each with a `[OK]` /
+-   Page 5 (HEALTH) shows ten subsystem rows each with a `[OK]` /
     `[WARN]` / `[FAULT]` pill, a detail column explaining the check,
     and a summary line at the top tallying `N OK | N WARN | N FAULT`.
+-   Page 6 (DATASET) shows the label picker, RAW/FILTERED toggle, and
+    capture-state banner. With LEFT/RIGHT you can cycle the label;
+    `s`/SPACE starts a capture (synthetic-packet path is identical to
+    the real-packet path, so the file produced under `--demo` is
+    byte-format-valid for the DSP/AI team's loader); `r` cancels and
+    deletes the partial file. Capture continues even if you switch to
+    another page.
+-   Page 7 (CONFIG) renders four static spec sections (BSAU/CPCU,
+    wireless/IPC, motor/DSP, build info) — nothing changes over time
+    because this is a compile-time reference page. *(v3.4: this page
+    moved from key 5 to key 7.)*
 -   Resizing the terminal window reflows the layout on the next frame.
 -   Pressing `F` (inject radio freeze) causes the Health banner on
     Page 1 to turn yellow then red, verdict goes `WARNING` → `DEGRADED`,
     and after ~2.25 s the state row flips to `SAFE`.
+-   Pressing `O` (inject ring overflow) trips `[FAULT]` on the IPC ring
+    row of Page 5, then **clears automatically** ~5 s after the burst
+    stops — this is the v2.3 recovery path; if Page 5 stays red
+    indefinitely you're looking at the pre-v2.3 latching bug.
 -   Pressing `R` immediately clears all injected faults **and** zeros
     every accumulated counter (seq gaps, inferences, SAFE entries,
     batches, max latency, underflows, drops, overflows). Every page

@@ -92,7 +92,7 @@ in this document, though.
 **Part 7 — Dataset Collection (v2.1)**
 7.1 [Why two captures](#71-why-two-captures)
 7.2 [Capturing BSAU-side (UART)](#72-capturing-bsau-side-uart)
-7.3 [Capturing CPCU-side (TUI Page 7)](#73-capturing-cpcu-side-tui-page-7)
+7.3 [Capturing CPCU-side (TUI Page 6)](#73-capturing-cpcu-side-tui-page-6)
 7.4 [Verifying a capture pair](#74-verifying-a-capture-pair)
 
 **Part 8 — Troubleshooting**
@@ -990,18 +990,20 @@ renders. Press `q` to quit. You should see:
     bars animating.
 -   Page 4 (Waveforms): 8 animated channels. `UP`/`DOWN` selects;
     `TAB` toggles grid ↔ single-channel detail.
--   Page 5 (Config): static spec sheet.
--   Page 6 (Health): 10 traffic-light rows.
--   Page 7 (Dataset): dataset collection UI. Label picker cycles
-    with `←`/`→`. `s`/SPACE and `r` keys are intercepted but capture
-    is disabled in demo mode (status bar says so).
+-   Page 5 (Health): 10 traffic-light rows.
+-   Page 6 (Dataset): dataset collection UI. Label picker cycles
+    with `←`/`→`. `s`/SPACE and `r` keys are intercepted; capture
+    works in demo mode against the synthetic packet stream.
+-   Page 7 (Config): static spec sheet *(moved to last tab in v3.4
+    so live-data pages occupy the lowest keys)*.
 
 Try the fault injection:
 -   `F` injects radio freeze → HEALTH banner turns yellow then red;
     ~2.25 s later state flips to `SAFE`.
 -   `B` injects low battery → battery pill goes red.
--   `G` injects seq-gap storm; `O` injects ring overflow; `I`
-    injects I²C failure.
+-   `G` injects seq-gap storm; `O` injects ring overflow (auto-clears
+    after ~5 s once the burst stops, v2.3 recovery); `I` injects
+    I²C failure.
 -   `R` resets everything (faults cleared, counters zeroed).
 
 **What this validates:** the TUI code compiles, runs, reflows on
@@ -1560,10 +1562,11 @@ drops, session persists across `ssh` disconnect/reconnect.
 -   **Page 4 (Waveforms):** 8-channel rolling scope. Use when a
     specific channel looks suspicious. `UP`/`DOWN` picks, `TAB`
     toggles detail.
--   **Page 5 (Config):** static spec sheet.
--   **Page 6 (Health):** 10-row traffic light. Put this on a
+-   **Page 5 (Health):** 10-row traffic light. Put this on a
     second monitor during testing.
--   **Page 7 (Dataset):** capture UI, details in Part 7.
+-   **Page 6 (Dataset):** capture UI, details in Part 7.
+-   **Page 7 (Config):** static spec sheet *(moved to the end of the
+    tab order in v3.4 so live-data pages get the lowest keys)*.
 
 ### 6.5.3 Log files
 
@@ -1717,7 +1720,7 @@ head -c 500 /dev/ttyACM0
 # Expect CSV lines like: 2048,2049,2047,2048,2050,2047,2051,2048\r\n
 ```
 
-## 7.3 Capturing CPCU-side (TUI Page 7)
+## 7.3 Capturing CPCU-side (TUI Page 6)
 
 With BSAU still in DATASET mode (same radio, same packets, no
 reconfiguration needed):
@@ -1726,9 +1729,10 @@ reconfiguration needed):
 ssh -t pi@cpcu.local /opt/cpcu/bin/cpcu_tui
 ```
 
-Press `7` to jump to the DATASET page.
+Press `6` to jump to the DATASET page (was `7` before v3.4 — see the
+v3.4 page-order change in `CPCU_ARCHITECTURE.md` §8.1).
 
-**Page 7 layout:**
+**Page 6 layout:**
 
 ```
 State: IDLE              Label: [0] REST              Mode: FILTERED
@@ -1745,7 +1749,7 @@ Live waveforms (raw ADC, 512 samples @ 2 kHz = 256 ms window):
   ...
 ```
 
-### 7.3.1 Key bindings on Page 7
+### 7.3.1 Key bindings on Page 6
 
 | Key | Action |
 |-----|--------|
@@ -1838,19 +1842,20 @@ print(f"CPCU: {cpcu.shape}, 2000 Hz → {cpcu.shape[0]/2000:.2f} s")
 | LD1 off (no power LED) | USB hub or port not powering the Nucleo | Try plugging directly into the laptop |
 | LD1 on but LD3 dark | Firmware didn't boot | `picocom -b 921600 /dev/ttyACM0`, press NRST, read the banner |
 | LD3 off in RELEASE/DEBUG/DATASET | `main()` didn't reach `BSAU_Run()` | Check UART for FAULT or Error_Handler trap |
-| `NRF_Init [FAIL]` | Bad SPI wiring, NRF unpowered, or dead chip | Re-do Section 3.4 multimeter checks; swap NRF module |
+| `NRF_Init [FAIL]` | Bad SPI wiring, NRF unpowered, or dead chip | **v2.4: no longer fatal** — board boots with `g_nrf_alive = false` and BSAU_Run retries every 500 packets. If `Health [OK] Recovered` never prints, re-do §3.4 multimeter checks and swap the NRF module. See `BSAU_RUN_GUIDE.md` §8 for the full recovery flow. |
 | `drop` counter climbing | ADC ISR couldn't finish before the next scan | Check that no LOG is being printed in a tight loop; in DATASET, raise `BSAU_DATASET_CSV_DECIMATION` |
 | Garbled UART output | Baud wrong on the laptop side | Must be 921600 8N1 |
 | CPCU stopped seeing packets after switching to DATASET | UART TX blocking the main loop | Verify USART1_TX DMA is enabled; verify no stray LOG call added |
 | `retry` or `loss` counters spiking | 2.4 GHz interference | Move away from Wi-Fi router; temporary: `NRF_CHANNEL = 80` |
 | First packet lost every boot | NRF POR wasn't done when `NRF_Init` ran | Raise `NRF_POR_DELAY_MS` to 300 |
+| Board boots with `radio OFFLINE` log line | NRF wasn't reachable at boot — **non-fatal in v2.4** | Wait one health-check interval (500 packets ≈ 0.5 s) for auto-recovery; if it persists, treat as `NRF_Init [FAIL]` row above |
 
 ## 8.2 Symptom to cause, CPCU side
 
 | Symptom | Probable cause | Fix |
 |---------|----------------|-----|
 | `cpcu_kernel` won't start | `/dev/shm/cpcu_ipc` stale from previous run | `sudo rm /dev/shm/cpcu_ipc; sudo systemctl restart cpcu` |
-| "NRF init failed" in log | SPI wiring / 5 V on the NRF / wrong channel | Multimeter check; confirm `/dev/spidev0.0` exists |
+| "NRF init failed" in log | SPI wiring / 5 V on the NRF / wrong channel — **cpcu_io retries every 3 s** | Multimeter check; confirm `/dev/spidev0.0` exists. The cpcu_io re-init path drains FIFOs, power-cycles via PWR_DOWN, and runs `NRF_Init` again on a 3 s cadence — see `cpcu_io.c` step 6. |
 | "PCA init failed" | I²C wiring / missing pull-ups / no 3.3 V to PCA | `sudo i2cdetect -y 1` → expect `40`; if `--`, check wires and pull-ups |
 | "Model not found" | `.pkl` file not in `/opt/cpcu/models/` | `scp emg_rf_model.pkl pi@cpcu.local:/opt/cpcu/models/` |
 | TUI shows `Rate: 0 /s` | BSAU not transmitting, or wrong NRF channel/address | Section 5.6.1 |

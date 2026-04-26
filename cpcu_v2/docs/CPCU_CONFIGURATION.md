@@ -94,15 +94,23 @@ a kernel respawn.
 |---|---|---|
 | `SAFETY_I2C_MAX_ERRORS` | 5 | Consecutive failed PCA writes before SAFE |
 
-### Ring buffer
+### Ring buffer (v2.3 — recoverable fault)
 
 | Constant | Default | Meaning |
 |---|---|---|
-| `SAFETY_RING_OVERFLOW_LIMIT` | 100 | Cumulative overflows before SAFE |
+| `SAFETY_RING_OVERFLOW_LIMIT` | 100 | Overflows since baseline before SAFE |
+| `SAFETY_RING_RECOVER_MS` | 5000 | Quiescence required to clear the fault |
 
-The ring is 1024 entries (1 second of buffering); 100 cumulative
-overflows means the consumer has lapped meaningfully many times. Raise
-this if you have an unstable DSP that occasionally pauses.
+The ring is 1024 entries (1 second of buffering). The trip threshold
+of 100 overflows is applied to the **delta since the last quiescent
+baseline**, not to the all-time cumulative count — so once the
+producer/consumer rebalance and 5 s pass with no new overflows, the
+fault clears and the baseline is reset for future bursts. Pre-v2.3
+the threshold compared against `io_ring_overflows` directly, which
+latched in SAFE forever once tripped. Raise `SAFETY_RING_OVERFLOW_LIMIT`
+if you have an unstable DSP that occasionally pauses; raise
+`SAFETY_RING_RECOVER_MS` if your bursts come in waves and you want a
+longer "all clear" hold time before resuming.
 
 ### Thermal
 
@@ -475,7 +483,8 @@ you don't have servos attached.
 
 ### "Want to add a new gesture"
 
-1. Collect labelled CSVs via cpcu_tui Page 7 (preserved in `./datasets/`).
+1. Collect labelled CSVs via cpcu_tui Dataset page (key `6` since v3.4,
+   files preserved in `./datasets/`).
 2. Run the team's `feature_ex.py` + `model.py` against the new dataset.
 3. Copy the new joblib + scaler to `/opt/cpcu/models/`.
 4. Add the new label string to `GESTURE_SERVO_MAP` in `cpcu_dsp.py`

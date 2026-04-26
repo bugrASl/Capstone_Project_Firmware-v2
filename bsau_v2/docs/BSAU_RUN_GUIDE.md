@@ -1,4 +1,4 @@
-# BSAU Run Guide — v2.1
+# BSAU Run Guide — v2.4 (NRF non-fatal init)
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -411,6 +411,50 @@ gathering real data.
 -   If the CPCU reports `seq_gaps > 0` on *every* boot, check `NRF_POR_DELAY_MS`
     — it should be ≥ 200 ms. Lower values can start NRF_Init before the
     chip's POR is done.
+
+### NRF init failed at boot but the board is still running (v2.4)
+
+This is the new non-fatal behaviour — **not a bug**. Symptoms:
+
+```
+[BSAU - NRF ]: NRF_Init           [WARN] Attempt 1 failed (err=-3), ...
+[BSAU - NRF ]: NRF_Init           [WARN] Attempt 2 failed (err=-3), ...
+[BSAU - NRF ]: NRF_Init           [WARN] All 2 attempts failed (err=-3) — booting
+                                          without radio, BSAU_Run will retry every
+                                          500 packets
+[BSAU - APP ]: BSAU_Init          [OK  ] Pipeline live (radio OFFLINE)
+```
+
+In v2.3 and earlier this would have called `Error_Handler()` (i.e. hard
+lock the board with `__disable_irq() + while(1)`). In v2.4 the system
+boots, ADC + UART come up, and the periodic health check inside
+`BSAU_Run` retries the chip every `NRF_HEALTH_CHECK_INTERVAL = 500`
+packets (~500 ms at 1 kHz). When the chip finally answers you'll see:
+
+```
+[BSAU - NRF ]: Health             [OK  ] Recovered
+```
+
+Common causes that this catches automatically:
+
+-   Radio rail brownout at boot (battery sagging on motor inrush) —
+    chip will come up once the rail recovers.
+-   User pulled the NRF module mid-run and re-inserted it.
+-   SPI bus glitch from a long jumper-wire setup that resolves itself
+    once you settle the cabling.
+-   POR delay edge case where the chip wasn't *quite* ready in 200 ms.
+
+If `Health [FAIL]` keeps repeating without ever printing
+`Health [OK ] Recovered`, then the chip really is dead — check Phase 5
+NRF self-test (`BSAU_TEST_GUIDE.md §7`) and the wiring; this is the
+same situation that the v2.3 hard-lock used to indicate, just no longer
+silently behind a wedged main loop.
+
+In DATASET mode specifically, even with the radio offline the UART
+CSV stream keeps flowing because the CSV emit happens **before** the
+TX gate (per the v2.2 fix); so the DSP/AI team can keep collecting
+ground-truth labels via UART while you debug the radio side. This
+is the main reason the init is no longer fatal.
 
 ---
 

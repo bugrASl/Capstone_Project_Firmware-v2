@@ -1,33 +1,57 @@
 /**
  *  @file       cpcu_safety.c
- *  @brief      System-wide safety monitor implementation, v2.2.
+ *  @brief      System-wide safety monitor implementation, v2.3.
  *  @author     bugrASl
  *  @date       April 2026
+ *
+ *  v2.3 changes (2026-04):
+ *      - Ring-overflow fault is now recoverable. Previously the fault
+ *        flag was tied to the absolute cumulative count crossing a
+ *        threshold. Since io_ring_overflows is monotonic, the flag
+ *        latched on first violation and the FSM stayed in SAFE forever
+ *        even after the producer/consumer rebalanced. The new logic
+ *        applies the threshold to the delta since the last quiescent
+ *        baseline, and clears the fault after SAFETY_RING_RECOVER_MS
+ *        of no new growth (then re-baselines).
+ *      - Public API is unchanged; the helper safety_now_us() uses
+ *        CLOCK_MONOTONIC internally so cpcu_io and the testbench did
+ *        not have to be modified.
  *
  *  v2.2 changes (2026-04):
  *      - Replaced SAFETY_TryRecover with SAFETY_UpdateState — handles
  *        BOTH transitions into and out of RADIO_SAFE in one place.
- *        Non-radio non-battery causes (thermal, dsp, i2c, ring) now
- *        explicitly drive the FSM into SAFE (previously they only
- *        gated CheckSystem without changing state, which was confusing).
- *      - SAFE-exit logic no longer requires last_pkt_rcv_us to be fresh
- *        (was over-zealous; if radio recovered before SAFE entry, this
- *        was double-checking the same thing). Now it just checks the
- *        actual fault flags.
+ *      - SAFE-exit logic no longer requires last_pkt_rcv_us to be fresh.
  *
- *  Caller contract: see header. The most important parts:
+ *  Caller contract: see header. Most important parts:
  *      - cpcu_io must call FeedI2C from BOTH the success path AND the
  *        else-branch fallback (where it writes neutrals via PCA), or
  *        i2c.faulted will never clear once tripped.
  *      - cpcu_io must call FeedMotorCMD whenever IPC_ReadMotorCmd
- *        returns true, regardless of safety state. Otherwise dsp.stalled
- *        latches and SAFE recovery cannot succeed.
+ *        returns true, regardless of safety state.
+ *      - cpcu_io must call FeedRingOverflow every loop — the recovery
+ *        timer needs a heartbeat.
  */
 
 #include "cpcu_safety.h"
 
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
+
+/*============= INTERNAL TIMING ============================================*/
+/*
+ *  Local CLOCK_MONOTONIC sampler for the v2.3 ring-overflow recovery
+ *  timer. We could have added a now_us argument to FeedRingOverflow,
+ *  but the testbench (test/safety_testbench.c) and cpcu_io.c both use
+ *  the single-argument form, and keeping that contract avoids a
+ *  user-facing API change.
+ */
+static uint64_t safety_now_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+}
 
 /*============= INIT =======================================================*/
 
@@ -158,8 +182,7 @@ void SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
 
         case RADIO_RUNNING:
         case RADIO_SAFE:
-            /* Other transitions (battery, thermal, dsp, i2c, ring) are
-             * driven from UpdateState rather than here. */
+            /* Other transitions are driven from UpdateState. */
             break;
     }
 }
@@ -233,16 +256,56 @@ void SAFETY_FeedI2C(SAFETY_Context *ctx, bool success)
     }
 }
 
-/*============= RING =======================================================*/
-
+/*============= RING (v2.3 — recoverable) ==================================*/
+/**
+ *  Trip condition (entry to fault):
+ *      (current - baseline) > SAFETY_RING_OVERFLOW_LIMIT
+ *  Recovery condition (exit from fault):
+ *      no new overflow growth for SAFETY_RING_RECOVER_MS, then re-baseline.
+ *
+ *  This mirrors the hysteresis pattern already used by battery and thermal:
+ *  the fault arms quickly, but only clears once the offending condition
+ *  has been quiet for an explicit hold time. The baseline reset on
+ *  recovery means a future burst is detected against a fresh window
+ *  rather than against the all-time-cumulative count, which would
+ *  otherwise stay above the threshold forever.
+ */
 void SAFETY_FeedRingOverflow(SAFETY_Context *ctx, uint32_t overflow_count)
 {
-    ctx->ring.overflow_count    =   overflow_count;
-    bool was_faulted            =   ctx->ring.faulted;
-    ctx->ring.faulted           =   (overflow_count > SAFETY_RING_OVERFLOW_LIMIT);
+    uint64_t now_us             =   safety_now_us();
 
-    if(ctx->ring.faulted && !was_faulted)
-        ctx->last_fault         =   SAFETY_ERR_RING_OVF;
+    /* Track growth of the cumulative counter. */
+    if(overflow_count > ctx->ring.overflow_count)
+    {
+        ctx->ring.last_growth_us = now_us;
+    }
+    ctx->ring.overflow_count    =   overflow_count;
+
+    /* Delta against the current baseline. */
+    uint32_t delta              =   (overflow_count >= ctx->ring.baseline_count)
+                                     ? overflow_count - ctx->ring.baseline_count
+                                     : 0;
+
+    if(!ctx->ring.faulted)
+    {
+        if(delta > SAFETY_RING_OVERFLOW_LIMIT)
+        {
+            ctx->ring.faulted   =   true;
+            ctx->last_fault     =   SAFETY_ERR_RING_OVF;
+        }
+    }
+    else
+    {
+        /* In fault — clear once the SPSC ring has been quiet for
+         * SAFETY_RING_RECOVER_MS. Re-baseline so subsequent bursts
+         * trip cleanly without latching on the all-time count. */
+        if(ctx->ring.last_growth_us > 0 &&
+           (now_us - ctx->ring.last_growth_us) / 1000 > SAFETY_RING_RECOVER_MS)
+        {
+            ctx->ring.faulted        =   false;
+            ctx->ring.baseline_count =   overflow_count;
+        }
+    }
 }
 
 /*============= THERMAL ====================================================*/

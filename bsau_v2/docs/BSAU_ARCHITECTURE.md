@@ -1,4 +1,4 @@
-# BSAU System Architecture — v2.0 Redesign
+# BSAU System Architecture — v2.4 (NRF non-fatal init)
 
 **Author:** bugrASl  
 **Board:** NUCLEO-L432KC (STM32L432KC, Cortex-M4F @ 80 MHz)  
@@ -644,11 +644,44 @@ power_on → SystemClock_Config() → MX_GPIO_Init() → MX_DMA_Init()
 BSAU_Init() steps:
 1. Assert NVIC priority grouping = NVIC_PRIORITYGROUP_4
 2. If TEST_* mode → delegate to BSAU_Test_Init(), return
-3. Wait NRF POR delay (200 ms for crystal startup, datasheet §6.1.7)
-4. NRF_Init() with address and channel; if fails, retry once after 100 ms
-5. BSAU_ADC_Init(): HAL_ADCEx_Calibration_Start(), HAL_ADC_Start_DMA(), TIM6 start
-6. HAL_TIM_Base_Start(&htim2) — free-running timestamp counter
-7. Set FIRST_PACKET flag for first transmitted packet
+3. Start TIM2 (1 MHz free-running timestamp counter)
+4. Wait NRF POR delay (200 ms for crystal startup, datasheet §6.1.7)
+5. `nrf_bringup()` — `NRF_Init()` with two attempts, 100 ms backoff. On
+   success, set `g_nrf_alive = true`. **On failure (v2.4): log a WARN
+   and continue with `g_nrf_alive = false` instead of calling
+   `Error_Handler()`.** The board boots with the radio offline; ADC,
+   UART (and the DATASET-mode CSV stream) keep running, and
+   `BSAU_Run`'s periodic health check brings the chip up as soon as
+   it becomes reachable.
+6. BSAU_ADC_Init(): HAL_ADCEx_Calibration_Start(), HAL_ADC_Start_DMA(), TIM6 start
+
+### 7.1.1 NRF recovery strategy (v2.4)
+
+The radio has a single liveness flag `g_nrf_alive` and three file-local
+helpers in `bsau_app.c`:
+
+| Helper | Purpose |
+|---|---|
+| `nrf_bringup()`        | Bounded-retry `NRF_Init`. Updates `g_nrf_alive`. |
+| `nrf_try_recover()`    | Cold reset: `ce_low` → `NRF_FlushTX/RX` → `NRF_PowerDown` → POR delay → `nrf_bringup`. Idempotent. |
+| `nrf_is_healthy()`     | Reads `RF_CH` and `CONFIG`; returns false if either is `0xFF` (chip absent / MISO floating), if `RF_CH` doesn't match `NRF_CHANNEL`, or if `PWR_UP` (CONFIG bit 1) is clear. |
+
+The main loop runs the health probe every `NRF_HEALTH_CHECK_INTERVAL = 500`
+packets (~500 ms at 1 kHz). Two paths:
+
+- **Chip alive:** check `nrf_is_healthy()`. If it reports a mismatch
+  (factory-default `RF_CH=2`, factory-default `CONFIG=0x08` with
+  `PWR_UP=0`, or `0xFF` reads), call `nrf_try_recover()`.
+- **Chip dead:** call `nrf_try_recover()` directly. Same cadence as
+  above, so a board that booted without a radio sees the chip come
+  up exactly one health-check interval after the radio rail
+  stabilises.
+
+After successful recovery, `first_packet=true` is set so the next
+packet carries `WL_FLAG_FIRST_PACKET` (CPCU resets its `expected_seq`
+without counting a fake gap), `lost_count` is rebased to `pkt_count`,
+and `prev_loss/prev_retry` are zeroed (no stale OBSERVE_TX values
+leak into the new link).
 
 ### 7.2 Main Loop Pseudo-Code
 
@@ -662,6 +695,7 @@ void BSAU_Run(void)
     uint32_t    lost_count   = 0;
     uint8_t     prev_retry   = 0;
     uint8_t     prev_loss    = 0;
+    bool        first_packet = true;
 
     while (1)
     {
@@ -670,20 +704,18 @@ void BSAU_Run(void)
         if (!g_pkt_ready) continue;           // Spurious wake → sleep again
         g_pkt_ready = 0;
 
-        // ── Build metadata ────────────────────────────────────
+        // ── Build metadata (profile-independent) ─────────────
         pkt.seq       = tx_seq++;
         pkt.flags     = 0;
         pkt.tx_retry  = prev_retry;           // From PREVIOUS transmit
         pkt.pkt_loss  = prev_loss;
         pkt.timestamp = (uint16_t)(TIM2->CNT & 0xFFFF);
 
-        // Battery: average of scan 0 and scan 1
-        uint16_t batt_0 = g_adc_snapshot[ADC_BATT_INDEX];       // index 8
-        uint16_t batt_1 = g_adc_snapshot[9 + ADC_BATT_INDEX];   // index 17
-        pkt.vbat_raw  = (batt_0 + batt_1) / 2;
+        // Battery from scan 0
+        pkt.vbat_raw  = BSAU_ADC_GetBattery();
 
-        // Battery level flags
-        if      (pkt.vbat_raw < 1675) pkt.flags = WL_BATT_SET(pkt.flags, WL_BATT_CRITICAL);
+        // Battery level flags (with hysteresis on CPCU side)
+        if      (pkt.vbat_raw < 1675) pkt.flags = WL_BATT_SET(pkt.flags, WL_BATT_CRIT);
         else if (pkt.vbat_raw < 1861) pkt.flags = WL_BATT_SET(pkt.flags, WL_BATT_LOW);
         else                          pkt.flags = WL_BATT_SET(pkt.flags, WL_BATT_OK);
 
@@ -693,8 +725,8 @@ void BSAU_Run(void)
             g_adc_error_code = 0;
         }
 
-        // First packet flag
-        if (pkt_count == 0) pkt.flags |= WL_FLAG_FIRST_PACKET;
+        // First packet flag (also set after a successful NRF recovery)
+        if (first_packet) { pkt.flags |= WL_FLAG_FIRST_PACKET; first_packet = false; }
 
         // ── Copy EMG samples (stride = ADC_DMA_CHANNELS = 9) ──
         for (int s = 0; s < 2; s++)
@@ -707,19 +739,45 @@ void BSAU_Run(void)
                 if (pkt.samples[s].ch[c] == 0 || pkt.samples[s].ch[c] >= 4095)
                     pkt.flags |= WL_FLAG_CLIPPING;
 
-        // ── Encode and transmit ───────────────────────────────
         WL_Pack(&pkt, raw);
-        NRF_Status status = NRF_Transmit(&g_hnrf, raw);
 
-        // Read link quality AFTER transmit (for NEXT packet)
-        uint8_t observe = NRF_ReadReg(&g_hnrf, NRF_REG_OBSERVE_TX);
-        prev_retry = observe & 0x0F;           // ARC_CNT
-        prev_loss  = (observe >> 4) & 0x0F;    // PLOS_CNT
+#ifdef BSAU_MODE_DATASET
+        // DATASET only — emit CSV BEFORE radio TX so UART is never
+        // gated by the radio (v2.2 fix for the SAFE-induced freeze).
+        if (pkt_count % BSAU_DATASET_CSV_DECIMATION == 0)
+            LOG_CSV("...", pkt.samples[0].ch[0..7]);
+#endif
 
-        if (status == NRF_ERR_TX_MAX_RT)
-            lost_count++;
+        // ── v2.4: TX gated by liveness — same gate every profile ──
+        if (g_nrf_alive) {
+#ifdef BSAU_MODE_DATASET
+            NRF_GetTxStats(&g_hnrf, &prev_loss, &prev_retry);
+            (void)NRF_TransmitNoBlock(&g_hnrf, raw);   // fire-and-forget
+#else
+            NRF_Status status = NRF_Transmit(&g_hnrf, raw); // blocking
+            NRF_GetTxStats(&g_hnrf, &prev_loss, &prev_retry);
+            if (status == NRF_ERR_TX_MAX_RT) {
+                NRF_FlushTX(&g_hnrf);
+                lost_count++;
+            }
+#endif
+        } else {
+            prev_loss = 0; prev_retry = 0;       // no stale link stats
+        }
 
         pkt_count++;
+
+        // ── Periodic health check + cold recovery if needed ──
+        if (pkt_count % NRF_HEALTH_CHECK_INTERVAL == 0) {
+            if (!g_nrf_alive || !nrf_is_healthy()) {
+                if (nrf_try_recover() == NRF_OK) {
+                    first_packet = true;          // CPCU resets seq cleanly
+                    lost_count   = pkt_count;
+                    prev_loss    = 0;
+                    prev_retry   = 0;
+                }
+            }
+        }
     }
 }
 ```

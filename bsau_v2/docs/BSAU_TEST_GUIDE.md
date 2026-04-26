@@ -337,7 +337,7 @@ its own Phase 3 (see `CPCU_TEST_GUIDE.md`). Both devices are within
 |--------|----------|-------|
 | `pkt_rate` | 990–1000 Hz | Below 990: retransmits are happening; check `tx_retry` on BSAU UART in DEBUG mode |
 | `loss_rate` | < 0.1% | |
-| `ring overflows` | 0 | Non-zero = the Python DSP is too slow |
+| `ring overflows` | 0 (or self-clearing burst) | Sustained non-zero (> 100 over baseline) = Python DSP too slow; transient bursts auto-clear in 5 s (CPCU v2.3) |
 | `seq_gaps` | 0 after ~5 s warmup | First packet may count as a gap; that's fine |
 | Battery `lvl` | 0 (OK) | If 1 or 2, the battery on BSAU is dying |
 

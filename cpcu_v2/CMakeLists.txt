@@ -1,7 +1,18 @@
 ##
-##  CMakeLists.txt — CPCU v2.2 Build System
+##  CMakeLists.txt — CPCU v2.3 Build System
 ##  Author: bugrASl
 ##  Date:   April 2026
+##
+##  Changes v2.2 -> v2.3:
+##      - cpcu_tui split into three source files (cpcu_tui.c +
+##        cpcu_tui_render.c + cpcu_tui_data.c sharing cpcu_tui.h).
+##        The monolithic 2900-line file was getting unmanageable;
+##        the split groups main / render / data layers so each
+##        file is ~500-1800 lines.
+##      - cpcu_safety v2.3: ring-overflow fault is now recoverable
+##        (delta-based threshold + 5 s quiescence timer). Public
+##        API unchanged so cpcu_io and safety_testbench did not
+##        need to change.
 ##
 ##  Changes v2.1 -> v2.2:
 ##      - pca_testbench now depends on cpcu_smooth.c and links -lrt
@@ -13,7 +24,7 @@
 ##  Targets:
 ##      cpcu_io         Core 3: Real-time I/O controller
 ##      cpcu_kernel     Core 0: Process supervisor
-##      cpcu_tui        Core 0/SSH: ncurses live dashboard
+##      cpcu_tui        Core 0/SSH: ncurses live dashboard (3-file)
 ##      test_codec      Test: Codec + IPC unit tests (no hardware)
 ##      pca_testbench   Test: Interactive PCA9685 servo test (with slew)
 ##      signal_testbench Test: End-to-end signal integrity TUI
@@ -22,7 +33,7 @@
 ##
 
 cmake_minimum_required(VERSION 3.16)
-project(cpcu VERSION 2.2 LANGUAGES C)
+project(cpcu VERSION 2.3 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -88,10 +99,19 @@ endif()
 
 if(CURSES_FOUND)
     message(STATUS "Curses library:      ${CURSES_LIBRARIES}")
-    add_executable(cpcu_tui src/cpcu_tui.c)
+    ## v3.4 (2026-04): cpcu_tui split into three .c files for readability.
+    ##   src/cpcu_tui.c          main() + key dispatch + splash + boot
+    ##   src/cpcu_tui_render.c   drawing primitives, helpers, page draws
+    ##   src/cpcu_tui_data.c     demo synthesis, dataset capture, wave ring
+    ## All three include the shared header include/cpcu_tui.h.
+    add_executable(cpcu_tui
+        src/cpcu_tui.c
+        src/cpcu_tui_render.c
+        src/cpcu_tui_data.c
+    )
     target_link_libraries(cpcu_tui PRIVATE cpcu_codec cpcu_ipc cpcu_log ${CURSES_LIBRARIES} rt m)
     target_include_directories(cpcu_tui PRIVATE ${CURSES_INCLUDE_DIRS})
-    message(STATUS "ncurses found — cpcu_tui will be built")
+    message(STATUS "ncurses found — cpcu_tui will be built (3-file)")
 else()
     message(STATUS "ncurses not found — cpcu_tui will NOT be built")
 endif()

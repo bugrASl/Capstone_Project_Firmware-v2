@@ -6,7 +6,7 @@ pipeline, and commands up to 6 servo motors via a PCA9685 PWM driver.
 
 [![Platform: RPi5](https://img.shields.io/badge/Platform-Raspberry%20Pi%205-c51a4a.svg)](#hardware)
 [![Language: C11 / Python 3](https://img.shields.io/badge/Language-C11%20%7C%20Python%203-green.svg)](#software-architecture)
-[![Version: v2.1](https://img.shields.io/badge/Version-v2.1-brightgreen.svg)](#)
+[![Version: v2.3](https://img.shields.io/badge/Version-v2.3-brightgreen.svg)](#)
 
 > **First time with this repo?** Start from the root
 > [`../SYSTEM_GUIDE.md`](../SYSTEM_GUIDE.md) — it covers the whole system
@@ -34,7 +34,7 @@ NRF24L01+ → SPI → WL_Unpack → SPSC Ring → DSP + ML → PCA9685 → Servo
 - **≤ 51 ms** worst-case ADC-to-servo latency (typical 26 ms)
 - **1000 pkt/s** sustained wireless input
 - **10 Hz** gesture inference rate (70 % headroom on cores 1–2)
-- **7 fault sources** monitored by a deterministic safety FSM
+- **7 fault sources** monitored by a deterministic safety FSM, **all individually recoverable** (radio, battery, DSP stall, I²C, thermal, ring-overflow, NRF hardware) — see Safety section
 - **66 240 B** shared-memory region for all IPC
 
 ---
@@ -111,20 +111,39 @@ Ring buffer consume → ADC-to-voltage → Bandpass (20–450 Hz, Butterworth)
 `ARM_BEND_LESS`, `ARM_BEND_MIDDLE`, `ARM_BEND_MOST`, `ARM_SLOW`,
 `ARM_FAST`, `BICEPS_ONLY`.
 
-### Safety monitor (7 fault sources)
+### Safety monitor (7 fault sources, all recoverable)
 
 The safety subsystem runs on Core 3 and enforces a deterministic
-fail-safe (servos to neutral, then limp) on any single fault:
+fail-safe (servos to neutral, then limp) on any single fault. Once the
+condition clears and stays clear for `SAFETY_SAFE_RECOVER_MS = 3000 ms`,
+the FSM transitions back through `RECOVERING` to `RUNNING` on its own —
+no manual reset required.
 
-| Source | Threshold | Action |
-|--------|-----------|--------|
-| Radio silence | 750 ms → DEGRADED, 1500 ms → SAFE | Servos neutral → limp |
-| Battery critical | V_batt ≤ 2.7 V | Immediate SAFE |
-| DSP stall | No motor command for 2000 ms | Servos neutral |
-| I²C fault | 5 consecutive PCA9685 failures | Servos neutral |
-| Thermal | CPU > 82 °C | Immediate SAFE |
-| Ring overflow | 100 cumulative overflows | Servos neutral |
-| NRF hardware | SPI readback mismatch at init | Tracked in diagnostics |
+| Source | Trip | Action | Recovery (v2.3) |
+|--------|------|--------|------------------|
+| Radio silence | 750 ms → DEGRADED, 1500 ms → SAFE | Servos neutral → limp | 10 consecutive OK packets |
+| Battery critical | V_batt ≤ 2.7 V | Immediate SAFE | V_batt > 3.0 V (hysteresis) |
+| DSP stall | No motor command for 2000 ms | Servos neutral | First fresh motor cmd |
+| I²C fault | 5 consecutive PCA9685 failures | Servos neutral | First successful write |
+| Thermal | CPU > 82 °C | Immediate SAFE | T < 70 °C (hysteresis) |
+| Ring overflow | > 100 overflows since baseline | Servos neutral | 5 s of no new overflows, baseline reset |
+| NRF hardware | SPI readback mismatch at init | Tracked in diagnostics | cpcu_io re-init at 3 s interval |
+
+**v2.3 ring-overflow fix.** Earlier versions tied the ring fault to the
+all-time cumulative `io_ring_overflows` counter. Because that counter
+is monotonic, once the threshold tripped the FSM latched in SAFE
+forever even after the producer/consumer rebalanced. The new logic
+applies the threshold to the *delta* since the last quiescent baseline,
+and clears the fault after 5 s of no new growth (then re-baselines).
+Public `SAFETY_FeedRingOverflow(ctx, count)` API is unchanged.
+
+**v2.4 BSAU NRF init non-fatal.** On the BSAU side, a failed
+`NRF_Init()` at boot used to call `Error_Handler()` (hard lock). It now
+sets `g_nrf_alive = false` and lets the periodic health check inside
+`BSAU_Run` retry every 500 packets. This means a BSAU board with a
+sagging radio rail will boot, keep ADC + UART alive (and the DATASET
+CSV stream flowing), and pick up the radio link as soon as it
+becomes reachable.
 
 ---
 
@@ -171,7 +190,7 @@ cpcu_v2/
 │   ├── test_dsp_pipeline.py       # Python: DSP filter + feature + model tests
 │   ├── pca_testbench.c            # Interactive PCA9685 servo calibration TUI
 │   ├── signal_testbench.c         # End-to-end signal integrity TUI
-│   └── safety_testbench.c         # Automated safety-FSM harness (31 checks)
+│   └── safety_testbench.c         # Automated safety-FSM harness (33 checks, v2.3)
 │
 ├── datasets/                      # v2.1: collected EMG recordings ({label}_{N}.csv)
 ├── models/                        # emg_rf_model.pkl lives here (not in repo)
@@ -269,9 +288,9 @@ The TUI has **7 pages**, press number keys to switch:
 | `2` | Radio / I/O | NRF internals, packet stats, last-packet hex dump, BSAU flags |
 | `3` | DSP / AI | DSP rate, inference rate, per-class confidence, motor cmds |
 | `4` | Waveforms | Live 8-channel rolling scope; `UP/DN` select, `TAB` zoom |
-| `5` | Config | Static spec-sheet reference |
-| `6` | Health | 10-row traffic-light dashboard |
-| **`7`** | **Dataset** | **v2.1: collect EMG recordings; `←/→` label, `s`/SPACE start/stop, `t` raw/filt, `r` cancel** |
+| `5` | Health | 10-row traffic-light dashboard |
+| **`6`** | **Dataset** | **collect EMG recordings; `←/→` label, `s`/SPACE start/stop, `t` raw/filt, `r` cancel** |
+| `7` | Config | Static spec-sheet reference *(moved to last tab in v3.4)* |
 
 Universal keys: `q` quits. Demo-mode hotkeys: `w [ ]` cycle waveforms,
 `F B G O I` inject faults, `R` resets everything.
@@ -290,9 +309,10 @@ rendering.
 
 ## Dataset collection (v2.1)
 
-New in v2.1: the TUI page 7 and the `bsau_dataset_collector.py` script
-together let you capture two synchronised CSV files of each gesture —
-one from the BSAU UART (raw) and one from the CPCU TUI (filtered):
+New in v2.1: the TUI Dataset page (page 6 since v3.4) and the
+`bsau_dataset_collector.py` script together let you capture two
+synchronised CSV files of each gesture — one from the BSAU UART
+(raw) and one from the CPCU TUI (filtered):
 
 ```bash
 # On the laptop (BSAU side, while BSAU is in BSAU_MODE_DATASET):
@@ -303,7 +323,7 @@ python3 scripts/bsau_dataset_collector.py \
 # Ctrl+C to stop.
 
 # On the Pi (CPCU side, cpcu_tui running):
-# Press '7' → use '←/→' to pick REST → SPACE → hold gesture → SPACE.
+# Press '6' → use '←/→' to pick REST → SPACE → hold gesture → SPACE.
 # File appears in the directory cpcu_tui was launched from:
 # ./datasets/REST_0.csv
 ```
@@ -342,7 +362,7 @@ Five phases of increasing hardware dependency:
 
 | Phase | Scope | Hardware | Key tests |
 |-------|-------|----------|-----------|
-| 1 | Pure software | None | Codec round-trip, DSP validation, safety FSM (31 checks), TUI demo render |
+| 1 | Pure software | None | Codec round-trip, DSP validation, safety FSM (33 checks, v2.3), TUI demo render |
 | 2 | IPC validation | Shared memory (`cpcu_kernel` running) | Struct offset matching between C and Python |
 | 3 | Pi hardware | RPi5 + SPI + I²C | Core isolation, PCA9685 detection, thermal |
 | 4 | Integration | BSAU transmitting | End-to-end packet flow, latency measurement |

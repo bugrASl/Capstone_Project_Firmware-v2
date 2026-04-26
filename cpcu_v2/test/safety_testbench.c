@@ -159,11 +159,22 @@ static void test_radio_loss_timeout(void)
 
 /*============= TB-SAF02 : Low battery fault ===============================================*/
 /*
- *  critical vbat ≈ 2.7V. Through the /2 divider, that's raw = 2.7 * 4095 / 3.3 / 2 = 1675.
- *  We pick 1600 to be safely below.
+ *  Critical vbat ≈ 2.7 V. Through the on-board 2:1 divider on the BSAU,
+ *  that's raw = 2.7 / 3.3 / 2 * 4095 = 1675. We pick 1600 to be safely
+ *  below.
  *
- *  Expected: feeding a packet with vbat_raw = 1600 while in RUNNING should
- *  immediately set state = RADIO_SAFE with fault = SAFETY_ERR_BATTERY.
+ *  v2.3 contract:
+ *      - SAFETY_FeedPacket sets battery.critical = true and last_fault =
+ *        SAFETY_ERR_BATTERY but does NOT change the FSM state.
+ *      - SAFETY_UpdateState moves RUNNING → SAFE on battery.critical.
+ *      - A subsequent good packet recovers battery.critical (hysteresis).
+ *      - SAFETY_UpdateState then waits SAFETY_SAFE_RECOVER_MS = 3 s of
+ *        all-clear before moving SAFE → RUNNING.
+ *
+ *  Pre-v2.2 the FSM transition was inline in FeedPacket and SAFE was
+ *  terminal. The old TB-SAF02e expected that; v2.2 deliberately made
+ *  battery recoverable, and TB-SAF02e is rewritten here to test the
+ *  recovery instead.
  */
 static void test_low_battery(void)
 {
@@ -175,10 +186,14 @@ static void test_low_battery(void)
           ctx.state == RADIO_RUNNING,
           "state=%s", SAFETY_RadioStr(ctx.state));
 
-    /* Feed one packet with critical battery. Raw=1600 → ~2.58 V. */
+    /* Feed one packet with critical battery. Raw=1600 → ~2.58 V after
+     * the 2:1 divider correction in cpcu_safety.c. */
     WL_Packet pkt;
     build_healthy_packet(&pkt, 50, 1600);
     SAFETY_FeedPacket(&ctx, &pkt, t0 + 1000);
+
+    /* v2.3: state transition for battery is in UpdateState, not FeedPacket. */
+    SAFETY_UpdateState(&ctx, t0 + 1000);
 
     CHECK("TB-SAF02b", "critical vbat: state=SAFE",
           ctx.state == RADIO_SAFE,
@@ -194,14 +209,34 @@ static void test_low_battery(void)
           ctx.last_fault == SAFETY_ERR_BATTERY,
           "fault=%s", SAFETY_StatusStr(ctx.last_fault));
 
-    /* Feeding a healthy packet after critical should NOT recover (SAFE is
-     * terminal within the radio FSM; battery critical additionally keeps
-     * CheckSystem false). */
+    /*
+     *  v2.3: battery is RECOVERABLE (was terminal in v2.0).
+     *  Feed a healthy packet → battery.critical clears via hysteresis,
+     *  but state stays SAFE until SAFETY_SAFE_RECOVER_MS = 3 s of
+     *  all-clear has elapsed.
+     */
     build_healthy_packet(&pkt, 51, 2482);
     SAFETY_FeedPacket(&ctx, &pkt, t0 + 2000);
-    CHECK("TB-SAF02e", "SAFE is terminal after battery fault",
+    SAFETY_UpdateState(&ctx, t0 + 2000);
+
+    CHECK("TB-SAF02e", "good vbat: state still SAFE during 3s hold-off",
           ctx.state == RADIO_SAFE,
-          "state=%s after good pkt", SAFETY_RadioStr(ctx.state));
+          "state=%s  battery.critical=%d  (hold-off in progress)",
+          SAFETY_RadioStr(ctx.state), ctx.battery.critical);
+
+    CHECK("TB-SAF02f", "good vbat: battery.critical cleared",
+          !ctx.battery.critical,
+          "critical=%d  vbat=%.2fV", ctx.battery.critical, ctx.battery.voltage);
+
+    /*  Advance time past SAFETY_SAFE_RECOVER_MS = 3 s to verify the
+     *  v2.3 SAFE → RUNNING exit. We only need to call UpdateState — no
+     *  more packets — because the safe_clear_since_us timer was started
+     *  on the previous call when all flags were clear.                  */
+    SAFETY_UpdateState(&ctx, t0 + 2000 + 3100ULL * 1000ULL);
+
+    CHECK("TB-SAF02g", "after 3s all-clear: SAFE → RUNNING",
+          ctx.state == RADIO_RUNNING,
+          "state=%s", SAFETY_RadioStr(ctx.state));
 }
 
 /*============= TB-SAF03 : Sequence gap storm ==============================================*/

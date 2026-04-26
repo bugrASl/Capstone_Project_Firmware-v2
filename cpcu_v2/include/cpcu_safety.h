@@ -1,46 +1,58 @@
 /**
  *  @file       cpcu_safety.h
- *  @brief      System-wide safety monitor.
+ *  @brief      System-wide safety monitor — public interface, v2.3.
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.2
+ *
+ *  v2.3 changes (2026-04):
+ *      - RING_Health now tracks a baseline + last-growth timestamp so the
+ *        fault flag can clear once the SPSC ring stops dropping packets
+ *        for SAFETY_RING_RECOVER_MS. Previously, since io_ring_overflows
+ *        is a monotonic cumulative atomic counter, once it crossed the
+ *        100-overflow threshold the FSM would latch in SAFE forever
+ *        even after the producer/consumer rebalanced. The fault threshold
+ *        is now applied to the *delta* since the last quiescent baseline,
+ *        making it a true rate detector with hysteresis.
+ *      - Public API of SAFETY_FeedRingOverflow is unchanged (still takes
+ *        the cumulative count); the recovery logic is fully internal so
+ *        cpcu_io and the safety testbench remain source-compatible.
+ *      - SAFETY_VBAT_DIVIDER restored to 2.0 (was incorrectly set to 1.0
+ *        in v2.2 with a comment claiming the BSAU firmware would
+ *        correct; that BSAU change never shipped, so the v2.2 value
+ *        of 1.0 made every healthy 4 V battery read as 2.00 V on the
+ *        CPCU side, latching battery.critical true). See note next to
+ *        the macro.
+ *      - cpcu_io.c now calls SAFETY_UpdateState() once per loop after
+ *        the existing Feed/Check calls. This is the last piece of the
+ *        v2.2 refactor that wasn't actually wired in production —
+ *        without it, non-radio fault transitions (battery, thermal,
+ *        i2c, ring) updated the boolean flags but never moved the
+ *        FSM state out of RUNNING. CheckSystem already gated on the
+ *        flags so servos were parked correctly, but the TUI state
+ *        indicator never said SAFE.
  *
  *  v2.2 changes (2026-04):
- *      - Renamed SAFETY_TryRecover → SAFETY_UpdateState. The function now
- *        handles BOTH entry into SAFE (for thermal/dsp/i2c/ring conditions
- *        that were previously not transitioning the FSM) AND exit from
- *        SAFE once all triggers clear.
- *      - last_pkt_rcv_us is no longer used as a recovery gate while in
- *        SAFE. Recovery hinges on the actual fault flags (battery.critical,
- *        thermal.critical, etc.), not on packet arrival timing.
+ *      - Replaced SAFETY_TryRecover with SAFETY_UpdateState — handles
+ *        BOTH transitions into and out of RADIO_SAFE in one place.
  *
- *  v2.1 changes (still in effect):
- *      - SAFE state is recoverable. After all triggering conditions
- *        have been clear for SAFETY_SAFE_RECOVER_MS, FSM exits SAFE.
- *      - Battery hysteresis (critical at <2.7 V, recover above 3.0 V).
- *      - Thermal hysteresis (critical at >82 °C, recover below 70 °C).
- *      - SAFETY_VBAT_DIVIDER = 1.0 (was 2.0; BSAU firmware corrects
- *        before transmitting).
- *      - LINK auto-clear after 5 min of LINK_GOOD.
+ *  Caller contract:
+ *      - cpcu_io must call FeedI2C from BOTH the success path AND the
+ *        else-branch fallback (where it writes neutrals via PCA), or
+ *        i2c.faulted will never clear once tripped.
+ *      - cpcu_io must call FeedMotorCMD whenever IPC_ReadMotorCmd
+ *        returns true, regardless of safety state. Otherwise dsp.stalled
+ *        latches and SAFE recovery cannot succeed.
+ *      - cpcu_io must call FeedRingOverflow every loop, even when no
+ *        new overflows occurred — the recovery timer needs a heartbeat.
  *
- *  Design contract:
- *      The OWNING file (cpcu_io.c) calls these in order each loop:
- *          1.  SAFETY_FeedPacket       (when a packet arrives)
- *          2.  SAFETY_CheckTimeout     (every loop, regardless of packet)
- *          3.  SAFETY_CheckDSP         (every loop)
- *          4.  SAFETY_FeedRingOverflow (every loop)
- *          5.  SAFETY_FeedTemperature  (periodic, e.g. 1 Hz)
- *          6.  SAFETY_FeedI2C          (after every I2C write attempt —
- *                                        IMPORTANT: feed it even from the
- *                                        SAFE-state fallback or i2c.faulted
- *                                        will never clear)
- *          7.  SAFETY_FeedMotorCMD     (whenever a motor cmd is read —
- *                                        IMPORTANT: read it every loop
- *                                        even in SAFE, otherwise dsp.stalled
- *                                        will never clear)
- *          8.  SAFETY_UpdateState      (every loop, decides FSM transitions)
- *          9.  SAFETY_CheckSystem      (every loop, gates servo motion)
- *         10.  SAFETY_ShouldAutoClear  (every loop, signals counter reset)
+ *  Ordered call sequence per loop:
+ *          1.  SAFETY_FeedPacket          (whenever a packet arrives)
+ *          2.  SAFETY_CheckTimeout        (every loop)
+ *          3.  SAFETY_CheckDSP            (every loop)
+ *          4.  SAFETY_FeedRingOverflow    (every loop)
+ *          5.  SAFETY_FeedI2C             (whenever I2C is touched)
+ *          6.  SAFETY_FeedTemperature     (every ~5 s)
+ *          7.  SAFETY_UpdateState         (every loop, after the above)
  */
 
 #ifndef CPCU_SAFETY_H
@@ -50,12 +62,12 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "wireless_packet.h"
 
-#include <stdint.h>
-#include <stdbool.h>
-
-/*============= CONFIGURATION ==============================================*/
+/*============= TUNABLE CONFIG =============================================*/
 
 /* Radio Timing */
 #define SAFETY_RADIO_TIMEOUT_MS         750
@@ -73,7 +85,29 @@ extern "C" {
 #define SAFETY_VBAT_LOW_V               3.0f
 #define SAFETY_VBAT_CRITICAL_V          2.7f
 #define SAFETY_VBAT_RECOVER_V           3.0f
-#define SAFETY_VBAT_DIVIDER             1.0f    /* See header note */
+#define SAFETY_VBAT_DIVIDER             2.0f    /*  BSAU PB0 has a 2:1 resistor
+                                                 *  divider so a 4.0 V battery
+                                                 *  reads as 2.0 V at the ADC.
+                                                 *  bsau_app.c sends the raw
+                                                 *  post-divider 12-bit count
+                                                 *  directly, so CPCU must
+                                                 *  multiply by 2.0 here to
+                                                 *  recover the battery V.
+                                                 *  v2.2 set this to 1.0 with
+                                                 *  a doc-comment claiming the
+                                                 *  BSAU firmware now corrects
+                                                 *  — but BSAU_ADC_GetBattery()
+                                                 *  in bsau_adc.c is unchanged
+                                                 *  and passes the raw count
+                                                 *  through, so 1.0 was a real
+                                                 *  bug: every healthy 4.0 V
+                                                 *  battery was being read as
+                                                 *  2.00 V on the CPCU side
+                                                 *  → battery.critical stuck
+                                                 *  true → CheckSystem stuck
+                                                 *  false → servos always
+                                                 *  parked at neutral.
+                                                 *  Restored to 2.0 in v2.3.*/
 
 /* DSP */
 #define SAFETY_DSP_STALL_MS             2000
@@ -81,8 +115,10 @@ extern "C" {
 /* I2C */
 #define SAFETY_I2C_MAX_ERRORS           5
 
-/* Ring */
-#define SAFETY_RING_OVERFLOW_LIMIT      100
+/* Ring (with recovery, v2.3) */
+#define SAFETY_RING_OVERFLOW_LIMIT      100         /* trip threshold (delta) */
+#define SAFETY_RING_RECOVER_MS          5000        /* clear after this much
+                                                       quiescence            */
 
 /* Thermal (with hysteresis) */
 #define SAFETY_THERMAL_WARN_C           75
@@ -159,9 +195,24 @@ typedef struct
     bool            faulted;
 } I2C_Health;
 
+/**
+ *  v2.3 RING_Health.
+ *      overflow_count   — last cumulative count we sampled (atomic from IPC).
+ *      baseline_count   — count value at the last quiescent re-baseline.
+ *                         The trip threshold is applied to (overflow_count
+ *                         - baseline_count) so the FSM doesn't latch on a
+ *                         monotonic counter.
+ *      last_growth_us   — last time the cumulative count went up. Used by
+ *                         the recovery side: faulted clears once
+ *                         SAFETY_RING_RECOVER_MS pass with no new growth.
+ *      faulted          — public flag consumed by SAFETY_CheckSystem and
+ *                         SAFETY_UpdateState.
+ */
 typedef struct
 {
     uint32_t        overflow_count;
+    uint32_t        baseline_count;
+    uint64_t        last_growth_us;
     bool            faulted;
 } RING_Health;
 
@@ -206,19 +257,23 @@ void        SAFETY_FeedMotorCMD(SAFETY_Context *ctx, uint64_t now_us);
 void        SAFETY_CheckDSP(SAFETY_Context *ctx, uint64_t now_us);
 
 void        SAFETY_FeedI2C(SAFETY_Context *ctx, bool success);
+
+/**
+ *  v2.3: API unchanged (still takes the cumulative atomic counter from
+ *  ipc.diag->io_ring_overflows), but the recovery logic is now internal
+ *  — the function uses clock_gettime() to maintain its own quiescence
+ *  timer so cpcu_io and the safety testbench did not have to change.
+ *  Call this every loop, even when no new overflows occurred.
+ */
 void        SAFETY_FeedRingOverflow(SAFETY_Context *ctx, uint32_t overflow_count);
+
 void        SAFETY_FeedTemperature(SAFETY_Context *ctx, float temp_c);
 
 bool        SAFETY_CheckSystem(const SAFETY_Context *ctx);
 
 /*  v2.2: Single function that handles ALL FSM transitions.
  *  Call it once per loop after all the Feed/Check functions have
- *  refreshed the boolean fault flags. It will:
- *      - Move RUNNING → SAFE if any non-radio/non-batt fault arose
- *        (battery and radio are handled inside FeedPacket / CheckTimeout
- *         since they're the original two state-machine drivers)
- *      - Move SAFE → RECOVERING/RUNNING once all faults have been clear
- *        for SAFETY_SAFE_RECOVER_MS                                       */
+ *  refreshed the boolean fault flags.                                   */
 void        SAFETY_UpdateState(SAFETY_Context *ctx, uint64_t now_us);
 
 bool        SAFETY_ShouldAutoClear(SAFETY_Context *ctx, uint64_t now_us);

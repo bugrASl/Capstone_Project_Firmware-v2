@@ -1,4 +1,4 @@
-# CPCU System Architecture — v3.2
+# CPCU System Architecture — v3.4
 
 **Author:** bugrASl  
 **Board:** Raspberry Pi 5 (BCM2712, 4x Cortex-A76 @ 2.4 GHz, OC to 2.8 GHz)  
@@ -260,17 +260,23 @@ Servo update (50 Hz):
 
 ### 6.2 All Fault Sources
 
-| Source | Detection | Threshold | Action |
-|---|---|---|---|
-| Radio link | No packet received | 750 ms silence | DEGRADED -> SAFE |
-| Battery | BSAU reports CRITICAL | V_batt <= 2.7V | Immediate SAFE |
-| DSP stall | No motor cmd from Python | 2000 ms | SMOOTH_Snap + neutral |
-| I2C bus | PCA9685 write failures | 5 consecutive | SMOOTH_Snap + neutral |
-| Thermal | CPU temperature | > 82 C | Immediate SAFE |
-| Ring overflow | Consumer dead | 100 cumulative overflows | SMOOTH_Snap + neutral |
-| NRF hardware | Init failure | SPI readback mismatch | Tracked in diagnostics |
+| Source | Detection | Threshold | Action | Recovery (v2.3) |
+|---|---|---|---|---|
+| Radio link | No packet received | 750 ms silence | DEGRADED → SAFE | 10 consecutive OK packets |
+| Battery | BSAU reports CRITICAL | V_batt ≤ 2.7 V | Immediate SAFE | V_batt > 3.0 V (hysteresis) |
+| DSP stall | No motor cmd from Python | 2000 ms | SMOOTH_Snap + neutral | First fresh motor cmd |
+| I²C bus | PCA9685 write failures | 5 consecutive | SMOOTH_Snap + neutral | First successful write |
+| Thermal | CPU temperature | > 82 °C | Immediate SAFE | T < 70 °C (hysteresis) |
+| Ring overflow | Consumer dead / lap | > 100 overflows since baseline | SMOOTH_Snap + neutral | 5 s of no new overflows, baseline reset |
+| NRF hardware | Init failure | SPI readback mismatch | Tracked in diagnostics | cpcu_io re-init (3 s interval) |
 
-Any single failure forces servos to neutral via SMOOTH_Snap() (instant, non-gradual).
+Any single failure forces servos to neutral via SMOOTH_Snap() (instant, non-gradual). All seven sources are now individually recoverable and converge back to RUNNING through `SAFETY_UpdateState`'s SAFE-exit path: once every flag has been clear for `SAFETY_SAFE_RECOVER_MS = 3000 ms`, the FSM transitions to RECOVERING (radio-induced cause) or directly to RUNNING (any other cause).
+
+**v2.3 ring-overflow recovery.** Earlier versions tied `ring.faulted` to the *cumulative* atomic counter `io_ring_overflows`. Because that counter is monotonic, once the threshold tripped the FSM latched in SAFE forever, even after the producer/consumer rebalanced. The new logic applies the threshold to the *delta* since the last quiescent baseline, and clears the fault after 5 s of no new growth (then re-baselines). The public API of `SAFETY_FeedRingOverflow(ctx, count)` is unchanged — the timer is maintained internally via `clock_gettime(CLOCK_MONOTONIC)`.
+
+**v2.3 SAFETY_UpdateState now wired.** v2.2 introduced `SAFETY_UpdateState()` to centralise the RUNNING ↔ SAFE transitions for non-radio faults (battery, thermal, dsp, i2c, ring), but `cpcu_io.c` was never updated to actually call it. Boolean flags updated correctly and `SAFETY_CheckSystem()` already gated servo writes on them, so the prosthesis was still mechanically safe; but the FSM `state` shown in the TUI never reflected SAFE for non-radio faults — it stayed `RUNNING` while servos were being parked at neutral, which was confusing during diagnosis. v2.3 wires the call into `cpcu_io`'s main loop step 5.
+
+**v2.3 SAFETY_VBAT_DIVIDER fix.** The constant was set to 1.0 in v2.2 with a comment claiming the BSAU firmware would correct for the on-board 2:1 resistor divider, but that BSAU change never shipped. `bsau_adc.c::BSAU_ADC_GetBattery()` returns the raw post-divider 12-bit ADC count, and `bsau_app.c` passes it directly to `pkt.vbat_raw`. With `SAFETY_VBAT_DIVIDER = 1.0`, every healthy 4.0 V battery reported as 2.00 V on the CPCU side, latching `battery.critical = true`. Restored to 2.0 in v2.3.
 
 ---
 
@@ -306,11 +312,13 @@ Scaler:         StandardScaler (mean/std from training data)
 
 ---
 
-## 8. TUI System (cpcu_tui v3.2)
+## 8. TUI System (cpcu_tui v3.4)
 
 ### 8.1 Multi-Page Dashboard
 
-The TUI is a single binary (`cpcu_tui`) with **6 switchable pages**. Press `1`/`2`/`3`/`4`/`5`/`6` to switch. All pages are read-only (peek at shared memory, never consume ring entries).
+The TUI is a single binary (`cpcu_tui`) with **7 switchable pages**. Press `1`/`2`/`3`/`4`/`5`/`6`/`7` to switch. All live-data pages are read-only (peek at shared memory, never consume ring entries); only Dataset (page 6) opens a file for writing while a capture is armed.
+
+**v3.4 page order change:** the static CONFIG spec sheet was moved from page 5 to page 7. Live-data pages now occupy the first six tabs so the most-watched information is on the lowest-numbered keys, and the spec reference is parked at the end.
 
 ```
 Page 1 — Overview:   Rolled-up HEALTH banner (six green/yellow/red pills +
@@ -345,32 +353,45 @@ Page 4 — Waveforms:  Live 8-channel line-trace waveforms (' ` - . ,
                      single-channel detail (adds DC offset + time-axis
                      scale). Peek-based — safe alongside cpcu_dsp.py.
 
-Page 5 — Config:     Static compile-time + hardware spec reference.
-                     Four sections: BSAU/CPCU topology, wireless+IPC
-                     layout, motor+ML pipeline, build info (TUI version,
-                     compiler, C standard, build date/time). Nothing
-                     updates at runtime; this is the "what system am I
-                     looking at" page.
-
-Page 6 — Health:     Traffic-light rollup. 10 subsystem rows (Safety FSM,
+Page 5 — Health:     Traffic-light rollup. 10 subsystem rows (Safety FSM,
                      Radio, IO loop, IPC ring, Pkt integrity, Battery,
                      DSP pipeline, ML export, BSAU sensor, SAFE trips),
                      each [OK]/[WARN]/[FAULT] with a one-line "why"
                      explanation. Top banner tallies N OK | N WARN |
                      N FAULT, shows overall verdict. Put this on a
                      second monitor during hardware testing.
+
+Page 6 — Dataset:    Interactive 8-channel CSV capture. LEFT/RIGHT cycles
+                     the gesture label (REST, H.SLO, H.HRD, H.OPN, A.BND<,
+                     A.BND=, A.BND>, A.SLO, A.FST, BICEP), s/SPACE
+                     starts/stops, r cancels and deletes the partial
+                     file, t toggles RAW ADC ↔ FILTERED output. The
+                     capture state machine drains the ring every tick
+                     regardless of which page is currently rendered, so
+                     flipping pages mid-capture does not lose samples.
+
+Page 7 — Config:     Static compile-time + hardware spec reference. Four
+                     sections: BSAU/CPCU topology, wireless+IPC layout,
+                     motor+ML pipeline, build info (TUI version, compiler,
+                     C standard, build date/time). Nothing updates at
+                     runtime; this is the "what system am I looking at"
+                     page, parked at the end of the tab order in v3.4.
 ```
 
 ### 8.2 Hotkey Reference
 
 **Universal (all pages):**
 
-| Key       | Action                                                |
-|-----------|-------------------------------------------------------|
-| `1`..`6`  | Switch page                                           |
-| `q` `Q`   | Quit                                                  |
-| `UP`/`DN` | Select channel (Page 4 only)                          |
-| `TAB`     | Toggle grid ↔ single-channel detail (Page 4 only)     |
+| Key        | Action                                                |
+|------------|-------------------------------------------------------|
+| `1`..`7`   | Switch page                                           |
+| `q` `Q`    | Quit                                                  |
+| `UP`/`DN`  | Select channel (Page 4 only)                          |
+| `TAB`      | Toggle grid ↔ single-channel detail (Page 4 only)     |
+| `← / →`    | Cycle gesture label (Page 6 only, when not capturing) |
+| `s` `SPACE`| Start / stop capture (Page 6 only)                    |
+| `t` `T`    | Toggle RAW ↔ FILTERED capture (Page 6 only, idle)     |
+| `r`        | Cancel + delete in-progress capture (Page 6 only)     |
 
 **Demo-mode-only** (`cpcu_tui --demo`):
 
@@ -382,11 +403,11 @@ Page 6 — Health:     Traffic-light rollup. 10 subsystem rows (Safety FSM,
 | `F`     | Inject radio freeze (triggers DEGRADED→SAFE in 2.25 s)  |
 | `B`     | Inject low battery (triggers SAFE on `VBAT_CRITICAL`)   |
 | `G`     | Inject sequence-gap storm                               |
-| `O`     | Inject ring overflow                                    |
+| `O`     | Inject ring overflow (auto-clears once burst ends, v2.3)|
 | `I`     | Inject I²C error streak                                 |
 | `R`     | Master reset: clears all faults AND zeros every counter |
 
-`R` resets both the injected-fault mask *and* every accumulated IPC diag counter (packets, gaps, overflows, SAFE entries, inferences, latency, underflows, drops), so the UI snaps back to a clean-boot look.
+The `R` master reset is implemented by `demo_full_reset()` (v3.4 helper) which clears the injected-fault mask and zeros every cumulative IPC diag counter (packets, gaps, overflows, SAFE entries, inferences, latency, underflows, drops). On Dataset page mid-capture `r` instead cancels and deletes the partial file, since the master reset would be destructive there.
 
 ### 8.3 Demo Mode
 
@@ -406,10 +427,10 @@ CHIRP      frequency sweep f → 5f over 2 s, repeating
 ```
 
 ```bash
-./cpcu_tui --demo           # Full 6-page TUI with synthetic data
+./cpcu_tui --demo           # Full 7-page TUI with synthetic data
 ./signal_testbench --demo   # Signal analysis with selectable waveform
 ./pca_testbench             # Has built-in dry-run if no I2C
-./safety_testbench          # Automated safety-FSM harness (31 checks)
+./safety_testbench          # Automated safety-FSM harness (33 checks, v2.3)
 ```
 
 ### 8.4 Waveform Renderer (Page 4)
@@ -444,7 +465,7 @@ tmux new -s cpcu
 
 # Suggested 4-pane layout:
 #   Pane 0: journalctl -u cpcu -f
-#   Pane 1: cpcu_tui (press 1-6, use w/[/] in --demo)
+#   Pane 1: cpcu_tui (press 1-7, use w/[/] in --demo)
 #   Pane 2: watch -n 2 "vcgencmd measure_temp; ps -eo pid,comm,psr,pri | grep cpcu"
 #   Pane 3: sudo /opt/cpcu/bin/pca_testbench
 
@@ -456,7 +477,7 @@ tmux split-window -v
 # Detach: Ctrl+b d     Reattach: tmux attach -t cpcu
 ```
 
-During hardware testing, put `cpcu_tui` Page 6 (HEALTH) in pane 1 — it's the fastest way to catch regressions live.
+During hardware testing, put `cpcu_tui` Page 5 (HEALTH) in pane 1 — it's the fastest way to catch regressions live.
 
 ---
 
@@ -512,7 +533,7 @@ demo_signals.h           5      any     Shared 8-waveform generator (cpcu_tui +
 pca_testbench.c          test   0/SSH   Interactive servo calibration TUI
 signal_testbench.c       test   0/SSH   End-to-end signal integrity TUI
 safety_testbench.c       test   any     Automated safety-FSM harness
-                                        (31 checks across 7 test groups)
+                                        (33 checks across 7 test groups, v2.3)
 test_codec.c             test   any     Codec round-trip tests
 test_ipc_bridge.py       test   any     IPC offset validation
 test_dsp_pipeline.py     test   any     DSP filter + feature + model tests
