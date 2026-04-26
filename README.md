@@ -1,227 +1,171 @@
-# InfiniTech Prosthetic Hand — BSAU + CPCU (v2.1)
+# Prosthetic Hand Capstone — InfiniTech (BSAU + CPCU)
 
-**Real-time myoelectric prosthetic hand controller. 8-channel EMG acquisition on
-an STM32L432KC, 2.4 GHz wireless link to a Raspberry Pi 5, DSP + ML gesture
-classification, and servo-driven fingers — end to end.**
+[![Status: v2.3](https://img.shields.io/badge/Status-v2.3-brightgreen.svg)](#)
+[![BSAU: v2.4](https://img.shields.io/badge/BSAU-v2.4-blue.svg)](bsau_v2/README.md)
+[![CPCU: v2.3](https://img.shields.io/badge/CPCU-v2.3-blue.svg)](cpcu_v2/README.md)
+[![Tests: 105 PASS](https://img.shields.io/badge/Tests-105%20PASS-brightgreen.svg)](cpcu_v2/docs/CPCU_TEST_GUIDE.md)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: RPi5](https://img.shields.io/badge/Platform-Raspberry%20Pi%205-c51a4a.svg)](cpcu_v2/)
-[![MCU: STM32L432KC](https://img.shields.io/badge/MCU-STM32L432KC-03234b.svg)](bsau_v2/)
-[![Language: C11 / Python 3](https://img.shields.io/badge/Language-C11%20%7C%20Python%203-green.svg)](#)
-[![Version: v2.1](https://img.shields.io/badge/Version-v2.1-brightgreen.svg)](SYSTEM_GUIDE.md)
+**EE493/494 Capstone Design Project · METU, Spring 2026.**
 
----
-
-## 👉 New here? Start with [`SYSTEM_GUIDE.md`](SYSTEM_GUIDE.md)
-
-`SYSTEM_GUIDE.md` is the single go-to document. It assumes no prior
-knowledge and walks you through:
-
-1. What the system does and how the pieces fit together
-2. What to buy (bill of materials, cables, tools)
-3. How to wire everything up (pin-by-pin, both sides)
-4. How to bring up the toolchains on your laptop and the Pi
-5. How to test each layer in the correct order
-6. How to run the system day-to-day
-7. How to collect training datasets (v2.1 feature)
-8. What to do when things go wrong
-
-Everything else in this repo is either architectural detail, per-layer
-reference, or source code.
-
----
-
-## Overview
-
-The system is split into two physical units, connected by a 2.4 GHz radio link:
-
-| Unit | Role | Platform | Summary |
-|------|------|----------|---------|
-| **BSAU** | Bio-Signal Acquisition Unit | NUCLEO-L432KC (Cortex-M4F @ 80 MHz) | Acquires 8-channel EMG at 2 kHz with 32× hardware oversampling; streams 1000 packets/s over NRF24L01+ |
-| **CPCU** | Central Processing & Control Unit | Raspberry Pi 5 (4× Cortex-A76 @ 2.8 GHz OC) | Receives wireless packets, runs DSP filtering and RandomForest ML inference, drives 6 servo motors via a PCA9685 |
-
-### Signal chain
-
-```
-Electrode → InAmp → ADC (32× OS) → DMA → WL_Pack → SPI → NRF24L01+      [BSAU]
-                                                           │
-                         2.4 GHz Enhanced ShockBurst, 2 Mbps, ch 76
-                                                           │
-NRF24L01+ → SPI → WL_Unpack → SPSC Ring → DSP + ML → PCA9685 → Servos  [CPCU]
-```
-
-### Headline numbers
-
-- **≤ 51 ms** worst-case ADC-to-servo latency (typical 26 ms; target was 300 ms)
-- **1000 pkt/s** sustained wireless throughput at 2 Mbps
-- **10 Hz** gesture inference rate with 70 % headroom on cores 1–2
-- **~66 hours** battery life on the wearable unit (500 mAh LiPo)
-- **7 fault sources** monitored by a deterministic safety FSM
-
----
-
-## What's new in v2.1 — Dataset mode
-
-v2.1 adds `BSAU_MODE_DATASET`: the BSAU runs the full production transmit
-loop (CPCU sees a normal packet stream, inference still runs, servos still
-move) AND *simultaneously* emits one ASCII CSV line per packet on its UART:
-eight raw 12-bit ADC channels per line, at 921600 baud. A single
-capture session now yields two complementary CSV files of the same
-contraction:
-
-- **`./datasets/REST_0.csv`** on the laptop — raw ADC, 1000 Hz, 8 int cols
-- **`~/datasets/REST_0.csv`** on the Pi — filtered (20–450 Hz Butterworth + 50 Hz notch), 2000 Hz, 8 float cols
-
-Same 8-column shape on both sides, no header, no metadata — so `predict.py`
-and any pandas loader works on either file without code changes.
-
-See [SYSTEM_GUIDE.md §7](SYSTEM_GUIDE.md) for the full workflow.
-
----
-
-## Repository layout
-
-```
-prosthetic_hand/
-├── SYSTEM_GUIDE.md           ← Start here. Complete end-to-end guide.
-├── PROJECT_STRUCTURE.txt     ← Detailed file-by-file layout
-├── README.md                 ← (this file)
-├── LICENSE
-│
-├── bsau_v2/                  ← STM32 firmware (STM32CubeIDE project)
-│   ├── Core/                 → Application + HAL glue
-│   ├── Drivers/              → ST-provided HAL + CMSIS
-│   ├── docs/                 → BSAU_ARCHITECTURE, BSAU_RUN_GUIDE, BSAU_TEST_GUIDE
-│   └── README.md             → BSAU quick-start
-│
-└── cpcu_v2/                  ← Raspberry Pi application (CMake project)
-    ├── src/ include/         → C sources for cpcu_kernel/io/tui + drivers
-    ├── scripts/              → Python DSP, IPC bridge, dataset collector
-    ├── test/                 → Unit + integration tests
-    ├── datasets/             → (v2.1) Collected EMG recordings
-    ├── docs/                 → CPCU_ARCHITECTURE, CPCU_RUN_GUIDE, CPCU_TEST_GUIDE + PDF diagrams
-    └── README.md             → CPCU quick-start
-```
-
-A detailed breakdown with every file's purpose lives in
-[`PROJECT_STRUCTURE.txt`](PROJECT_STRUCTURE.txt).
-
----
+A real-time prosthetic hand controller built from two cooperating
+subsystems: a **BSAU** (Bio-Signal Acquisition Unit) running on an
+STM32L432KC that samples 8 EMG channels at 2 kHz and transmits 1000
+packets per second over a 2.4 GHz NRF24L01+ link, and a **CPCU**
+(Central Processing & Control Unit) running on a Raspberry Pi 5 that
+receives, filters, classifies via a trained RandomForest model, and
+drives 6 servo motors through a PCA9685 PWM driver — all under
+deterministic safety supervision.
 
 ## Quick start
 
-### BSAU side (your laptop, STM32CubeIDE)
+> **Want to read the project end-to-end before touching anything?**
+> Open [`SYSTEM_GUIDE.md`](SYSTEM_GUIDE.md). It's the single, go-to
+> walkthrough — assumes no prior knowledge, covers both halves.
 
 ```bash
-# 1. Open the project:
-#    File → Import → Existing Projects into Workspace → bsau_v2/
-
-# 2. Pick a build mode in Core/Inc/bsau_config.h:
-#    #define BSAU_MODE_RELEASE       (production)
-#    #define BSAU_MODE_DEBUG         (dev: LOG + decimated CSV)
-#    #define BSAU_MODE_DATASET       (v2.1: TX + UART CSV stream)
-
-# 3. Build (Ctrl+B) and flash (green play button).
-# 4. Plug a UART terminal at 921600 8N1 on /dev/ttyACM0.
-```
-
-See [`bsau_v2/README.md`](bsau_v2/README.md) for the full BSAU workflow and
-[`bsau_v2/docs/BSAU_RUN_GUIDE.md`](bsau_v2/docs/BSAU_RUN_GUIDE.md) for
-pin-by-pin detail.
-
-### CPCU side (the Raspberry Pi 5)
-
-```bash
+# 1. Get the code
 git clone <your-repo-url> ~/prosthetic_hand
-cd ~/prosthetic_hand/cpcu_v2
-sudo bash setup_pi.sh
-sudo reboot
+cd ~/prosthetic_hand
 
-# After reboot:
-mkdir build && cd build
-cmake .. && make -j4
-sudo make install
+# 2. Set up the Pi (one-time, ~3 minutes)
+cd cpcu_v2
+./setup_pi.sh                       # self-elevates via sudo (one prompt)
+sudo reboot                         # the only manual sudo you'll type
 
-# Deploy the ML model (not in the repo):
-sudo cp /path/to/emg_rf_model.pkl /opt/cpcu/models/
+# 3. Build, install, grant capabilities
+cmake -S . -B build
+cmake --build build -j4
+cmake --install build               # No sudo: /opt/cpcu is owned by you
+./scripts/launch.sh grant-caps      # self-elevates: setcap CAP_SYS_NICE + CAP_IPC_LOCK
 
-# Start the system:
-sudo systemctl enable cpcu
-sudo systemctl start cpcu
-/opt/cpcu/bin/cpcu_tui            # Live dashboard — 7 pages
+# 4. Drop your trained model
+cp /path/to/emg_rf_model.pkl /opt/cpcu/models/
+
+# 5. Run the test suite (no hardware needed for Phase 1)
+./run_tests.sh 1                    # → 7+33+65 = 105 PASS
+
+# 6. Launch the system
+./scripts/launch.sh tui             # tmux: KERNEL window + TUI window
 ```
 
-See [`cpcu_v2/README.md`](cpcu_v2/README.md) for the full CPCU workflow and
-[`cpcu_v2/docs/CPCU_RUN_GUIDE.md`](cpcu_v2/docs/CPCU_RUN_GUIDE.md) for
-deployment detail.
+The BSAU side is built in STM32CubeIDE — open
+`bsau_v2/InfiniTech_BSAU_Skeleton_v1.0.ioc` and click Build / Run.
 
-### No hardware? Preview everything in demo mode
+## What you should know
 
-```bash
-# On the Pi (or any Linux box after building):
-/opt/cpcu/bin/cpcu_tui --demo
-#   Full 7-page TUI fed with synthetic packets. Press 1-7 for pages,
-#   F/B/G/O/I to inject faults, w/[/]/R to cycle demo waveforms.
+### Headline numbers
+
+- **≤ 51 ms** worst-case ADC-to-servo latency (typical 26 ms)
+- **1000 pkt/s** sustained wireless input
+- **10 Hz** gesture inference rate (70% headroom on cores 1–2)
+- **7 fault sources** monitored by a deterministic safety FSM, *all
+  individually recoverable* (radio, battery, DSP stall, I²C, thermal,
+  ring-overflow, NRF hardware) — see CPCU README §Safety
+- **66 240 B** shared-memory region for all IPC
+- **105 automated tests** PASS in Phase 1 (codec + safety FSM + DSP)
+
+### Two codebases, one repo
+
+```
+prosthetic_hand/
+├── README.md            ← this file
+├── SYSTEM_GUIDE.md      ← single end-to-end walkthrough (start here)
+├── PROJECT_STRUCTURE.txt ← exhaustive file inventory + layout notes
+├── LICENSE
+│
+├── bsau_v2/             ← STM32L432KC firmware (built in STM32CubeIDE)
+│   ├── Core/Inc/        ← bsau_app.h, bsau_config.h, drivers, …
+│   ├── Core/Src/        ← bsau_app.c (v2.4 — non-fatal NRF init), …
+│   ├── Drivers/         ← STM32 HAL + CMSIS (ST-provided)
+│   ├── docs/            ← BSAU_ARCHITECTURE.md, BSAU_RUN_GUIDE.md, BSAU_TEST_GUIDE.md
+│   ├── README.md        ← BSAU-specific quick reference
+│   ├── InfiniTech_BSAU_Skeleton_v1.0.ioc
+│   └── STM32L432KCUX_FLASH.ld
+│
+└── cpcu_v2/             ← Raspberry Pi 5 application (CMake + Python)
+    ├── CMakeLists.txt   ← v2.3 build system
+    ├── setup_pi.sh      ← v2.3 — self-elevates, idempotent
+    ├── run_tests.sh     ← v2.3 — sudo-wrapped internally
+    ├── README.md        ← CPCU-specific quick reference
+    ├── include/         ← 10 C headers (cpcu_safety.h v2.3, cpcu_tui.h v3.4, …)
+    ├── src/             ← 12 C sources (cpcu_io.c v2.3, cpcu_tui*.{c} v3.4, …)
+    ├── test/            ← 4 testbenches + 2 Python tests (105 PASS total)
+    ├── scripts/         ← Python DSP, IPC bridge, launch.sh v2.5
+    ├── docs/            ← CPCU_ARCHITECTURE.md v3.4, CPCU_RUN_GUIDE.md, …
+    │   └── export/      ← 9 PDF design diagrams
+    ├── config/          ← /boot/firmware/{config,cmdline}.txt snippets
+    ├── datasets/        ← collected EMG recordings (.csv, gitignored)
+    └── models/          ← emg_rf_model.pkl lives here (not in repo)
 ```
 
----
+For the deeper file-by-file rationale, see
+[`PROJECT_STRUCTURE.txt`](PROJECT_STRUCTURE.txt).
+
+## No-sudo policy
+
+Every script in this project is invoked **as your regular user**. The
+two scripts that need root for specific operations (`setup_pi.sh` for
+apt + `/boot/firmware`, `launch.sh install-service` and
+`launch.sh grant-caps` for `/etc/systemd` and `setcap`) self-elevate
+via `sudo` and prompt you exactly once. After `setup_pi.sh`:
+
+- You're in the `spi`, `i2c`, `gpio` groups so the binaries can talk to
+  the peripherals without root.
+- `/opt/cpcu/{bin,scripts,models}` and `/var/log/cpcu/` are owned by
+  you so `cmake --install` and log-tailing don't need sudo.
+- The systemd unit (generated by `launch.sh install-service`) runs as
+  your user with `AmbientCapabilities=CAP_SYS_NICE CAP_IPC_LOCK` so
+  it can take `SCHED_FIFO` and `mlockall` without being root.
+
+The only sudo prompts you'll see at the prompt are `sudo systemctl
+{start,stop,status,restart} cpcu`, `sudo reboot`, and (rarely)
+`sudo raspi-config` — Linux requires sudo for those specific actions
+and there's no way around it.
+
+## Recent changes
+
+| Version | Date | Where | What |
+|---|---|---|---|
+| **v2.4 (BSAU)** | Apr 2026 | `bsau_app.c` | NRF init no longer fatal. Bounded retry + periodic 500-packet health check. Profile-uniform across DATASET / RELEASE / DEBUG. |
+| **v2.3 (CPCU safety)** | Apr 2026 | `cpcu_safety.{h,c}` | Ring-overflow recoverable (delta + 5 s quiescence); `SAFETY_VBAT_DIVIDER` restored to 2.0 (was wrongly 1.0); `SAFETY_UpdateState()` now called from `cpcu_io.c` step 5. |
+| **v3.4 (CPCU TUI)** | Apr 2026 | `cpcu_tui*.{c,h}` | Split into 3 .c + 1 .h (was 2900-line monolith); CONFIG → page 7; live-data on keys 1-6; IO heartbeat thresholds expressed relative to 100 ms period. |
+| **v2.3 (build/scripts)** | Apr 2026 | `setup_pi.sh`, `run_tests.sh`, `launch.sh` | All scripts self-elevate via sudo internally. New `launch.sh install-service` and `launch.sh grant-caps` modes. |
+| **v2.3 (tests)** | Apr 2026 | `safety_testbench.c`, `test_dsp_pipeline.py` | TB-SAF02 extended to 7 sub-checks for SAFE-recovery path; DSP test rewritten against current `cpcu_dsp.py` API (was importing a long-removed `get_features` function). 105/105 PASS. |
 
 ## Documentation map
 
-| Document | Audience | Purpose |
-|----------|----------|---------|
-| **[SYSTEM_GUIDE.md](SYSTEM_GUIDE.md)** | Everyone | **The go-to.** End-to-end guide: overview → hardware → software → testing → operation → troubleshooting |
-| [PROJECT_STRUCTURE.txt](PROJECT_STRUCTURE.txt) | Contributors | File-by-file breakdown of the whole repo |
-| [bsau_v2/README.md](bsau_v2/README.md) | BSAU developers | BSAU quick-start + build-mode picker |
-| [bsau_v2/docs/BSAU_ARCHITECTURE.md](bsau_v2/docs/BSAU_ARCHITECTURE.md) | Firmware engineers | Full BSAU design: ADC pipeline, clock tree, NRF SPI, packet format, power budget |
-| [bsau_v2/docs/BSAU_RUN_GUIDE.md](bsau_v2/docs/BSAU_RUN_GUIDE.md) | BSAU operators | Build / flash / operate the STM32 firmware |
-| [bsau_v2/docs/BSAU_TEST_GUIDE.md](bsau_v2/docs/BSAU_TEST_GUIDE.md) | BSAU testers | Test walkthrough + full TB-XXX reference (merged from old testbench spec) |
-| [cpcu_v2/README.md](cpcu_v2/README.md) | CPCU developers | CPCU quick-start + feature overview |
-| [cpcu_v2/docs/CPCU_ARCHITECTURE.md](cpcu_v2/docs/CPCU_ARCHITECTURE.md) | Software engineers | Full CPCU design: IPC layout, core allocation, safety FSM, timing budgets |
-| [cpcu_v2/docs/CPCU_RUN_GUIDE.md](cpcu_v2/docs/CPCU_RUN_GUIDE.md) | CPCU operators | Pi setup, build, deploy, run, monitor |
-| [cpcu_v2/docs/CPCU_TEST_GUIDE.md](cpcu_v2/docs/CPCU_TEST_GUIDE.md) | CPCU testers | 5-phase test execution guide |
-| [cpcu_v2/docs/export/*.pdf](cpcu_v2/docs/export/) | Reviewers | Rendered block diagrams, subsystem flowcharts |
+Nine documents, each at its own scope:
 
----
+| Where | What |
+|---|---|
+| [`README.md`](README.md) | This file — top-level project landing |
+| [`SYSTEM_GUIDE.md`](SYSTEM_GUIDE.md) | End-to-end walkthrough; start here |
+| [`PROJECT_STRUCTURE.txt`](PROJECT_STRUCTURE.txt) | File inventory + deployed-vs-flat layout note |
+| [`bsau_v2/README.md`](bsau_v2/README.md) | BSAU quick reference |
+| [`bsau_v2/docs/BSAU_ARCHITECTURE.md`](bsau_v2/docs/BSAU_ARCHITECTURE.md) | BSAU design rationale |
+| [`bsau_v2/docs/BSAU_RUN_GUIDE.md`](bsau_v2/docs/BSAU_RUN_GUIDE.md) | Bring-up + DATASET workflow + troubleshooting |
+| [`bsau_v2/docs/BSAU_TEST_GUIDE.md`](bsau_v2/docs/BSAU_TEST_GUIDE.md) | TB-100..TB-309 test procedures |
+| [`cpcu_v2/README.md`](cpcu_v2/README.md) | CPCU quick reference |
+| [`cpcu_v2/docs/CPCU_ARCHITECTURE.md`](cpcu_v2/docs/CPCU_ARCHITECTURE.md) | CPCU design rationale |
+| [`cpcu_v2/docs/CPCU_CONFIGURATION.md`](cpcu_v2/docs/CPCU_CONFIGURATION.md) | Tunable-constant reference |
+| [`cpcu_v2/docs/CPCU_RUN_GUIDE.md`](cpcu_v2/docs/CPCU_RUN_GUIDE.md) | Pi deployment walkthrough |
+| [`cpcu_v2/docs/CPCU_TEST_GUIDE.md`](cpcu_v2/docs/CPCU_TEST_GUIDE.md) | 5-phase test execution guide |
 
-## Hardware at a glance
+## Hardware
 
-```
-         ┌─────────────────────────────────┐        ┌──────────────────────────────────┐
-         │               BSAU              │        │               CPCU               │
-         │  NUCLEO-L432KC + NRF24L01+      │        │  Raspberry Pi 5 + NRF + PCA9685  │
-         │                                 │        │                                  │
-         │   8× EMG electrodes             │        │   6× servo motors                │
-         │   │                             │        │   ↑                              │
-         │   ▼                             │        │   │ PWM (I²C / PCA9685)          │
-         │   INA333 amps + RC filter       │        │   │                              │
-         │   │                             │        │   Core 3: cpcu_io (SCHED_FIFO)   │
-         │   ▼                             │        │   ↑                              │
-         │   STM32 ADC (2 kHz × 8, 32× OS) │        │   │ SPSC ring (/dev/shm)         │
-         │   │                             │        │   │                              │
-         │   ▼                             │        │   Cores 1-2: cpcu_dsp.py         │
-         │   TIM2 timestamp + WL_Pack      │   ≈5m  │   (Butterworth + notch + RF)     │
-         │   │                             │ ◀───▶  │   ↑                              │
-         │   ▼                             │  2.4G  │   │ Seqlock motor command        │
-         │   NRF24L01+ (1000 pkt/s)        │        │   │                              │
-         │                                 │        │   Core 0: cpcu_kernel + cpcu_tui │
-         │   Status: 1 kHz LED blink       │        │                                  │
-         └─────────────────────────────────┘        └──────────────────────────────────┘
-             Worn on upper arm                          Inside the prosthetic forearm
-             500 mAh LiPo · ~66 h life                  USB-C 5V + separate 6V servo PSU
-```
+| Component | Part | Where it lives | Interface |
+|---|---|---|---|
+| Acquisition MCU | STM32L432KC (Nucleo-32) | BSAU | — |
+| 8 EMG amps | (custom front-end) | BSAU | ADC PA0–PA7 |
+| Battery sense | 2:1 divider on PB0 | BSAU | ADC IN15 |
+| Radio | NRF24L01+ | both sides | SPI + 1 GPIO (CE) |
+| Servo driver | PCA9685 | CPCU | I²C @ 400 kHz, addr 0x40 |
+| Servos | MG995 × 4 + SG90 × 2 | CPCU side | PCA channels 0–5, separate 6 V / 3 A PSU |
+| Compute | Raspberry Pi 5 (≥1 GB) | CPCU | active cooler mandatory |
 
----
-
-## Authors
-
-- **bugrASl** — System architecture, firmware, software, hardware integration
-
-## Acknowledgments
-
-Developed as part of the **InfiniTech** prosthetic hand capstone project at
-**METU (Middle East Technical University)**, Electrical - Electronics Engineering, 2026.
+Full BoM, wiring tables, pre-power multimeter checks:
+[`SYSTEM_GUIDE.md` §3](SYSTEM_GUIDE.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [`LICENSE`](LICENSE).

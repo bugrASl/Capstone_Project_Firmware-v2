@@ -1,13 +1,13 @@
 #!/bin/bash
 ##
-##  run_tests.sh — CPCU v2.1 Test Runner
+##  run_tests.sh — CPCU v2.3 Test Runner
 ##  Author: bugrASl
 ##  Date:   April 2026
 ##
 ##  Runs all test phases in dependency order.
 ##  Phase 1 needs no hardware. Phase 2 needs shared memory. Phase 3 needs Pi hardware.
 ##
-##  Usage:
+##  Usage — RUN AS REGULAR USER (no sudo at the prompt):
 ##      ./run_tests.sh              # Run all automated phases (1 2 3)
 ##      ./run_tests.sh 1            # Run Phase 1 only (codec + safety + DSP)
 ##      ./run_tests.sh 1 2          # Run Phases 1 and 2
@@ -15,6 +15,16 @@
 ##      ./run_tests.sh signal       # Launch interactive signal integrity testbench
 ##      ./run_tests.sh signal-demo  # Launch signal testbench with synthetic data (no hw)
 ##      ./run_tests.sh safety-demo  # Launch cpcu_tui --demo with fault-injection hotkeys
+##
+##  v2.3 changes:
+##      - All sudo invocations removed. The PCA / signal testbench
+##        previously did `exec sudo ./binary`; now they just `exec
+##        ./binary`. setup_pi.sh adds you to the spi+i2c+gpio groups
+##        so the device files are reachable without root, and shm_open
+##        uses 0666 so /dev/shm/cpcu_ipc is also reachable.
+##      - Build location auto-detected: tries `./binary` first (legacy),
+##        then `build/binary` (modern out-of-tree cmake), then bails
+##        with a clear error if neither exists.
 ##
 
 set -e
@@ -82,7 +92,10 @@ if echo "$PHASES" | grep -qw "pca"; then
     fi
 
     echo -e "\n${CYAN}Launching testbench... (press 'q' inside TUI to quit)${RESET}\n"
-    exec sudo ${TB_BIN} /dev/i2c-1
+    ## No sudo here: setup_pi.sh added you to the i2c group, so /dev/i2c-1
+    ## is readable. If you skipped setup_pi.sh, the testbench falls back
+    ## to dry-run mode automatically.
+    exec ${TB_BIN} /dev/i2c-1
 fi
 
 ##============= INTERACTIVE: Signal Integrity Testbench ====================================
@@ -113,7 +126,8 @@ if echo "$PHASES" | grep -qw "signal"; then
     ## Check shared memory
     if [ ! -f /dev/shm/cpcu_ipc ]; then
         echo -e "${RED}[ERROR]${RESET} Shared memory not found."
-        echo "  Start cpcu_kernel first: sudo ./cpcu_kernel"
+        echo "  Start cpcu_kernel first:"
+        echo "      ./scripts/launch.sh kernel"
         echo "  (cpcu_io must also be running to receive NRF packets)"
         exit 1
     fi
@@ -124,7 +138,10 @@ if echo "$PHASES" | grep -qw "signal"; then
     echo "  3. cpcu_kernel + cpcu_io must be running"
     echo ""
     echo -e "${CYAN}Launching testbench... (press 'q' inside TUI to quit)${RESET}\n"
-    exec sudo ${SIG_BIN}
+    ## /dev/shm/cpcu_ipc is readable by the user that created it (the
+    ## kernel + io processes), and shm_open uses 0666 by default — no
+    ## sudo needed.
+    exec ${SIG_BIN}
 fi
 
 ##============= INTERACTIVE: Safety Fault Injector (no hardware) ===========================

@@ -1,8 +1,8 @@
-# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU + CPCU v2.1)
+# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3)
 
 **Author:** bugrASl
 **Date:** April 2026
-**Status:** v2.1 (DATASET mode integrated)
+**Status:** v2.3 (recoverable safety FSM + non-fatal NRF + 3-file TUI split + sudo-wrapped scripts)
 
 ---
 
@@ -14,6 +14,37 @@ choices specifically, and possibly nothing about embedded systems in
 general. It tries to explain both what to do *and* why you're doing it
 — so when something goes wrong (and it will), you have a model in your
 head instead of a recipe you can't modify.
+
+> **What changed since v2.1.** This document was extended several times
+> as the project matured. The biggest deltas:
+>
+> - **v2.4 (BSAU)** — `NRF_Init` failure at boot is no longer fatal.
+>   The board boots with `g_nrf_alive = false`, ADC + UART + DATASET
+>   CSV stream stay alive, and a periodic health check inside
+>   `BSAU_Run` retries the radio every 500 packets. A bad-rail / dead-
+>   chip prosthesis now does *something* useful instead of locking up
+>   in `Error_Handler()`.
+> - **v2.3 (CPCU safety)** — Ring-overflow fault is recoverable
+>   (delta-since-baseline + 5 s quiescence timer); `SAFETY_VBAT_DIVIDER`
+>   restored to 2.0 (was wrongly 1.0 in v2.2 — every healthy 4 V battery
+>   was reading as 2.00 V, latching `battery.critical`); `cpcu_io.c`
+>   now actually calls `SAFETY_UpdateState()` per loop, so the FSM
+>   `state` shown in the TUI finally tracks non-radio fault transitions.
+> - **v3.4 (CPCU TUI)** — Split into three .c files plus `cpcu_tui.h`
+>   (was a 2900-line monolith); CONFIG moved from page 5 to page 7;
+>   live-data pages now occupy keys 1-6; IO heartbeat thresholds
+>   (`IO_HB_WARN_MS = 200`, `IO_HB_BAD_MS = 500`) expressed relative
+>   to the 100 ms heartbeat period, fixing a frame where >20 ms always
+>   fired WARN.
+> - **v2.3 (build / scripts)** — All `setup_pi.sh` / `run_tests.sh` /
+>   `launch.sh` now self-elevate via `sudo` internally. **Users never
+>   have to type `sudo` manually** for any project script. The only
+>   exceptions are `sudo systemctl <action> cpcu`, `sudo reboot`, and
+>   `sudo apt` — which Linux requires for those specific operations.
+> - **safety_testbench** now exercises the full RUNNING → SAFE →
+>   RUNNING recovery path (extended from 5 to 7 sub-checks in TB-SAF02);
+>   total automated tests: **105 PASS** across `test_codec`,
+>   `safety_testbench`, and `test_dsp_pipeline.py`.
 
 If you are ever stuck on a step, check the corresponding **"What can go
 wrong"** box directly below that step before trying something random.
@@ -785,7 +816,7 @@ it's fully off, the flash didn't take — check the console.
 sudo apt install -y git
 git clone <your-repo-url> ~/cpcu_v2
 cd ~/cpcu_v2
-sudo bash setup_pi.sh
+./setup_pi.sh
 sudo reboot
 ```
 
@@ -841,7 +872,7 @@ python3 -c "import numpy, scipy, joblib, sklearn; print('OK')"
 ```
 
 ```bash
-sudo i2cdetect -y 1
+i2cdetect -y 1
 # Expected: the PCA9685 shows as "40" at row 40 column 0 (once it's wired).
 # If it shows "--" everywhere but the row/col labels, the PCA9685 is
 # unpowered, the pull-ups are missing, or wiring is wrong.
@@ -1232,9 +1263,9 @@ the adjacent message; usually a peripheral that isn't enabled.
 ground is wired. Then:
 
 ```bash
-sudo /opt/cpcu/bin/pca_testbench
+/opt/cpcu/bin/pca_testbench
 # or from the build directory:
-sudo ./pca_testbench
+./pca_testbench
 ```
 
 A TUI opens. Controls:
@@ -1483,7 +1514,7 @@ console.
 **On Pi, Terminal 1 (kernel + log):**
 
 ```bash
-ssh -t pi@cpcu.local 'cd /opt/cpcu/bin && sudo ./cpcu_kernel --log --debug'
+ssh -t pi@cpcu.local 'cd /opt/cpcu/bin && ./cpcu_kernel --log --debug'
 ```
 
 This spawns `cpcu_io` and `cpcu_dsp.py` as child processes and
@@ -1535,10 +1566,10 @@ tmux split-window -v
 tmux select-pane -t 0
 tmux split-window -v
 
-# Pane 0 (top-left):     sudo journalctl -u cpcu -f
+# Pane 0 (top-left):     journalctl -u cpcu -f
 # Pane 1 (bottom-left):  watch -n 2 "vcgencmd measure_temp; ps -eo pid,comm,psr,pri | grep cpcu"
 # Pane 2 (top-right):    /opt/cpcu/bin/cpcu_tui
-# Pane 3 (bottom-right): sudo /opt/cpcu/bin/pca_testbench   (if doing servo work)
+# Pane 3 (bottom-right): /opt/cpcu/bin/pca_testbench   (if doing servo work)
 
 # Navigate: Ctrl+b then arrow keys
 # Detach:   Ctrl+b d
@@ -1854,9 +1885,9 @@ print(f"CPCU: {cpcu.shape}, 2000 Hz → {cpcu.shape[0]/2000:.2f} s")
 
 | Symptom | Probable cause | Fix |
 |---------|----------------|-----|
-| `cpcu_kernel` won't start | `/dev/shm/cpcu_ipc` stale from previous run | `sudo rm /dev/shm/cpcu_ipc; sudo systemctl restart cpcu` |
+| `cpcu_kernel` won't start | `/dev/shm/cpcu_ipc` stale from previous run | `rm /dev/shm/cpcu_ipc; sudo systemctl restart cpcu` |
 | "NRF init failed" in log | SPI wiring / 5 V on the NRF / wrong channel — **cpcu_io retries every 3 s** | Multimeter check; confirm `/dev/spidev0.0` exists. The cpcu_io re-init path drains FIFOs, power-cycles via PWR_DOWN, and runs `NRF_Init` again on a 3 s cadence — see `cpcu_io.c` step 6. |
-| "PCA init failed" | I²C wiring / missing pull-ups / no 3.3 V to PCA | `sudo i2cdetect -y 1` → expect `40`; if `--`, check wires and pull-ups |
+| "PCA init failed" | I²C wiring / missing pull-ups / no 3.3 V to PCA | `i2cdetect -y 1` → expect `40`; if `--`, check wires and pull-ups |
 | "Model not found" | `.pkl` file not in `/opt/cpcu/models/` | `scp emg_rf_model.pkl pi@cpcu.local:/opt/cpcu/models/` |
 | TUI shows `Rate: 0 /s` | BSAU not transmitting, or wrong NRF channel/address | Section 5.6.1 |
 | Page 4 flat lines | ADC inputs at 0 V or railed | EMG amplifier issue — check BSAU side |
@@ -1913,14 +1944,14 @@ plt.show()"
 ```bash
 # Build
 cd ~/cpcu_v2 && mkdir -p build && cd build && cmake .. && make -j4
-sudo make install
+cmake --install build
 
 # Systemd control
 sudo systemctl start|stop|restart|status|enable|disable cpcu
 journalctl -u cpcu -f
 
 # Dev mode manual launch
-sudo /opt/cpcu/bin/cpcu_kernel --log --debug       # terminal 1
+/opt/cpcu/bin/cpcu_kernel --log --debug       # terminal 1
 /opt/cpcu/bin/cpcu_tui                              # terminal 2
 
 # Tests
@@ -1931,7 +1962,7 @@ sudo /opt/cpcu/bin/cpcu_kernel --log --debug       # terminal 1
 ./cpcu_tui --demo                                   # TUI only, synthetic data
 
 # Hardware verification
-sudo i2cdetect -y 1
+i2cdetect -y 1
 vcgencmd measure_temp
 vcgencmd measure_clock arm
 cat /sys/devices/system/cpu/isolated

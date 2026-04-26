@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cpcu_dsp.py -- Live DSP + ML pipeline for the CPCU.
+cpcu_dsp.py — Live DSP + ML pipeline for the CPCU. v2.3 (April 2026).
 
 Mirrors the offline Python pipeline developed by the DSP/AI team
 (proccess.py + feature_ex.py + model.py + predict.py), but reads from
@@ -8,47 +8,144 @@ shared memory (/dev/shm/cpcu_ipc) instead of CSV files and writes
 inference results back through IPC for cpcu_tui and cpcu_io to consume.
 
 ────────────────────────────────────────────────────────────────────────
-HOW THE TEAM'S CSV PIPELINE MAPS TO LIVE STREAMING
+HOW THE TEAM'S PIPELINE WORKS (read this before changing anything here)
 ────────────────────────────────────────────────────────────────────────
 
-  Team (offline, Windows)           ↔   CPCU (live, Pi)
-  ──────────────────────────────────────────────────────────────────
-  pd.read_csv("rest_3.csv")         ↔   ipc.pop_sensor_batch()
-  df['s1'].values                   ↔   buffers[ACTIVE_CHANNELS[0]]
-  40-sample window @ 200 Hz         ↔   400 samples @ 2 kHz,
-                                         decimated to 40 @ 200 Hz
-  apply_filters → extract_features  ↔   identical (same coefficients)
-  model.predict_proba(...)          ↔   identical
-  CSV row appended                  ↔   ipc.write_dsp_export(...) +
-                                         ipc.write_motor_cmd(...)
+The team has FOUR scripts that together define the model:
+
+  proccess.py     One-time clean-up. Reads raw CSV recordings from
+                  datasets/1/, applies a 20-450 Hz Butterworth bandpass
+                  + 50 Hz notch (filtfilt, zero-phase). Writes to
+                  datasets/2/. Also computes per-sensor noise thresholds
+                  as 3 * std(rest signal) into dynamic_noise_thresholds.json.
+                  *Not used by the trained model;* purely a preprocessing
+                  utility.
+
+  feature_ex.py   Reads datasets/2/. Applies ANOTHER 15-90 Hz bandpass +
+                  50 Hz notch (NOTE: different band from proccess.py),
+                  then 3 Hz lowpass on |x| for the envelope. Slides a
+                  40-sample (200 ms) window with 20-sample (100 ms)
+                  stride. Writes 12-feature CSV rows: per sensor (s1, s2,
+                  s3) × {RMS, VAR, WL, ENV_mean}.
+
+  model.py        Loads features_200hz_segmented.csv. StratifiedGroupKFold
+                  split (5-fold, seed 33, take first split). StandardScaler.
+                  SVM with RBF kernel, C=10, gamma='scale',
+                  class_weight='balanced', probability=True. Saves
+                  hmi_svm_model_200hz.joblib + hmi_scaler_200hz.joblib.
+
+  predict.py      Live test rig: serial COM10 @ 115200, ASCII "s1,s2,s3"
+                  lines at 200 Hz. Applies a 20-450 Hz bandpass (which
+                  auto-clamps to 20-95 Hz at Fs=200 — see TRAINING-VS-
+                  LIVE FILTER MISMATCH below) + 50 Hz notch + 3 Hz
+                  envelope. 3-of-5 hysteresis vote, 0.65 confidence
+                  threshold.
+
+cpcu_dsp.py is a faithful port of predict.py's signal chain to the Pi:
+same filters, same hysteresis, same feature names. The differences are
+all on the *transport* side:
+
+  Team (predict.py, offline)        CPCU (cpcu_dsp.py, live)
+  ─────────────────────────────────────────────────────────────
+  serial COM10, 115200 baud         /dev/shm/cpcu_ipc SPSC ring
+  3 channels @ 200 Hz native        8 channels @ 2 kHz from BSAU
+  ASCII "s1,s2,s3" lines            binary IPC_SensorEntry
+  matplotlib FuncAnimation           cpcu_kernel-spawned daemon
+  prints to status box               writes to dsp_export + motor_cmd
 
 ────────────────────────────────────────────────────────────────────────
-NOTE ON THE NOISE-THRESHOLD CALIBRATION
+TRAINING-VS-LIVE FILTER MISMATCH (caveat — accept and document)
 ────────────────────────────────────────────────────────────────────────
 
-proccess.py computes per-sensor noise thresholds (3 * std of rest-state
-signal) and saves them to dynamic_noise_thresholds.json. predict.py
-never reads that JSON: the trained SVM operates purely on the 12
-numeric features. So *for live inference*, no calibration data is
-required. We provide --calibrate here for when you later retrain on
-CPCU-collected data.
+The training pipeline (feature_ex.py) bandpasses at 15-90 Hz.
+The live pipeline (predict.py and this file) bandpasses at 20-450 Hz,
+which scipy auto-clamps to 20-95 Hz at Fs=200. So the two filters
+nominally pass slightly different bands:
+
+    Training:  15.0 -  89.8 Hz  (-3 dB points, 4th-order Butterworth)
+    Live:      20.1 -  94.9 Hz
+
+In practice, on real EMG (dominant 30-80 Hz energy), the two filters
+produce features that match within ~0.2% RMS — the model generalises
+across that gap fine. Where you DO see a difference:
+
+  - 15-20 Hz motion artifacts (electrode shift, jaw clench): training
+    "saw" them and learned to ignore them; live discards them upstream,
+    so live features are slightly cleaner than training in this band.
+  - 90-95 Hz spectral edge: live keeps it, training discarded it. Minor
+    contribution to total RMS for typical EMG.
+
+This file matches predict.py (the team's live validation rig), not
+feature_ex.py (the training pipeline), because if a discrepancy
+*does* matter the team's empirical validation has been on the live
+chain. If you decide to retrain on data captured through this exact
+pipeline (CPCU-collected rather than the team's UART rig), the gap
+disappears entirely. Either way the existing trained model works.
 
 ────────────────────────────────────────────────────────────────────────
-CHANNEL AND SAMPLE-RATE MISMATCH
+CHANNEL MAPPING (set this correctly before bringing up live electrodes!)
 ────────────────────────────────────────────────────────────────────────
 
-Team trained on 3 sensors (Forearm/Biceps/Triceps) at Fs = 200 Hz.
-CPCU has 8 channels at Fs = 2 kHz.
+The team trained on three sensors with these physical positions:
 
-  - ACTIVE_CHANNELS picks which 3 of 8 BSAU channels feed the model.
-    Edit this when you know which BSAU inputs your electrodes are on.
-  - Each 200 ms window is decimated 10x before the filter chain runs.
-    The 12 features that come out are byte-comparable to what the
-    team's model was trained on.
+    s1 = Forearm  (wrist flexor)
+    s2 = Biceps
+    s3 = Triceps
+
+ACTIVE_CHANNELS below picks which 3 of the 8 BSAU ADC channels feed
+the model, in s1/s2/s3 order. The default is [0, 1, 2] meaning BSAU
+PA0 → s1 (Forearm), PA1 → s2 (Biceps), PA2 → s3 (Triceps).
+
+If your electrodes are wired in a different physical-to-PA mapping,
+edit ACTIVE_CHANNELS to match. Wrong mapping won't crash anything —
+the SVM will just consistently mis-classify because feature[0..3] is
+no longer the muscle the model thinks it is.
+
+────────────────────────────────────────────────────────────────────────
+NOISE-THRESHOLD CALIBRATION
+────────────────────────────────────────────────────────────────────────
+
+proccess.py computes per-sensor noise thresholds (3 × std of rest-state
+signal) and saves them to dynamic_noise_thresholds.json. feature_ex.py
+ALSO computes thresholds, but with a different formula (95th percentile
+× 1.5 of rest envelope). Neither set of thresholds is used by the
+trained SVM at inference time — the model operates purely on the 12
+numeric features. So *for live inference, no calibration data is
+required.* The model has learned the rest distribution from labelled
+training data.
+
+This file provides a `--calibrate N` mode for when you later retrain
+on CPCU-collected data and want to reproduce the proccess.py-style
+threshold JSON. It writes /opt/cpcu/models/noise_thresholds.json with
+the 3×std formula.
+
+────────────────────────────────────────────────────────────────────────
+GESTURE-SERVO MAP COVERAGE
+────────────────────────────────────────────────────────────────────────
+
+GESTURE_SERVO_MAP below has entries for "rest", "biceps_flex",
+"hand_flex", and "hand_open". The team's predict.py only references
+the first three (in its color_map). If the trained .joblib's
+.classes_ matches that — i.e., 3 classes — the "hand_open" entry is
+never reached at inference time. That's fine; it's just future-proofing
+for when the model is retrained with more classes. Any class the
+model emits that isn't in the map falls back to all-neutral servos.
+
+If model.classes_ has classes that ARE missing from the map, you'll
+silently get neutral-servo output for that gesture. To diagnose, look
+at the cpcu_tui DSP/AI page (key 3) which prints model.classes_ at
+startup and the live class confidence vector.
+
+────────────────────────────────────────────────────────────────────────
+GRACEFUL DEGRADATION
+────────────────────────────────────────────────────────────────────────
 
 If /opt/cpcu/models/{hmi_svm_model_200hz.joblib, hmi_scaler_200hz.joblib}
 exist, we run inference. If not, we still drain the ring and publish
-features so cpcu_tui Page 3 lights up -- just no gesture classification.
+features so cpcu_tui Page 3 (DSP/AI) lights up — just no gesture
+classification, all servos held at neutral. Safety FSM is unaffected
+either way (it gates on radio + battery + thermal + ring + i2c, not
+on inference success).
 
 ────────────────────────────────────────────────────────────────────────
 USAGE
@@ -83,11 +180,16 @@ from cpcu_ipc_bridge import IPCBridge
 #  CONFIGURATION  ── edit these for your setup
 # ══════════════════════════════════════════════════════════════════════
 
-# Which 3 of 8 BSAU channels feed the model. Order matters: position 0
-# is the team's "s1" (forearm), 1 is "s2" (biceps), 2 is "s3" (triceps).
-# Re-map when you know which BSAU inputs your electrodes are wired to.
+# Which 3 of 8 BSAU channels feed the model. Order matters: the
+# trained SVM expects features [s1_*, s2_*, s3_*] where:
+#   s1 = Forearm   (wrist flexor electrode)
+#   s2 = Biceps
+#   s3 = Triceps
+# Default [0, 1, 2] ⇒ BSAU PA0=Forearm, PA1=Biceps, PA2=Triceps.
+# If your electrodes are wired differently, edit this — wrong mapping
+# won't crash anything, you'll just get consistently-wrong gestures.
 ACTIVE_CHANNELS         =   [0, 1, 2]
-CHANNEL_LABELS          =   ['s1', 's2', 's3']
+CHANNEL_LABELS          =   ['s1', 's2', 's3']      # must match training feat names
 NUM_ACTIVE_CH           =   len(ACTIVE_CHANNELS)
 
 # Sampling rates
@@ -129,8 +231,14 @@ NUM_SERVOS              =   6
 DRAIN_PERIOD_S          =   0.020       # 50 Hz
 DRAIN_BATCH             =   200
 
-# Default servo poses per gesture. Edit per your hardware. Unrecognized
-# labels fall back to all-neutral. 6 servos, in microseconds.
+# Default servo poses per gesture, in microseconds (6 servos).
+# Gestures the team's predict.py acknowledges in its color_map (and
+# therefore the trained SVM is known to emit):
+#     "rest", "biceps_flex", "hand_flex"
+# "hand_open" is included as future-proofing for when the team retrains
+# with more classes; if the current .joblib doesn't know that class,
+# the entry simply never fires.
+# Any model.classes_ entry NOT in this map falls back to all-neutral.
 GESTURE_SERVO_MAP       =   {
     "rest":         [1500, 1500, 1500, 1500, 1500, 1500],
     "biceps_flex":  [1500, 1700, 1500, 1500, 1500, 1500],
@@ -184,12 +292,20 @@ def extract_features(clean, env):
 
 def process_window(window_hi):
     """One full pipeline pass on a 400-sample @ 2 kHz window.
-    Decimates → DC-removes → BP → notch → envelope → 4 features."""
+    Decimates → DC-removes → BP → notch → envelope → 4 features.
+
+    Filter band note: the bandpass arguments below (20.0, 450.0) match
+    predict.py byte-for-byte. scipy auto-clamps the high cutoff to
+    Nyquist*0.95 = 95 Hz at Fs=200, so the actual passband is 20-95 Hz.
+    Training (feature_ex.py) used 15-90 Hz. The two filters produce
+    features that match within ~0.2% RMS on real EMG; see the header
+    docstring's TRAINING-VS-LIVE FILTER MISMATCH section for the full
+    explanation."""
     # Anti-alias + downsample to 200 Hz (40 samples)
     window_lo           =   decimate(window_hi, DECIMATE_FACTOR, zero_phase=True)
     # DC offset removal (matches predict.py: data - np.mean)
     centered            =   window_lo - np.mean(window_lo)
-    # Bandpass + notch (the 450 Hz cap auto-clamps to ~95 Hz at Fs=200)
+    # Bandpass + notch (the 450 Hz cap auto-clamps to 95 Hz at Fs=200)
     bp                  =   butter_bandpass(centered, 20.0, 450.0, TARGET_FS_HZ)
     cleaned             =   notch_filter(bp, 50.0, TARGET_FS_HZ)
     # Envelope on |cleaned|

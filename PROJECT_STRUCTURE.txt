@@ -1,5 +1,5 @@
 #
-#   Prosthetic Hand Capstone — Project Directory Structure (v2.1)
+#   Prosthetic Hand Capstone — Project Directory Structure (v2.3)
 #   Author: bugrASl
 #   Date:   April 2026
 #
@@ -7,10 +7,45 @@
 #     - bsau_v2/   STM32L432KC firmware. Acquires EMG, TXes over NRF.
 #     - cpcu_v2/   Raspberry Pi 5 application. Receives, DSP, drives hand.
 #
-#   v2.1 adds DATASET mode: BSAU emits raw CSV over UART simultaneously
-#   with wireless TX, and cpcu_tui gains a dataset-capture page. Files
+#   v2.1 added DATASET mode: BSAU emits raw CSV over UART simultaneously
+#   with wireless TX, and cpcu_tui gained a dataset-capture page. Files
 #   touched by that change are listed in the "v2.1 DATASET mode" section
-#   at the bottom.
+#   below.
+#
+#   v2.3 / v3.4 / v2.4 changes (April 2026):
+#     - bsau_v2/Core/Src/bsau_app.c               v2.4 — non-fatal NRF init
+#     - cpcu_v2/include/cpcu_safety.h             v2.3 — recoverable ring fault,
+#                                                       SAFETY_VBAT_DIVIDER 2.0,
+#                                                       SAFETY_RING_RECOVER_MS
+#     - cpcu_v2/src/cpcu_safety.c                 v2.3 — delta-since-baseline
+#     - cpcu_v2/src/cpcu_io.c                     v2.3 — calls SAFETY_UpdateState
+#     - cpcu_v2/src/cpcu_tui.c                    v3.4 — main + key dispatch only
+#     - cpcu_v2/src/cpcu_tui_render.c             v3.4 — drawing + page draws
+#     - cpcu_v2/src/cpcu_tui_data.c               v3.4 — demo + dataset + wave ring
+#     - cpcu_v2/include/cpcu_tui.h                v3.4 — shared TUI types
+#     - cpcu_v2/test/safety_testbench.c           v2.3 — 33 PASS (was 24/31)
+#     - cpcu_v2/test/test_dsp_pipeline.py         v2.3 — 65 PASS, rewritten
+#                                                       against current cpcu_dsp.py
+#                                                       (the legacy v2.0 test
+#                                                       imported a long-removed
+#                                                       get_features API)
+#     - cpcu_v2/test/test_dsp_pipeline.legacy_v2.0.py
+#                                                 — preserved old test for
+#                                                       reference
+#     - cpcu_v2/setup_pi.sh                       v2.3 — self-elevates via sudo
+#     - cpcu_v2/run_tests.sh                      v2.3 — sudo-wrapped; testbench
+#                                                       launches no longer use sudo
+#     - cpcu_v2/scripts/launch.sh                 v2.5 — install-service +
+#                                                       grant-caps modes,
+#                                                       sudo-free user path
+#     - cpcu_v2/CMakeLists.txt                    v2.3 — cpcu_tui builds 3 .c sources
+#     - bsau_v2/README.md                         new — BSAU quick reference
+#     - README.md                                 new — top-level project landing
+#     - All docs refreshed for v3.4 page reorder, v2.3 ring recovery,
+#       v2.4 NRF non-fatal, no-sudo policy.
+#
+#   Total automated tests: 7 (codec) + 33 (safety FSM) + 65 (DSP pipeline)
+#                        = 105 PASS in Phase 1.
 #
 
 # =============================================================================
@@ -22,7 +57,7 @@
 ├── .gitignore
 ├── LICENSE
 ├── PROJECT_STRUCTURE.txt                  # (this file)
-├── SYSTEM_GUIDE.md                        # v2.1: ultimate step-by-step guide
+├── SYSTEM_GUIDE.md                        # v2.3: ultimate step-by-step guide
 ├── bsau_v2/                               # STM32 firmware
 └── cpcu_v2/                               # Raspberry Pi codebase
 

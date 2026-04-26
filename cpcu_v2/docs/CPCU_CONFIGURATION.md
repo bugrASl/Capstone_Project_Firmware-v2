@@ -1,4 +1,7 @@
-# CPCU_CONFIGURATION.md
+# CPCU Configuration Reference — v2.3
+
+**Author:** bugrASl
+**Date:** April 2026
 
 Single reference for every configuration option in the CPCU + BSAU
 system. Organised by file. Each entry has a default value, what it
@@ -192,12 +195,45 @@ S5=Gripper.
 
 ```python
 ACTIVE_CHANNELS         =   [0, 1, 2]
-CHANNEL_LABELS          =   ['s1', 's2', 's3']
+CHANNEL_LABELS          =   ['s1', 's2', 's3']      # must match training names
 ```
 
-3 of 8 BSAU channels feed the model. Order matters: position 0 is the
-team's "s1" (forearm), 1 is "s2" (biceps), 2 is "s3" (triceps). Re-map
-when you know which BSAU inputs your electrodes are wired to.
+3 of the 8 BSAU channels feed the model. **Position in the list maps
+directly to the team's sensor names**, which in turn map to physical
+electrode positions on the arm:
+
+| List index | Team label | Physical electrode |
+|---|---|---|
+| `ACTIVE_CHANNELS[0]` | s1 | **Forearm** (wrist flexor) |
+| `ACTIVE_CHANNELS[1]` | s2 | **Biceps** |
+| `ACTIVE_CHANNELS[2]` | s3 | **Triceps** |
+
+The default `[0, 1, 2]` therefore commits the wiring to:
+
+```
+PA0 (BSAU ADC pin) → Forearm electrode
+PA1                → Biceps electrode
+PA2                → Triceps electrode
+```
+
+If your electrodes are wired in a different order, edit
+`ACTIVE_CHANNELS`. **Wrong wiring won't crash anything** — the SVM
+will just produce consistently-wrong predictions because feature
+\[0..3\] is no longer the muscle the model expects.
+
+#### Recipe: re-mapping after a hardware change
+
+You re-wired such that PA3=Forearm, PA0=Biceps, PA5=Triceps. To match:
+
+```python
+ACTIVE_CHANNELS         =   [3, 0, 5]
+# CHANNEL_LABELS still ['s1','s2','s3'] — the LABEL is what the model
+# expects in the feature vector position; ACTIVE_CHANNELS picks WHICH
+# raw BSAU channel populates that position.
+```
+
+Restart `cpcu_kernel` and confirm via the TUI's DSP/AI page (key 3)
+that the per-channel RMS bars track the muscle you expect.
 
 ### Sample rate / windowing
 
@@ -209,19 +245,53 @@ WINDOW_MS               =   200         # 40 samples at 200 Hz
 STRIDE_MS               =   100         # 50 % overlap
 ```
 
-`TARGET_FS_HZ` and `WINDOW_MS` must match the rate the model was trained
-at. Don't change without retraining.
+`TARGET_FS_HZ` and `WINDOW_MS` must match the rate the model was
+trained at. Don't change without retraining (`feature_ex.py` then
+`model.py`). `INPUT_FS_HZ` is fixed by BSAU's 2 kHz scan rate.
 
-### ML thresholds
+### Filter band (read carefully — there's a known train/live gap)
+
+The actual bandpass call inside `process_window()` is:
+
+```python
+bp = butter_bandpass(centered, 20.0, 450.0, TARGET_FS_HZ)
+```
+
+`450.0` looks like a typo until you check `butter_bandpass`'s safety
+clamp: at Fs=200 Hz, Nyquist is 100 Hz, so the 450 Hz request gets
+auto-clamped to `nyq * 0.95 = 95 Hz`. The effective passband is
+**20 – 95 Hz**. This was inherited byte-for-byte from the team's
+`predict.py`.
+
+The team's TRAINING pipeline (`feature_ex.py`) uses a **15 – 90 Hz**
+bandpass — different by ~5 Hz on each end. On real EMG the two
+filters produce features within ~0.2 % RMS, so the model generalises
+across the gap. The team has empirically validated this configuration
+on the live chain (`predict.py`); we matched their live setup, not
+their training setup, on purpose.
+
+If you want to match training exactly (e.g. for retraining
+experiments), change the call to:
+
+```python
+bp = butter_bandpass(centered, 15.0, 90.0, TARGET_FS_HZ)
+```
+
+This will produce features that are byte-identical to what the team's
+training pipeline saw, at the cost of departing from `predict.py`.
+Don't change unless you intend to retrain.
+
+### ML thresholds (hysteresis / debouncing)
 
 ```python
 PROBABILITY_THRESHOLD   =   0.65
 CONFIRMATION_THRESHOLD  =   3
 ```
 
-A class change requires `CONFIRMATION_THRESHOLD` consecutive predictions
-above `PROBABILITY_THRESHOLD` to take effect. Lower thresholds = snappier
-gesture transitions but more flicker. Raise for robust deployment.
+A class change requires `CONFIRMATION_THRESHOLD` consecutive
+predictions above `PROBABILITY_THRESHOLD` to take effect. Both values
+match `predict.py`. Lower thresholds = snappier gesture transitions
+but more flicker; raise for robust deployment.
 
 ### Gesture → servo pose map
 
@@ -236,7 +306,17 @@ GESTURE_SERVO_MAP = {
 
 Each entry maps a model class label to a 6-tuple of servo pulse widths
 (µs). Edit per your hardware. Unmapped labels fall back to all-neutral.
-Strings must exactly match `model.classes_` from your trained joblib.
+
+**Strings must exactly match `model.classes_` from your trained
+joblib.** The team's `predict.py` color_map confirms at least
+`rest`, `biceps_flex`, `hand_flex` are trained classes; `hand_open`
+is included as future-proofing (unused by the current model — its
+entry simply never fires).
+
+To check: run `cpcu_dsp.py` and watch the startup log line
+`[DSP] model + scaler loaded (classes=[...])`. Any class in that list
+that's not in `GESTURE_SERVO_MAP` is silently neutral-mapped — so add
+an entry for it before that gesture goes live.
 
 ### Model file paths
 
@@ -247,6 +327,16 @@ SCALER_PATH             =   os.path.join(MODEL_DIR, "hmi_scaler_200hz.joblib")
 THRESHOLDS_PATH         =   os.path.join(MODEL_DIR, "noise_thresholds.json")
 ```
 
+The `noise_thresholds.json` file is purely a diagnostic side-channel
+populated by `cpcu_dsp.py --calibrate N`. It is **not read by
+inference** — the trained SVM has learned "rest" from labelled data
+during training. (Both team threshold formulas — `proccess.py`'s
+`3 × std` and `feature_ex.py`'s `95th × 1.5` — share the same fate
+in their pipeline: computed but never consumed by `model.py`.)
+
+`/opt/cpcu/models/` is owned by your user (set by `setup_pi.sh`), so
+`cp emg_*.joblib /opt/cpcu/models/` doesn't need sudo.
+
 ### Drain rate
 
 ```python
@@ -256,6 +346,41 @@ DRAIN_BATCH             =   200
 
 Don't lower the period below ~5 ms — the IPC writes are synchronous
 and lock contention with cpcu_io rises sharply.
+
+### Recipe: retrain on CPCU-collected data
+
+If you collect a labelled dataset using the TUI's Page 6 capture
+workflow (writes `cpcu_v2/datasets/<label>_<idx>.csv` in the team's
+expected format), you can retrain locally on the Pi:
+
+```bash
+# 1. Symlink the team's scripts into /opt/cpcu so they can find datasets/
+ln -s /home/<you>/team_scripts/feature_ex.py /opt/cpcu/scripts/
+ln -s /home/<you>/team_scripts/model.py      /opt/cpcu/scripts/
+
+# 2. Edit the DATA_FOLDER constant in feature_ex.py to point at
+#    cpcu_v2/datasets/  (or wherever you saved the captures).
+#    Skip proccess.py — captures are already filtered by cpcu_io.
+#    OR leave proccess.py in the chain if you want the training-side
+#    cascaded-filter behaviour (see CPCU_ARCHITECTURE.md §7.5).
+
+# 3. Run them (they need pandas, scikit-learn, joblib — already
+#    installed by setup_pi.sh):
+cd /opt/cpcu/scripts
+python3 feature_ex.py            # produces features_200hz_segmented.csv
+python3 model.py                 # produces hmi_*_200hz.joblib
+
+# 4. Move the new joblibs into place:
+mv hmi_*.joblib /opt/cpcu/models/
+
+# 5. Restart so cpcu_dsp.py picks up the new model:
+./scripts/launch.sh stop
+./scripts/launch.sh tui
+```
+
+If the new model has classes that aren't in `GESTURE_SERVO_MAP`, edit
+the map first and rebuild the launcher's pyc cache (just re-source
+the file is enough; cpcu_dsp.py imports it fresh on each startup).
 
 ---
 

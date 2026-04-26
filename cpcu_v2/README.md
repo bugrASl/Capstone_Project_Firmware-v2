@@ -161,8 +161,9 @@ cpcu_v2/
 │   ├── cpcu_pca9685.h             # Layer 1: PCA9685 I²C servo driver
 │   ├── cpcu_ipc.h                 # Layer 2: POSIX shared-memory IPC (SPSC + seqlock)
 │   ├── cpcu_smooth.h              # Layer 2: Servo slew-rate smoother
-│   ├── cpcu_safety.h              # Layer 3: System-wide safety monitor
+│   ├── cpcu_safety.h              # Layer 3: System-wide safety monitor (v2.3)
 │   ├── cpcu_log.h                 # Layer 3: Structured logging + CSV sinks
+│   ├── cpcu_tui.h                 # Layer 5: Shared TUI types + cross-file API (v3.4)
 │   └── demo_signals.h             # Shared 8-waveform generator (TUI + testbench)
 │
 ├── src/                           # C sources
@@ -171,11 +172,13 @@ cpcu_v2/
 │   ├── cpcu_pca9685.c             # PCA9685 register driver, 50 Hz PWM output
 │   ├── cpcu_ipc.c                 # mmap'd ring buffer + seqlock motor commands
 │   ├── cpcu_smooth.c              # Slew-rate limiter (2000 µs/s default)
-│   ├── cpcu_safety.c              # Radio FSM, battery, thermal, I²C, DSP fault logic
+│   ├── cpcu_safety.c              # Radio FSM, battery, thermal, I²C, DSP, ring (v2.3)
 │   ├── cpcu_log.c                 # Log formatting backend
-│   ├── cpcu_io.c                  # Core 3: real-time I/O main loop
+│   ├── cpcu_io.c                  # Core 3: real-time I/O main loop (v2.3)
 │   ├── cpcu_kernel.c              # Core 0: process supervisor + watchdog
-│   └── cpcu_tui.c                 # ncurses live dashboard (7 pages, v2.1)
+│   ├── cpcu_tui.c                 # Core 0: TUI main + key dispatch + splash (v3.4)
+│   ├── cpcu_tui_render.c          # Core 0: TUI drawing primitives + page draws
+│   └── cpcu_tui_data.c            # Core 0: TUI demo + dataset capture + wave ring
 │
 ├── scripts/
 │   ├── cpcu_dsp.py                # Cores 1–2: Python DSP + ML inference pipeline
@@ -197,7 +200,8 @@ cpcu_v2/
 ├── config/                        # Reference /boot/firmware/*.txt snippets
 │
 └── docs/
-    ├── CPCU_ARCHITECTURE.md       # Full CPCU system architecture
+    ├── CPCU_ARCHITECTURE.md       # Full CPCU system architecture (v3.4)
+    ├── CPCU_CONFIGURATION.md      # Tunable thresholds + recipes for common tweaks
     ├── CPCU_RUN_GUIDE.md          # Step-by-step deployment guide
     ├── CPCU_TEST_GUIDE.md         # Test execution guide (5 phases)
     └── export/                    # Rendered design documents (PDF)
@@ -218,63 +222,102 @@ cpcu_v2/
 ```bash
 git clone <your-repo-url> ~/prosthetic_hand
 cd ~/prosthetic_hand/cpcu_v2
-sudo bash setup_pi.sh
-sudo reboot
+
+./setup_pi.sh                         # self-elevates via sudo (one prompt)
+sudo reboot                           # the only sudo you'll type today
 ```
 
-`setup_pi.sh` installs the toolchain, enables SPI and I²C, sets
-`isolcpus=1,2,3 nohz_full=1,2,3 rcu_nocbs=1,2,3`, locks the CPU
-governor to `performance`, sets the ARM clock to 2.8 GHz, and creates
-`/opt/cpcu/{bin,scripts,models,test}` plus `/var/log/cpcu/`.
+`setup_pi.sh` self-elevates to root via `sudo` for the operations that
+need it (apt, /boot/firmware, udev, group creation), then drops back
+to your user. After reboot you'll be in the `spi`, `i2c`, and `gpio`
+groups so `cpcu_io` can talk to the peripherals without root, and
+`/opt/cpcu` plus `/var/log/cpcu` are owned by your user so you can
+install + tail logs with no sudo.
 
-### 2. Build
+### 2. Build and install
 
 ```bash
-cd ~/prosthetic_hand/cpcu_v2
-mkdir -p build && cd build
-cmake ..
-make -j4
-sudo make install
+cmake -S . -B build                   # configure (out-of-tree)
+cmake --build build -j4               # compile all 7 binaries
+cmake --install build                 # writes to /opt/cpcu/{bin,scripts}
+                                      # — no sudo because /opt/cpcu is yours
 ```
 
-This installs C binaries to `/opt/cpcu/bin/`, Python scripts to
-`/opt/cpcu/scripts/`, and the systemd unit to
-`/etc/systemd/system/cpcu.service`.
+This produces seven binaries under `build/`:
 
-### 3. Deploy the ML model
+- `cpcu_io` — Core 3 RT controller (NRF + PCA + safety)
+- `cpcu_kernel` — Core 0 supervisor + watchdog
+- `cpcu_tui` — ncurses dashboard (3-file v3.4)
+- `test_codec` — codec round-trip tests (7 PASS)
+- `safety_testbench` — safety-FSM tests (33 PASS, v2.3)
+- `pca_testbench` — interactive servo calibration TUI
+- `signal_testbench` — interactive signal integrity TUI
+
+### 3. Grant the binaries RT capabilities (one-shot, after first install)
 
 ```bash
-sudo cp /path/to/emg_rf_model.pkl /opt/cpcu/models/
+./scripts/launch.sh grant-caps        # self-elevates; runs setcap
+```
+
+This adds `CAP_SYS_NICE` (for `SCHED_FIFO`) and `CAP_IPC_LOCK` (for
+`mlockall`) to the installed `cpcu_io` and `cpcu_kernel` binaries so
+they can take real-time priority without running as root.
+
+### 4. Deploy the ML model
+
+```bash
+cp /path/to/emg_rf_model.pkl /opt/cpcu/models/    # /opt/cpcu is owned by you
 ```
 
 The `.pkl` is never committed — keep it outside the repo.
 
-### 4. Run the test suite
+### 5. Run the test suite
 
 ```bash
-cd ~/prosthetic_hand/cpcu_v2
 chmod +x run_tests.sh
 
-./run_tests.sh 1        # Phase 1: software-only (any machine)
-./run_tests.sh 1 2      # Phase 1 + IPC validation (needs kernel running)
-./run_tests.sh          # All phases (Pi with all peripherals wired)
-./run_tests.sh pca      # Interactive PCA9685 servo calibration TUI
-./run_tests.sh signal   # Live signal integrity TUI (needs BSAU)
+./run_tests.sh 1            # Phase 1: software-only (any machine)
+                            #   → test_codec       (7 PASS)
+                            #   → safety_testbench (33 PASS, v2.3)
+                            #   → test_dsp_pipeline.py (65 PASS, v2.3)
+./run_tests.sh 1 2          # Phase 1 + IPC validation (needs kernel running)
+./run_tests.sh              # All phases (Pi with all peripherals wired)
+./run_tests.sh pca          # Interactive PCA9685 servo calibration TUI
+./run_tests.sh signal       # Live signal integrity TUI (needs BSAU)
+./run_tests.sh signal-demo  # Synthetic signal integrity TUI (no hardware)
+./run_tests.sh safety-demo  # cpcu_tui --demo with fault hotkeys
 ```
 
-### 5. Start the system
+### 6. Start the system
+
+Two ways — pick one:
+
+**A — interactive (development):**
 
 ```bash
-# Enable auto-start at boot:
-sudo systemctl enable cpcu
-sudo systemctl start cpcu
-sudo journalctl -u cpcu -f               # Live logs
-
-# Or manual dev-mode start with DEBUG logs:
-sudo /opt/cpcu/bin/cpcu_kernel --log --debug
+./scripts/launch.sh tui      # tmux: KERNEL window + TUI window
+./scripts/launch.sh attach   # later, re-attach to that session
+./scripts/launch.sh stop     # later, shut everything down
 ```
 
-### 6. Open the dashboard
+**B — systemd auto-start (production):**
+
+```bash
+./scripts/launch.sh install-service    # self-elevates: writes unit file + setcap
+sudo systemctl start cpcu              # one-shot start
+sudo systemctl status cpcu             # live status
+journalctl -u cpcu -f                  # live logs (no sudo)
+```
+
+The systemd path needs `sudo` for `start`/`stop`/`status` because
+that's `systemctl`'s contract — the `cpcu.service` itself runs as
+your user, not root.
+
+### 7. Open the dashboard standalone
+
+If `cpcu_kernel` and `cpcu_io` are already running (via `launch.sh tui`
+or systemd), you can open *just* the dashboard from any other terminal
+or SSH session:
 
 ```bash
 /opt/cpcu/bin/cpcu_tui
@@ -295,7 +338,7 @@ The TUI has **7 pages**, press number keys to switch:
 Universal keys: `q` quits. Demo-mode hotkeys: `w [ ]` cycle waveforms,
 `F B G O I` inject faults, `R` resets everything.
 
-### 7. No hardware? Try demo mode
+### 8. No hardware? Try demo mode
 
 ```bash
 /opt/cpcu/bin/cpcu_tui --demo
@@ -380,6 +423,10 @@ For BSAU-side tests (TB-100 through TB-309): [`../bsau_v2/docs/BSAU_TEST_GUIDE.m
 - **[`docs/CPCU_ARCHITECTURE.md`](docs/CPCU_ARCHITECTURE.md)** — every
   design decision with reasoning: IPC layout, core allocation, safety
   FSM, timing budgets, TUI page logic.
+- **[`docs/CPCU_CONFIGURATION.md`](docs/CPCU_CONFIGURATION.md)** —
+  every tunable constant in `cpcu_safety.h` etc., what it does, when
+  to change it, and the consequences. Includes recipes for common
+  tweaks ("relax the radio timeout for a 100 m bench test", etc.).
 - **[`docs/CPCU_RUN_GUIDE.md`](docs/CPCU_RUN_GUIDE.md)** — step-by-step
   Pi deployment guide with verification at every step.
 - **[`docs/CPCU_TEST_GUIDE.md`](docs/CPCU_TEST_GUIDE.md)** — 5-phase

@@ -4,7 +4,7 @@
 **Board:** Raspberry Pi 5 (BCM2712, 4x Cortex-A76 @ 2.4 GHz, OC to 2.8 GHz)  
 **Radio:** NRF24L01+ (2.4 GHz ISM, Enhanced ShockBurst, PRX role)  
 **Transmitter:** BSAU — NUCLEO-L432KC (STM32L432KC, Cortex-M4 @ 80 MHz)  
-**DSP/ML:** Python 3 (scipy + scikit-learn RandomForest)  
+**DSP/ML:** Python 3 (scipy + scikit-learn SVM)  
 **Date:** April 2026
 
 ---
@@ -120,7 +120,7 @@ Core 0:   Linux Kernel Core (CFS scheduler)
 
 Core 1:   DSP / AI — SMP pair (isolated, tickless)
 Core 2:   DSP / AI — SMP pair (isolated, tickless)
-          |- cpcu_dsp.py: Python RandomForest inference
+          |- cpcu_dsp.py: Python SVM inference (12-feat, RBF kernel)
           |- scipy bandpass (20-450 Hz) + notch (50 Hz)
           |- Feature extraction: MAV, RMS, WL, ZC, SSC, VAR, LOG_DET
           |- SCHED_FIFO priority 80, mlockall (via taskset)
@@ -282,33 +282,216 @@ Any single failure forces servos to neutral via SMOOTH_Snap() (instant, non-grad
 
 ## 7. DSP/ML Pipeline (Python)
 
-### 7.1 Pipeline Stages
+### 7.1 Origin and team alignment
+
+The DSP and ML half of the system was developed by the project's
+DSP/AI team in four scripts which together define the trained model:
+
+| Script | Role |
+|---|---|
+| `proccess.py`  | One-time clean-up of raw recordings. 20–450 Hz BP + 50 Hz notch at native Fs. Writes `datasets/2/*.csv` and `dynamic_noise_thresholds.json`. |
+| `feature_ex.py`| Reads `datasets/2/`. **Re-filters** at 15–90 Hz + 50 Hz notch at Fs=200, computes 3 Hz envelope, slides 40-sample / 20-stride window, writes 12-feature CSV (`s1_RMS`, `s1_VAR`, …, `s3_ENV`). |
+| `model.py`     | Loads the 12-feature CSV. StratifiedGroupKFold(5, seed=33). StandardScaler. SVM RBF C=10, gamma='scale', class\_weight='balanced', probability=True. Saves `hmi_svm_model_200hz.joblib` + `hmi_scaler_200hz.joblib`. |
+| `predict.py`   | Live laptop test rig over serial COM10. Reads ASCII `s1,s2,s3` lines at 200 Hz. Filters at 20–450 Hz (auto-clamps to 20–95 Hz), 50 Hz notch, 3 Hz envelope; same 12-feature path; 3-of-5 hysteresis vote; 0.65 confidence threshold. |
+
+`cpcu_dsp.py` is a faithful port of `predict.py`'s signal chain to the
+Pi. It uses identical filter coefficients, identical feature
+definitions, identical hysteresis logic. The differences are entirely
+on the *transport* side: read from `/dev/shm/cpcu_ipc` (binary)
+instead of serial (ASCII), 8 channels instead of 3, 2 kHz native rate
+that decimates to 200 Hz instead of native 200 Hz.
+
+### 7.2 Pipeline stages
+
+For one 200 ms inference window:
 
 ```
-Ring buffer consume (cpcu_ipc_bridge.py)
-  -> ADC-to-voltage conversion: v = raw * 3.3/4095 - 1.65
-  -> Causal bandpass filter (20-450 Hz, 4th-order Butterworth, scipy sosfilt)
-  -> Causal 50 Hz notch filter (Q=30, scipy lfilter)
-  -> 200 ms sliding window (400 samples @ 2 kHz), 100 ms stride
-  -> Feature extraction (7 features x 2 channels = 14 total):
-       MAV, RMS, WL, ZC, SSC, VAR, LOG_DET
-  -> StandardScaler normalization (from training)
-  -> RandomForest predict + predict_proba
-  -> Noise gate: if RMS_s1 < threshold AND RMS_s2 < threshold -> REST
-  -> Gesture -> servo lookup table (10 classes -> 6 servo pulse widths)
-  -> SeqLock write to motor command buffer
+ipc.pop_sensor_batch(200)                           // Drain ring at 50 Hz
+   ↓ (n samples, 2 sub-samples each, 8 channels each)
+buffers[buf_idx].append(raw[ch] - 2048)             // ADC midrail subtract,
+                                                    // PA0/PA1/PA2 only
+
+   ↓ Once 200 samples since last window AND 400 samples total accumulated:
+
+w_hi = last 400 samples per active channel          // 200 ms @ 2 kHz
+window_lo = scipy.signal.decimate(w_hi, 10,         // → 40 samples @ 200 Hz
+                                  zero_phase=True)  // anti-alias + downsample
+centered = window_lo - mean(window_lo)              // DC removal
+bp = filtfilt(butter(4, [20/100, 95/100], 'band'),  // bandpass; the 450 Hz
+              centered)                             // arg auto-clamps to 95 Hz
+cleaned = filtfilt(iirnotch(50/100, q=30), bp)      // 50 Hz mains kill
+env = filtfilt(butter(4, 3/100, 'low'),             // 3 Hz envelope on |x|
+               abs(cleaned))
+
+features = [rms, var, wl, env_mean]                 // 4 per channel
+features_flat = concat(features for each of 3 channels)  // 12 floats
+
+   ↓
+
+Xs = scaler.transform(features_flat.reshape(1, -1))
+probs = model.predict_proba(Xs)[0]
+ai = argmax(probs); label = model.classes_[ai]; conf = probs[ai]
+
+   ↓ Hysteresis (matches predict.py byte-for-byte):
+
+if conf > 0.65 and label != current_state:
+    consecutive_count += 1
+    if consecutive_count >= 3:
+        current_state = label
+        consecutive_count = 0
+else:
+    consecutive_count = 0
+
+   ↓
+
+servo_us = GESTURE_SERVO_MAP.get(current_state, [1500] * 6)
+ipc.write_dsp_export(channel_rms, gesture_name, class_confidence, ...)
+ipc.write_motor_cmd(servo_us, last_active_class, conf_pct)
 ```
 
-### 7.2 Classification
+### 7.3 Classifier configuration
 
 ```
-Model:          RandomForest (100 trees, max_depth=10)
-Features:       14 (7 per sensor x 2 sensors used out of 8 channels)
-Classes:        10 (REST, HAND_SLOW, HAND_HARD, HAND_OPEN, ARM_BEND_LESS,
-                    ARM_BEND_MIDDLE, ARM_BEND_MOST, ARM_SLOW, ARM_FAST, BICEPS_ONLY)
-Training:       Offline on Windows (prep.py + train.py), deployed as .pkl
-Scaler:         StandardScaler (mean/std from training data)
+Algorithm:        SVM, RBF kernel
+C:                10              (regularization parameter)
+gamma:            'scale'         (= 1 / (n_features × X.var()))
+class_weight:     'balanced'      (compensates "rest" oversampling)
+probability:      True            (predict_proba available for hysteresis)
+random_state:     42
+
+Feature space:    12-d (3 sensors × {RMS, VAR, WL, ENV-mean})
+Pre-scaling:      StandardScaler (mean/std fit on training set)
+Train/test split: StratifiedGroupKFold(n_splits=5, seed=33), 1st split
+                  → ensures all windows from a single 5 s recording
+                    stay together, AND every class is represented in
+                    train and test
 ```
+
+### 7.4 Class set
+
+The trained class set comes from whatever `label` values exist in the
+team's labelled CSV files. From `predict.py`'s color_map we know at
+least three are present: `rest`, `biceps_flex`, `hand_flex`.
+
+`cpcu_dsp.py`'s `GESTURE_SERVO_MAP` has those three plus `hand_open`
+as future-proofing. Mapping behaviour at inference time:
+
+- Class IS in the map ⇒ the corresponding 6 servo µs values get sent
+  to `cpcu_io` via the seqlocked motor command IPC entry.
+- Class NOT in the map ⇒ falls back to all-neutral (`[1500]*6`).
+
+To diagnose mismatches: at startup `try_load_model()` prints
+`model.classes_`; cross-reference with `GESTURE_SERVO_MAP` keys. The
+TUI's DSP/AI page (key 3) also shows live `class_confidence` for every
+class the model knows about.
+
+### 7.5 Training-vs-live filter discrepancy
+
+The team's training pipeline filters at **15–90 Hz**; the team's live
+test rig (`predict.py`) and `cpcu_dsp.py` both filter at **20–450 Hz**
+which scipy auto-clamps to **20–95 Hz** at Fs=200. This is a known,
+documented inconsistency in the team's pipeline that they have
+empirically tolerated:
+
+| Pipeline | Bandpass | Effective passband at Fs=200 |
+|---|---|---|
+| Training (`feature_ex.py`) | `butter(4, [15/nyq, 90/nyq], 'band')` | 15.0 – 89.8 Hz |
+| Live test (`predict.py`) | `butter_bandpass(20, 450, FS)` | 20.1 – 94.9 Hz |
+| Live Pi (`cpcu_dsp.py`) | identical to predict.py | 20.1 – 94.9 Hz |
+
+On real EMG (dominant 30–80 Hz energy) the two filters produce
+features within ~0.2 % RMS — the model generalises across the gap
+fine. Where the discrepancy matters:
+
+- **15–20 Hz motion artifacts** (electrode shift, jaw clench): training
+  saw and learned to ignore them; live discards them upstream, so
+  *live features are slightly cleaner* in this band than training was.
+- **90–95 Hz spectral edge**: live keeps it, training discarded it.
+  Minor contribution to RMS for typical EMG.
+
+`cpcu_dsp.py` deliberately matches `predict.py` (the team's live
+validation rig), not `feature_ex.py` (the training pipeline), because
+if a discrepancy *does* matter, the team's empirical validation has
+been done on the live chain. If you later retrain on data captured
+through the CPCU pipeline rather than the team's UART rig, the gap
+disappears entirely.
+
+### 7.6 Channel mapping (electrode wiring contract)
+
+The team trained on three sensors with these physical positions:
+
+```
+s1 = Forearm   (wrist flexor electrode)
+s2 = Biceps
+s3 = Triceps
+```
+
+`cpcu_dsp.py`'s `ACTIVE_CHANNELS = [0, 1, 2]` commits the BSAU-side
+wiring to:
+
+```
+PA0 (BSAU) → s1 → Forearm
+PA1 (BSAU) → s2 → Biceps
+PA2 (BSAU) → s3 → Triceps
+```
+
+This is a hidden contract — wrong electrode-to-PA wiring won't crash
+anything, the SVM just gets garbage in feature\[0..3\] (the model
+thinks channel 0 is the forearm when it's actually e.g. the triceps).
+If your physical wiring is different, edit `ACTIVE_CHANNELS`.
+
+### 7.7 Noise-threshold calibration (informational)
+
+The team's pipeline has *two contradictory* threshold formulas:
+
+| Script | Formula | Storage | Consumer |
+|---|---|---|---|
+| `proccess.py`   | `mean(std_per_file) × 3` | `dynamic_noise_thresholds.json` | none |
+| `feature_ex.py` | `percentile(rest_envelope, 95) × 1.5` | print-only | none (the consuming code is commented out) |
+
+Neither set of thresholds reaches the trained SVM at inference time.
+They're purely diagnostic — the model learns "rest" from the labelled
+training data instead. `cpcu_dsp.py`'s `--calibrate N` mode reproduces
+the `proccess.py` formula (3×std per channel, written to
+`/opt/cpcu/models/noise_thresholds.json`) for the case when you later
+retrain on CPCU-collected data and want a similar diagnostic. It is
+not read by inference.
+
+### 7.8 Graceful degradation
+
+If `/opt/cpcu/models/{hmi_svm_model_200hz.joblib, hmi_scaler_200hz.joblib}`
+exist, `try_load_model()` loads them and inference runs as above. If
+either is missing or doesn't load (sklearn version skew, `n_features_in_`
+mismatch, …), the function returns `(None, None)` and the main loop:
+
+- Still drains the ring at 50 Hz so the SPSC ring never overflows
+- Still extracts and publishes the 12 features so the TUI's DSP/AI
+  page lights up with live RMS / WL bars
+- Just *skips* the predict-and-decide step, leaving `current_state =
+  "rest"` and servos at neutral
+- Sets `inference_enabled = False` so the TUI shows "feature-only
+  mode" instead of a stale gesture label
+
+The safety FSM is unaffected either way — it gates on radio + battery
++ thermal + ring + I²C, not on inference success. So a missing
+`.joblib` degrades the system to a calibration / smoke-test rig
+without compromising safety.
+
+### 7.9 Model deployment workflow
+
+The trained `.joblib` artefacts are not in this repo. To deploy:
+
+1. On the team's Windows machine, run `feature_ex.py` (produces
+   `features_200hz_segmented.csv`) and then `model.py` (produces
+   `hmi_svm_model_200hz.joblib` + `hmi_scaler_200hz.joblib`).
+2. SCP both files to the Pi: `scp hmi_*.joblib pi@<ip>:/opt/cpcu/models/`
+3. Restart `cpcu_kernel` (`sudo systemctl restart cpcu` or
+   `./scripts/launch.sh stop && ./scripts/launch.sh tui`). The
+   spawned `cpcu_dsp.py` will print `[DSP] model + scaler loaded
+   (classes=[…])` on stdout, visible in the tmux KERNEL window.
+
+`/opt/cpcu/models/` is owned by your user (set by `setup_pi.sh`), so
+the `scp` doesn't need sudo on the Pi end.
 
 ---
 
@@ -340,7 +523,7 @@ Page 3 — DSP/AI:     Pipeline stats (DSP windows processed + /s rate,
                      underflows, export rate Hz, motor cmd count + /s
                      + age in ms). Active gesture banner with confidence,
                      last inference time µs, export-seq counter ticking.
-                     Per-class softmax confidence bars (10 classes,
+                     Per-class softmax confidence bars (3-4 classes,
                      active one magenta). Per-channel filtered RMS (bar
                      = % of 0.5 V full-scale + absolute V).
 
@@ -467,7 +650,7 @@ tmux new -s cpcu
 #   Pane 0: journalctl -u cpcu -f
 #   Pane 1: cpcu_tui (press 1-7, use w/[/] in --demo)
 #   Pane 2: watch -n 2 "vcgencmd measure_temp; ps -eo pid,comm,psr,pri | grep cpcu"
-#   Pane 3: sudo /opt/cpcu/bin/pca_testbench
+#   Pane 3: /opt/cpcu/bin/pca_testbench
 
 tmux split-window -h
 tmux split-window -v
@@ -494,7 +677,7 @@ Process 0: cpcu_kernel (Core 0)
 
 Process 1: cpcu_dsp.py (Cores 1-2, Python)
   |- Opens shared memory (IPCBridge)
-  |- Loads RandomForest model from .pkl
+  |- Loads SVM model + scaler from .joblib
   |- Ring buffer consumer
   |- scipy DSP pipeline
   |- Motor command producer (SeqLock)

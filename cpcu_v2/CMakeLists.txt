@@ -80,7 +80,7 @@ target_link_libraries(cpcu_kernel PRIVATE cpcu_ipc cpcu_log rt)
 ##
 ## We work around this with a direct find_library() probe for libncursesw,
 ## falling back to the standard FindCurses.cmake if the wide variant isn't
-## available. Install with: sudo apt install libncurses-dev
+## available. Install with: ./setup_pi.sh    (or: sudo apt install libncurses-dev)
 find_library(NCURSESW_LIB  NAMES ncursesw)
 find_path(NCURSESW_INCLUDE NAMES ncursesw/ncurses.h curses.h)
 

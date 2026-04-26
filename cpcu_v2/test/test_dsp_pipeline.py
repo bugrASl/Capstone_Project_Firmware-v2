@@ -1,38 +1,60 @@
 #!/usr/bin/env python3
 """
-test_dsp_pipeline.py — Validate Python DSP pipeline correctness.
+test_dsp_pipeline.py — DSP pipeline validation against cpcu_dsp.py
+                       v2.3 (April 2026).
 
-Tests:
-  1. Feature extraction matches prep.py output for known signals
-  2. Causal filter (sosfilt) vs offline filter (filtfilt) feature similarity
-  3. Gesture mapping table completeness
-  4. Noise gate behavior
-  5. Scaler/model compatibility check
+@author bugrASl
 
-No hardware or shared memory required.
+Verifies that the Python DSP module exports the correct public API and
+that its filter / feature primitives produce sensible outputs for known
+analytical inputs. Runs in isolation: no shared memory, no model file,
+no Pi hardware.
 
-Author: bugrASl
-Date:   April 2026
+What this test covers:
+
+    1. Public API surface check — every name the rest of the system
+       imports from cpcu_dsp must exist with the right signature.
+    2. butter_bandpass — passes a 100 Hz sine through a 20-450 Hz
+       bandpass and checks the amplitude is preserved.
+    3. notch_filter   — feeds a 50 Hz sine and checks attenuation.
+    4. envelope       — feeds a 100 Hz burst and checks the envelope
+       tracks its amplitude.
+    5. extract_features — confirms output is a list of 4 floats matching
+       the team's [rms, var, wl, env_mean] order, and that values change
+       monotonically with input amplitude.
+    6. process_window — feeds a 400-sample @ 2 kHz buffer and checks
+       the full pipeline returns (cleaned, env, features) with the
+       right shapes.
+    7. GESTURE_SERVO_MAP — every entry is a 6-tuple of valid servo µs.
+    8. Constants — INPUT_FS_HZ=2000, TARGET_FS_HZ=200, DECIMATE_FACTOR=10,
+       WINDOW_SAMPLES_HI=400, NUM_SERVOS=6.
+
+History:
+    v2.3 (April 2026) — Replaces the v2.0 test which imported from a
+    long-removed `get_features` API and expected a 7-feature vector
+    [mav, rms, wl, zc, ssc, var, log_det]. The team's training pipeline
+    settled on 4 features [rms, var, wl, env_mean] (see feature_ex.py
+    in their training repo); this test was not updated for that change
+    until v2.3. The legacy test is preserved alongside this file as
+    test_dsp_pipeline.py.legacy_v2.0 for reference.
 """
 
-import sys
 import os
+import sys
 import numpy as np
 
-# Add both this directory (test/) and ../scripts/ to sys.path so that
-# `import cpcu_dsp` works regardless of the cwd the test is run from.
-_TEST_DIR    =   os.path.dirname(os.path.abspath(__file__))
-_SCRIPTS_DIR =   os.path.normpath(os.path.join(_TEST_DIR, "..", "scripts"))
-for _p in (_TEST_DIR, _SCRIPTS_DIR):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Add scripts/ to import path so `from cpcu_dsp import ...` works
+HERE                =   os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, '..', 'scripts'))
 
-g_pass                  =   0
-g_fail                  =   0
+g_pass              =   0
+g_fail              =   0
 
-def ASSERT(cond, msg):
+
+def ASSERT(condition, msg):
+    """Print a PASS/FAIL line and tally the global counters."""
     global g_pass, g_fail
-    if cond:
+    if condition:
         print(f"  [PASS] {msg}")
         g_pass         +=   1
     else:
@@ -40,231 +62,298 @@ def ASSERT(cond, msg):
         g_fail         +=   1
 
 
-def test_feature_extraction():
-    """Verify get_features produces correct values for known input."""
-    print("\n--- Feature Extraction Correctness ---")
-    
-    from cpcu_dsp import get_features
-
-    # Known signal: 200-sample sine wave at 50 Hz, fs=2000
-    fs                  =   2000
-    t                   =   np.arange(400) / fs
-    signal              =   np.sin(2 * np.pi * 50 * t) * 0.5      # 0.5V amplitude
-
-    features            =   get_features(signal)
-    
-    ASSERT(len(features) == 7, f"feature count = {len(features)} (expected 7)")
-    
-    mav, rms, wl, zc, ssc, var, log_det = features
-    
-    # For a sine wave: RMS = amplitude / sqrt(2) = 0.5 / 1.414 ≈ 0.354
-    ASSERT(abs(rms - 0.354) < 0.02, f"rms={rms:.4f} ≈ 0.354 (sine wave)")
-    
-    # MAV = 2*amplitude/pi ≈ 0.318
-    ASSERT(abs(mav - 0.318) < 0.02, f"mav={mav:.4f} ≈ 0.318")
-    
-    # ZCR: 50 Hz sine crosses zero ~2*50 times in 200ms window
-    # Over 400 samples at 2kHz = 200ms, expect ~20 zero crossings
-    ASSERT(15 < zc < 25, f"zc={zc} ∈ (15, 25) for 50Hz sine")
-    
-    # Variance should be positive
-    ASSERT(var > 0, f"var={var:.6f} > 0")
-    
-    # Waveform length should be positive and proportional to frequency
-    ASSERT(wl > 0, f"wl={wl:.4f} > 0")
-    
-    TEST_OK("Feature extraction matches expected analytical values")
-
-
-def test_feature_order_matches_training():
-    """Verify feature order matches prep.py column names."""
-    print("\n--- Feature Order Matches Training ---")
-    
-    # From train.py: expected_columns order is
-    # s1_mav, s1_rms, s1_wl, s1_zc, s1_ssc, s1_var, s1_log_det,
-    # s2_mav, s2_rms, s2_wl, s2_zc, s2_ssc, s2_var, s2_log_det
-    
-    from cpcu_dsp import get_features
-    
-    # Use distinguishable signals so each feature has a unique value
-    sig1                =   np.random.randn(400) * 0.5
-    sig2                =   np.random.randn(400) * 1.0      # different amplitude
-    
-    feat1               =   get_features(sig1)
-    feat2               =   get_features(sig2)
-    combined            =   feat1 + feat2       # concatenation
-    
-    ASSERT(len(combined) == 14, f"combined features = {len(combined)} (expected 14)")
-    
-    # RMS of sig2 should be roughly 2x RMS of sig1
-    rms1                =   feat1[1]
-    rms2                =   feat2[1]
-    ratio               =   rms2 / rms1 if rms1 > 0 else 0
-    ASSERT(1.5 < ratio < 2.5, f"rms ratio = {ratio:.2f} ≈ 2.0 (sig2 is 2x amplitude)")
-
-
-def test_causal_vs_offline_filter():
-    """Compare causal sosfilt features vs offline filtfilt features."""
-    print("\n--- Causal vs Offline Filter Comparison ---")
-    
-    from scipy.signal import butter, iirnotch, sosfilt, sosfilt_zi, lfilter, lfilter_zi, filtfilt
-    from cpcu_dsp import get_features, FS
-
-    nyq                 =   0.5 * FS
-    sos_band            =   butter(4, [20/nyq, 450/nyq], btype='band', output='sos')
-    b_band, a_band      =   butter(4, [20/nyq, 450/nyq], btype='band')
-    b_notch, a_notch    =   iirnotch(50, 30, FS)
-
-    # Generate 2 seconds of test signal (enough for filter warmup)
-    t                   =   np.arange(2 * FS) / FS
-    signal              =   0.3 * np.sin(2 * np.pi * 100 * t) + 0.1 * np.sin(2 * np.pi * 50 * t)
-    signal             +=   np.random.randn(len(signal)) * 0.05
-
-    # Offline (filtfilt — as used in prep.py)
-    offline             =   filtfilt(b_band, a_band, signal)
-    offline             =   filtfilt(b_notch, a_notch, offline)
-    feat_offline        =   get_features(offline[-400:])
-
-    # Causal (sosfilt — as used in cpcu_dsp.py)
-    zi_band             =   sosfilt_zi(sos_band)
-    zi_notch            =   lfilter_zi(b_notch, a_notch)
-    
-    causal_out          =   np.zeros_like(signal)
-    for i in range(len(signal)):
-        x, zi_band      =   sosfilt(sos_band, [signal[i]], zi=zi_band)
-        x, zi_notch     =   lfilter(b_notch, a_notch, x, zi=zi_notch)
-        causal_out[i]   =   x[0]
-    
-    feat_causal         =   get_features(causal_out[-400:])
-
-    # Compare RMS — should be within 30% after filter warmup
-    rms_off             =   feat_offline[1]
-    rms_cau             =   feat_causal[1]
-    if rms_off > 0:
-        rms_err         =   abs(rms_cau - rms_off) / rms_off
-        ASSERT(rms_err < 0.30,
-               f"RMS error = {rms_err*100:.1f}% (offline={rms_off:.4f}, causal={rms_cau:.4f})")
-    else:
-        print("  [SKIP] RMS offline is zero")
-
-    # Compare MAV
-    mav_off             =   feat_offline[0]
-    mav_cau             =   feat_causal[0]
-    if mav_off > 0:
-        mav_err         =   abs(mav_cau - mav_off) / mav_off
-        ASSERT(mav_err < 0.30,
-               f"MAV error = {mav_err*100:.1f}% (offline={mav_off:.4f}, causal={mav_cau:.4f})")
-
-    print("  [INFO] If errors exceed 30%, consider retraining with causal filters")
-
-
-def test_gesture_servo_map():
-    """Verify gesture map covers all 10 classes and produces valid servo values."""
-    print("\n--- Gesture → Servo Map ---")
-    
-    from cpcu_dsp import GESTURE_SERVO_MAP, CLASS_NAMES
-
-    ASSERT(len(GESTURE_SERVO_MAP) == 10, f"map has {len(GESTURE_SERVO_MAP)} entries (expected 10)")
-    
-    for class_id in range(10):
-        ASSERT(class_id in GESTURE_SERVO_MAP,
-               f"class {class_id} ({CLASS_NAMES.get(class_id, '?')}) in map")
-        
-        servo_us        =   GESTURE_SERVO_MAP[class_id]
-        ASSERT(len(servo_us) == 6,
-               f"class {class_id}: {len(servo_us)} servos (expected 6)")
-        
-        for i, val in enumerate(servo_us):
-            ASSERT(500 <= val <= 2500,
-                   f"class {class_id} servo[{i}]={val} ∈ [500, 2500]")
-
-
-def test_noise_gate():
-    """Verify noise gate forces REST for low-energy signals."""
-    print("\n--- Noise Gate ---")
-    
-    from cpcu_dsp import get_features, NOISE_GATE_RMS
-    
-    # Very quiet signal (near-zero after filtering)
-    quiet               =   np.random.randn(400) * 0.0001
-    feat                =   get_features(quiet)
-    rms                 =   feat[1]
-    
-    ASSERT(rms < NOISE_GATE_RMS,
-           f"quiet signal RMS={rms:.6f} < gate={NOISE_GATE_RMS}")
-    
-    # Active signal
-    active              =   np.sin(2 * np.pi * 100 * np.arange(400) / 2000) * 0.5
-    feat_active         =   get_features(active)
-    rms_active          =   feat_active[1]
-    
-    ASSERT(rms_active > NOISE_GATE_RMS,
-           f"active signal RMS={rms_active:.4f} > gate={NOISE_GATE_RMS}")
-
-
-def test_model_loadable():
-    """Check if model file exists and has expected structure."""
-    print("\n--- Model Load Check ---")
-    
-    from cpcu_dsp import MODEL_PATH, MODEL_PATH_ALT
-    
-    path                =   MODEL_PATH if os.path.exists(MODEL_PATH) else MODEL_PATH_ALT
-    
-    if not os.path.exists(path):
-        print(f"  [SKIP] No model file at {MODEL_PATH} or {MODEL_PATH_ALT}")
-        return
-    
-    try:
-        import joblib
-        data            =   joblib.load(path)
-        
-        ASSERT("model" in data, "model key exists in pkl")
-        ASSERT("scaler" in data, "scaler key exists in pkl")
-        
-        scaler          =   data["scaler"]
-        model           =   data["model"]
-        
-        n_features      =   scaler.n_features_in_
-        ASSERT(n_features == 14, f"scaler expects {n_features} features (expected 14)")
-        
-        # Quick inference test
-        dummy           =   np.zeros((1, 14))
-        scaled          =   scaler.transform(dummy)
-        pred            =   model.predict(scaled)
-        proba           =   model.predict_proba(scaled)
-        
-        ASSERT(0 <= pred[0] <= 9, f"prediction={pred[0]} ∈ [0, 9]")
-        ASSERT(abs(proba.sum() - 1.0) < 0.01, f"proba sums to {proba.sum():.3f} ≈ 1.0")
-        
-    except Exception as e:
-        print(f"  [FAIL] Model load error: {e}")
-        global g_fail
-        g_fail         +=   1
-
-
 def TEST_OK(msg):
-    global g_pass
-    print(f"  [PASS] {msg}")
-    g_pass             +=   1
+    print(f"  [OK]   {msg}")
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  Test 1 — Public API surface
+# ══════════════════════════════════════════════════════════════════════
+
+def test_api_surface():
+    """Every name the rest of the codebase imports from cpcu_dsp must
+    exist. If this group fails, every later group will too."""
+    print("\n--- TB-DSP01: Public API surface ---")
+
+    import cpcu_dsp
+
+    # Functions
+    for name in ("butter_bandpass", "notch_filter", "envelope",
+                 "extract_features", "process_window", "main"):
+        ASSERT(hasattr(cpcu_dsp, name),
+               f"cpcu_dsp.{name} is exported")
+
+    # Constants the rest of the system relies on
+    for name in ("INPUT_FS_HZ", "TARGET_FS_HZ", "DECIMATE_FACTOR",
+                 "WINDOW_SAMPLES_HI", "NUM_SERVOS",
+                 "ACTIVE_CHANNELS", "GESTURE_SERVO_MAP"):
+        ASSERT(hasattr(cpcu_dsp, name),
+               f"cpcu_dsp.{name} is exported")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Test 2 — butter_bandpass
+# ══════════════════════════════════════════════════════════════════════
+
+def test_bandpass():
+    """100 Hz sine through 20-450 Hz BP should pass with ~unity gain."""
+    print("\n--- TB-DSP02: butter_bandpass ---")
+
+    from cpcu_dsp import butter_bandpass
+
+    fs                  =   2000
+    t                   =   np.arange(2 * fs) / fs        # 2 s @ 2 kHz
+    sig                 =   0.5 * np.sin(2 * np.pi * 100 * t)
+
+    out                 =   butter_bandpass(sig, 20.0, 450.0, fs)
+
+    # Compare RMS — filtfilt is zero-phase so amplitude is preserved
+    rms_in              =   float(np.sqrt(np.mean(sig ** 2)))
+    rms_out             =   float(np.sqrt(np.mean(out ** 2)))
+    ratio               =   rms_out / rms_in
+
+    ASSERT(0.9 < ratio < 1.1,
+           f"in-band RMS preserved: ratio={ratio:.3f} ∈ (0.9, 1.1)")
+
+
+def test_bandpass_rejects_dc():
+    """A pure-DC input should be killed by the high-pass cutoff."""
+    print("\n--- TB-DSP03: bandpass kills DC ---")
+
+    from cpcu_dsp import butter_bandpass
+
+    fs                  =   2000
+    sig                 =   np.full(2 * fs, 1.65)
+
+    out                 =   butter_bandpass(sig, 20.0, 450.0, fs)
+
+    rms_out             =   float(np.sqrt(np.mean(out ** 2)))
+    ASSERT(rms_out < 0.05,
+           f"DC rejected: out RMS={rms_out:.4f} < 0.05")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Test 3 — notch_filter
+# ══════════════════════════════════════════════════════════════════════
+
+def test_notch():
+    """50 Hz sine through a 50 Hz notch should be heavily attenuated."""
+    print("\n--- TB-DSP04: notch_filter ---")
+
+    from cpcu_dsp import notch_filter
+
+    fs                  =   2000
+    t                   =   np.arange(2 * fs) / fs
+    sig_50              =   0.5 * np.sin(2 * np.pi * 50 * t)
+    sig_200             =   0.5 * np.sin(2 * np.pi * 200 * t)
+
+    out_50              =   notch_filter(sig_50, 50.0, fs)
+    out_200             =   notch_filter(sig_200, 50.0, fs)
+
+    rms_50_in           =   float(np.sqrt(np.mean(sig_50 ** 2)))
+    rms_50_out          =   float(np.sqrt(np.mean(out_50 ** 2)))
+    rms_200_in          =   float(np.sqrt(np.mean(sig_200 ** 2)))
+    rms_200_out         =   float(np.sqrt(np.mean(out_200 ** 2)))
+
+    atten_50            =   rms_50_out / rms_50_in
+    atten_200           =   rms_200_out / rms_200_in
+
+    ASSERT(atten_50 < 0.15,
+           f"50 Hz attenuated: ratio={atten_50:.3f} < 0.15 "
+           f"(Q=30 notch gives ~-18 dB)")
+    ASSERT(atten_200 > 0.9,
+           f"200 Hz preserved: ratio={atten_200:.3f} > 0.9")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Test 4 — envelope
+# ══════════════════════════════════════════════════════════════════════
+
+def test_envelope():
+    """The envelope of a 100 Hz, 0.5-amplitude sine should approach
+    the rectified-mean (= 2·A/π ≈ 0.318) once the LPF settles."""
+    print("\n--- TB-DSP05: envelope ---")
+
+    from cpcu_dsp import envelope
+
+    fs                  =   200                           # team's downsampled rate
+    t                   =   np.arange(2 * fs) / fs
+    sig                 =   0.5 * np.sin(2 * np.pi * 30 * t)
+
+    env                 =   envelope(sig, fs, cutoff=3.0)
+
+    # Settled portion (skip the first 200 ms transient)
+    env_settled         =   env[fs // 5:]
+    mean_env            =   float(np.mean(env_settled))
+
+    # Theoretical mean of |sin| = 2A/π ≈ 0.318
+    ASSERT(0.25 < mean_env < 0.40,
+           f"envelope mean ≈ rectified-mean: {mean_env:.4f} ∈ (0.25, 0.40)")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Test 5 — extract_features
+# ══════════════════════════════════════════════════════════════════════
+
+def test_extract_features():
+    """Features must be 4 floats in order [rms, var, wl, env_mean]."""
+    print("\n--- TB-DSP06: extract_features ---")
+
+    from cpcu_dsp import extract_features
+
+    # Clean sine, plus its rectified-mean envelope as the "env" arg.
+    fs                  =   200
+    t                   =   np.arange(40) / fs            # one window
+    clean               =   0.5 * np.sin(2 * np.pi * 30 * t)
+    env                 =   np.abs(clean)                 # cheap stand-in
+
+    feat                =   extract_features(clean, env)
+
+    ASSERT(isinstance(feat, list),
+           f"return type is list (got {type(feat).__name__})")
+    ASSERT(len(feat) == 4,
+           f"feature count = {len(feat)} (expected 4)")
+    rms, var, wl, em    =   feat
+
+    ASSERT(0.30 < rms < 0.40,
+           f"rms = {rms:.4f} ≈ 0.354 (sine amplitude 0.5)")
+    ASSERT(var > 0,
+           f"var = {var:.6f} > 0")
+    ASSERT(wl > 0,
+           f"wl = {wl:.6f} > 0")
+    ASSERT(em > 0,
+           f"env_mean = {em:.6f} > 0")
+
+
+def test_features_scale_with_amplitude():
+    """Doubling input amplitude should ~double RMS."""
+    print("\n--- TB-DSP07: feature scaling ---")
+
+    from cpcu_dsp import extract_features
+
+    fs                  =   200
+    t                   =   np.arange(40) / fs
+
+    sig1                =   0.5 * np.sin(2 * np.pi * 30 * t)
+    sig2                =   1.0 * np.sin(2 * np.pi * 30 * t)
+
+    feat1               =   extract_features(sig1, np.abs(sig1))
+    feat2               =   extract_features(sig2, np.abs(sig2))
+
+    rms_ratio           =   feat2[0] / feat1[0] if feat1[0] > 0 else 0
+
+    ASSERT(1.8 < rms_ratio < 2.2,
+           f"rms doubles with amplitude: ratio={rms_ratio:.3f} ≈ 2.0")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Test 6 — process_window (full pipeline pass)
+# ══════════════════════════════════════════════════════════════════════
+
+def test_process_window():
+    """One 400-sample @ 2 kHz window through the full pipeline must
+    return (cleaned, env, features) with the right shapes."""
+    print("\n--- TB-DSP08: process_window ---")
+
+    from cpcu_dsp import process_window, WINDOW_SAMPLES_HI, WINDOW_SAMPLES_LO
+
+    fs                  =   2000
+    t                   =   np.arange(WINDOW_SAMPLES_HI) / fs
+    # 100 Hz band-of-interest tone + 50 Hz mains we want notched out
+    sig                 =   (0.4 * np.sin(2 * np.pi * 100 * t) +
+                             0.3 * np.sin(2 * np.pi *  50 * t))
+
+    cleaned, env, feat  =   process_window(sig)
+
+    ASSERT(len(cleaned) == WINDOW_SAMPLES_LO,
+           f"cleaned length = {len(cleaned)} == WINDOW_SAMPLES_LO ({WINDOW_SAMPLES_LO})")
+    ASSERT(len(env) == WINDOW_SAMPLES_LO,
+           f"env length = {len(env)} == WINDOW_SAMPLES_LO ({WINDOW_SAMPLES_LO})")
+    ASSERT(len(feat) == 4,
+           f"feature count = {len(feat)} (expected 4)")
+
+    # The 50 Hz line should be largely gone after the notch.
+    # Compare RMS of the cleaned signal to the input — expect attenuation
+    # because we stripped 50 Hz energy.
+    rms_in              =   float(np.sqrt(np.mean(sig ** 2)))
+    rms_out             =   float(np.sqrt(np.mean(cleaned ** 2)))
+    ASSERT(rms_out < rms_in,
+           f"cleaned RMS {rms_out:.3f} < input RMS {rms_in:.3f} (50 Hz removed)")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Test 7 — GESTURE_SERVO_MAP
+# ══════════════════════════════════════════════════════════════════════
+
+def test_gesture_servo_map():
+    """Every entry must be a 6-tuple of valid servo microseconds."""
+    print("\n--- TB-DSP09: GESTURE_SERVO_MAP ---")
+
+    from cpcu_dsp import GESTURE_SERVO_MAP, NUM_SERVOS
+
+    ASSERT(len(GESTURE_SERVO_MAP) >= 1,
+           f"map has {len(GESTURE_SERVO_MAP)} entries (>= 1 required)")
+    ASSERT("rest" in GESTURE_SERVO_MAP,
+           "'rest' is in the map (always-safe fallback)")
+
+    for label, servos in GESTURE_SERVO_MAP.items():
+        ASSERT(len(servos) == NUM_SERVOS,
+               f"{label}: {len(servos)} servos == NUM_SERVOS ({NUM_SERVOS})")
+        for i, us in enumerate(servos):
+            ASSERT(500 <= us <= 2500,
+                   f"{label} servo[{i}] = {us} µs ∈ [500, 2500]")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Test 8 — Constants
+# ══════════════════════════════════════════════════════════════════════
+
+def test_constants():
+    """Pin down the constants that other parts of the system depend on."""
+    print("\n--- TB-DSP10: constants ---")
+
+    from cpcu_dsp import (INPUT_FS_HZ, TARGET_FS_HZ, DECIMATE_FACTOR,
+                          WINDOW_SAMPLES_HI, WINDOW_SAMPLES_LO, NUM_SERVOS)
+
+    ASSERT(INPUT_FS_HZ == 2000,
+           f"INPUT_FS_HZ = {INPUT_FS_HZ} (must match BSAU 2 kHz scan rate)")
+    ASSERT(TARGET_FS_HZ == 200,
+           f"TARGET_FS_HZ = {TARGET_FS_HZ} (must match training rate)")
+    ASSERT(DECIMATE_FACTOR == INPUT_FS_HZ // TARGET_FS_HZ,
+           f"DECIMATE_FACTOR = {DECIMATE_FACTOR} (= INPUT/TARGET)")
+    ASSERT(WINDOW_SAMPLES_HI == 400,
+           f"WINDOW_SAMPLES_HI = {WINDOW_SAMPLES_HI} (= 200ms @ 2kHz)")
+    ASSERT(WINDOW_SAMPLES_LO == 40,
+           f"WINDOW_SAMPLES_LO = {WINDOW_SAMPLES_LO} (= 200ms @ 200Hz)")
+    ASSERT(NUM_SERVOS == 6,
+           f"NUM_SERVOS = {NUM_SERVOS} (must match IPC_NUM_SERVOS)")
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Driver
+# ══════════════════════════════════════════════════════════════════════
 
 def main():
-    print("=== DSP Pipeline Test Suite ===")
-    
-    test_feature_extraction()
-    test_feature_order_matches_training()
-    test_causal_vs_offline_filter()
-    test_gesture_servo_map()
-    test_noise_gate()
-    test_model_loadable()
+    print("=" * 60)
+    print("  TB-DSP — cpcu_dsp.py pipeline validation (v2.3)")
+    print("=" * 60)
 
-    print(f"\n{'=' * 40}")
+    test_api_surface()
+    test_bandpass()
+    test_bandpass_rejects_dc()
+    test_notch()
+    test_envelope()
+    test_extract_features()
+    test_features_scale_with_amplitude()
+    test_process_window()
+    test_gesture_servo_map()
+    test_constants()
+
+    print("\n" + "=" * 60)
     print(f"  RESULTS: {g_pass} PASS, {g_fail} FAIL")
-    print(f"{'=' * 40}")
-    
-    return 1 if g_fail > 0 else 0
+    print("=" * 60)
+
+    return 0 if g_fail == 0 else 1
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# CPCU Test Guide — v3.2
+# CPCU Test Guide — v3.4
 
 **Author:** bugrASl
 **Date:** April 2026

@@ -1,0 +1,807 @@
+.
+├── .git
+│   ├── hooks
+│   │   ├── applypatch-msg.sample
+│   │   ├── commit-msg.sample
+│   │   ├── fsmonitor-watchman.sample
+│   │   ├── post-update.sample
+│   │   ├── pre-applypatch.sample
+│   │   ├── pre-commit.sample
+│   │   ├── pre-merge-commit.sample
+│   │   ├── pre-push.sample
+│   │   ├── pre-rebase.sample
+│   │   ├── pre-receive.sample
+│   │   ├── prepare-commit-msg.sample
+│   │   ├── push-to-checkout.sample
+│   │   ├── sendemail-validate.sample
+│   │   └── update.sample
+│   ├── info
+│   │   └── exclude
+│   ├── logs
+│   │   ├── refs
+│   │   │   ├── heads
+│   │   │   │   └── main
+│   │   │   └── remotes
+│   │   │       └── origin
+│   │   │           └── main
+│   │   └── HEAD
+│   ├── objects
+│   │   ├── 0a
+│   │   │   └── 28d8ab6899d89cf45a676ae7faf8852ee45d49
+│   │   ├── 0b
+│   │   │   ├── 6eb2f6321a97052b119b6c39863f0d9894d7e7
+│   │   │   ├── 7a41430095cff2152f801032256a8b1f3c31e1
+│   │   │   ├── 94bbd2c048b7ceb48d4ac92522be9219e76d72
+│   │   │   ├── 1010bef63411e08e888f16ace2daad13cf5335
+│   │   │   ├── 8878299a350e33ebaad00e24a6f75b3f4df13e
+│   │   │   ├── dddbd4b189782af34248f43f3913f2c7a1263c
+│   │   │   └── eb016c50a66de85d170d3aa814e2690acf93e9
+│   │   ├── 0c
+│   │   │   └── ca957f7cca1440615f9f74aacd0a48e40080be
+│   │   ├── 0d
+│   │   │   └── 9af4953b534f4d4ee7a5f79361fde1742964a6
+│   │   ├── 0f
+│   │   │   └── 90b146e353a51b44d6bb7ecc9612323a86f63d
+│   │   ├── 01
+│   │   │   └── 74f7f225bc6c944e9479aeaa8026c1ba31aaa8
+│   │   ├── 02
+│   │   │   └── 17a07e3dd46b244405e5e3c86d3b92789fc0d8
+│   │   ├── 04
+│   │   │   └── 94414e12b51313da59b13442fd65082e6f8df8
+│   │   ├── 05
+│   │   │   └── a7c257bff0b44d837e0f3deea1bd3d1e085a2b
+│   │   ├── 07
+│   │   │   └── de14e378570d7c891bd17d42d1fe6f9c3e2725
+│   │   ├── 08
+│   │   │   ├── 09da40f666dbbe5f8b76e00d81d22a6454499d
+│   │   │   ├── 6cb638dc10e54dc7328037f97ced9381c3fd48
+│   │   │   └── 36543cf1eb66ae1b3dcf4c0b3e6ea6a0644c99
+│   │   ├── 1a
+│   │   │   ├── 1d44b5916f405769dff8aaacf03177ffe0428b
+│   │   │   └── ae2df3a9a863cbfd85a85a512ae188a05658f9
+│   │   ├── 1b
+│   │   │   ├── 5a9652ebef407c1ac3d4b7ac1c503dfd91cba8
+│   │   │   └── 286784b80cc28d807d8383850c1fdf695e734a
+│   │   ├── 1c
+│   │   │   └── f95392aaf5a3238ef56f73b0eaca87438e857d
+│   │   ├── 1e
+│   │   │   ├── 08e7e805044163a04c6712b9671dff40aafa60
+│   │   │   └── c71adf652df8898f1f596986687df5918a2860
+│   │   ├── 1f
+│   │   │   ├── 69e8bd2ba86dc4fd0b9dff03ba6e3524a40177
+│   │   │   ├── aa292548aeefd2132d3e9de7d28df8f23a093c
+│   │   │   └── cae9ecd9a7d637fca0cb7fec20d01b00886b8e
+│   │   ├── 2c
+│   │   │   └── 53ae29fe643679203edf3f704d5e6eaa256189
+│   │   ├── 2d
+│   │   │   ├── 7d7d6598d407bf5190ce89f2ff7e808fa971da
+│   │   │   └── 736eb21e19140a8233b2bb3a9fd427fea88753
+│   │   ├── 2f
+│   │   │   ├── 080e50c3768e7d6398e94c4cb595bb0418223b
+│   │   │   ├── 1d98e21c6746c983b27a3d103f1ce9635401c3
+│   │   │   └── e28b687f2276ba20ef9598d73a7d41f396b350
+│   │   ├── 3a
+│   │   │   └── 7878490d7f89c256c0a2f9c128c765163df4e1
+│   │   ├── 3b
+│   │   │   ├── 2847ac382bf287af3bf7ff712875deab574596
+│   │   │   └── e595601d4c867e83d1cadaea29a1dc39d3c31e
+│   │   ├── 3c
+│   │   │   ├── 2fccd661a13a4dea86e3ff3bbaf86dd396b300
+│   │   │   └── f3713a45ea2d8089d844332ce7ced3d840f11e
+│   │   ├── 3d
+│   │   │   ├── a3c43e40e18f3b55b0b3794fda8789fd8e7654
+│   │   │   └── f9c392b957246b22db3659c69e7d0b658c8810
+│   │   ├── 3e
+│   │   │   ├── a2ac917c83cd951a2072ff254bc1772199efec
+│   │   │   ├── c9e117b2eca163e98b699b7a52551fd2cbe012
+│   │   │   └── dc4d14644557136d3d0bb8724362a59cea8c98
+│   │   ├── 4a
+│   │   │   ├── acfb24cb460d88f636a82f45b5e32ecda9cdef
+│   │   │   └── e365dec849640937f79f2bfaa063c37d0b6723
+│   │   ├── 4b
+│   │   │   ├── 5909561b71b040e1d360d64e2a6cd44ef44732
+│   │   │   └── c09d2f6aecbac3b3a6cac7f8b5e25823515bc3
+│   │   ├── 4c
+│   │   │   └── eda7c112216ff0ce6bcc95ab57b3e6eac5b453
+│   │   ├── 4d
+│   │   │   └── 3962c0eb98555bef5fe6f68761c49cbb54c664
+│   │   ├── 4e
+│   │   │   └── b02b2c6c27e11d9b18ea1eb1cc418d968d9f28
+│   │   ├── 4f
+│   │   │   └── 83ed32c5d0d01cce6ff78147bea9dcb087b8de
+│   │   ├── 5a
+│   │   │   └── d0be71a6453a6319c3fc1fd66887320d2519ba
+│   │   ├── 5c
+│   │   │   ├── 1e58837583bb1c0d5860f30f7e5f638ece44b6
+│   │   │   └── 8f1dffcbd0c8dd8f667c7d86948b164485e564
+│   │   ├── 5d
+│   │   │   ├── 2e2f39fa0f9c49b8f6b0e3800c09eecd4eff0f
+│   │   │   └── 9f7e67f3251ac7605138f85bf03e80e3cf856f
+│   │   ├── 5e
+│   │   │   └── b6018f2b63d34cc1718ea73d671116911b4600
+│   │   ├── 6a
+│   │   │   ├── 16b9609baf867b9381eac4ddb1d61f665725c6
+│   │   │   ├── 6243a826180f384757f603f0d4e4a6f20cdf4f
+│   │   │   └── a8304f2517e706a08ef964688b198d3a1533eb
+│   │   ├── 6b
+│   │   │   ├── 854ef9db0d22044d902862203a9988a40d6359
+│   │   │   ├── a1cc5ad94e521b855c1407a0f5549393945f81
+│   │   │   └── d72bd621a13caad27f1710235185f3ea1d73b5
+│   │   ├── 6d
+│   │   │   └── 68d0a7b8cb3d6e6aa08a9467d42e64bb706910
+│   │   ├── 6e
+│   │   │   └── bcef20f66d8a6e1d75d278e79a9fe0ce9da25a
+│   │   ├── 6f
+│   │   │   └── 48784fbd319e068a749f25abd29dd24d9ae57d
+│   │   ├── 7a
+│   │   │   └── f75628aaa494d7d21d56ecdee63a75f412224a
+│   │   ├── 7d
+│   │   │   ├── 7f12eb10a1a9991acb42af257b67850bb129b6
+│   │   │   ├── 34367917823fe00c87331c622015511e8cda8f
+│   │   │   └── b301c59489c00bdaa0a27a5a5f4b8a85c9a2af
+│   │   ├── 7e
+│   │   │   └── ee230df4c46b528a4c7e01970d8c4692017ae1
+│   │   ├── 7f
+│   │   │   └── e52d3acefe388de2a241cbc8978b43ad54dfa5
+│   │   ├── 8a
+│   │   │   └── a1e551c0d4e3338adee4033406a719c7d2a5b1
+│   │   ├── 8c
+│   │   │   ├── 1d56cdb8d930259dc1cc291ab0eb3b15373507
+│   │   │   ├── 2d542f31abd44bb5da9ac249c1dd562a7b72d4
+│   │   │   ├── 24fa02ae4b1bcddbddf8e9e8830daa4e187363
+│   │   │   └── ee930653e3c898e0843a5cba4ee359e0ecfa93
+│   │   ├── 8e
+│   │   │   └── 94dbc562a70c48b90eb19eca08c9d6d19d0052
+│   │   ├── 8f
+│   │   │   ├── 2c105e2d99d4da6ddb5748f9645718c14017fc
+│   │   │   ├── 43aa956ace7047d329b8960118265fc3d9d0a6
+│   │   │   └── 23802f1dac4f54692ce39a7bdf9e99a799f8cf
+│   │   ├── 9b
+│   │   │   ├── 1efae5e54665c94852233f4108c42f244336e7
+│   │   │   ├── 4995210d887558e8a26ebd0fe99fadda01a0f6
+│   │   │   └── fda586df04a30a4583f1cf1913af2cc190bb6d
+│   │   ├── 9c
+│   │   │   └── 81695386db0595f8c852935b348f1d522c92e0
+│   │   ├── 9d
+│   │   │   └── 597499ac8c5267e1461aa4e0be4bfd7a6c667c
+│   │   ├── 9e
+│   │   │   ├── 33da7a248789bc54e0ab8c6551b7be1d8db885
+│   │   │   ├── 39b56dffa9dcd68993553dea71d66cb60a0494
+│   │   │   ├── 88db72f61c159feceaa91f18ae9ebd8daf2701
+│   │   │   └── 3649babf6ec0a2275eeb57fe2320e7c4dec38f
+│   │   ├── 9f
+│   │   │   └── e031e43fe22d49d13b4602b89809e137fd290e
+│   │   ├── 11
+│   │   │   └── 082369b8bf9edb5e49ec5eae9e47ecfc8a4b6b
+│   │   ├── 12
+│   │   │   ├── 04b1d681aaea560f8103f155a1de1c011c903c
+│   │   │   └── 24c909a7b3536702e9101bc6af27e4ab1dc5b0
+│   │   ├── 14
+│   │   │   ├── 3afd9d73f9dbaadf65f61f7c0a2368ad6219fd
+│   │   │   └── ffed3ccbfe5eeafac00c26cf550f1d961c17be
+│   │   ├── 15
+│   │   │   ├── 31a27541c0c463fe926f23f5d251396883c073
+│   │   │   ├── cfea40357ea4e974fc7f94d6f2f51568f3dd85
+│   │   │   └── ed69ad8c34cf9cda51544b5e00621260dc5236
+│   │   ├── 18
+│   │   │   ├── d27cd9bd75baee746c4754fb30c7e8f703cb2f
+│   │   │   └── e55254544387433073a8c5db5dfc0ffb41d189
+│   │   ├── 21
+│   │   │   └── a2c7110d2f0f55ea88d01bd483703c59586272
+│   │   ├── 22
+│   │   │   ├── 1d568b166024a24be8087ba12519477009949e
+│   │   │   ├── 3d64a7b2eb9b1c99feff9ebdd8a0b4b51bcaf0
+│   │   │   ├── 5c644da81b39fc15e4070459ab2d687b7e718f
+│   │   │   └── 33eaae4470f443c363567f504b6d5a0991d52f
+│   │   ├── 24
+│   │   │   ├── 1ff98a9bc1eb7c94546f263fdecaa7e2f97ff4
+│   │   │   └── 24eb009f8057d437a937db81a181ab1b0bee78
+│   │   ├── 25
+│   │   │   ├── 0ba3c5ffdb546b6dbd167f3df5192ad63d1af8
+│   │   │   ├── 277e619819e21ac2a0cf6a5de33ded064651c2
+│   │   │   └── ca6c485badf8c58c229a227c7dc8f8dafc729d
+│   │   ├── 26
+│   │   │   ├── 6f180abead113f94a7960d1e89f28e8a964744
+│   │   │   └── 59b7f0f9c0db75b78b23c426044cf73d49904b
+│   │   ├── 27
+│   │   │   └── b2be004636f8f20dd12d3404a33a8109d47110
+│   │   ├── 30
+│   │   │   └── 7809fb223d45df3bc3bd23048037878e26db01
+│   │   ├── 31
+│   │   │   └── 74cf60be2846654c4132c76bf199356360fdd3
+│   │   ├── 32
+│   │   │   ├── 0507a7f7c435924353fe644e016e5e5f66ea8f
+│   │   │   └── a8e85b73cd35316a91b3902d6dbbe0aac52e90
+│   │   ├── 33
+│   │   │   ├── 7eb6556889d1afbfc39e140f2f2b53c29c2067
+│   │   │   ├── 9cf24b42ae46e07b75a8af877e0e55322ef0db
+│   │   │   └── 47c504ea49f5719ab623ffba46fdd1d07f969c
+│   │   ├── 35
+│   │   │   └── b888db3e30b38911ac80651dcb0ce6d6fa28fb
+│   │   ├── 36
+│   │   │   ├── 0e64a7f4fe40e33d6e20ddcf5866059c3d3cd7
+│   │   │   └── ec8881cab9f37806ddf26ce4d3fabd655cdd49
+│   │   ├── 38
+│   │   │   └── 064766327688932013f1fd54255579b4826c88
+│   │   ├── 39
+│   │   │   └── 6425f451352744229158a337725696fd1b4338
+│   │   ├── 41
+│   │   │   ├── 1626a40bf0bce33d24b573a35270124301165a
+│   │   │   └── d47f29c078d6c0aef36f5a51a88b4a60cfa256
+│   │   ├── 43
+│   │   │   ├── 6fe33df390cba1cb78726842401e819fe42192
+│   │   │   └── f0cc6847de7b16805f65160f94e5f246b1fba9
+│   │   ├── 44
+│   │   │   ├── 29b71a82e33be705d7034f35cda837195e1ee5
+│   │   │   └── c2a491bec063c6b8bf604372be2c26625129da
+│   │   ├── 46
+│   │   │   ├── 60f30293a08fd22104e7144f26cc6316e82043
+│   │   │   ├── 681d30d7848e640e861b5a05409b6b623ed382
+│   │   │   ├── 27954eb775351d13150b457f4393a4b4a130f0
+│   │   │   └── f3d7197bdfa2e7094ecfc55f8cbf8a9ee21876
+│   │   ├── 47
+│   │   │   └── 8f75bb5406ec99d9dec3903924cf18412c8d04
+│   │   ├── 48
+│   │   │   ├── 97a68acc006e37350c5a81e64810a51cba0216
+│   │   │   └── d39f8c4a91b3fa6d1b6aed2e3aab79625ac8cc
+│   │   ├── 49
+│   │   │   ├── 4e059ee9218f25c3b21b879aedbc6be33d735a
+│   │   │   └── f4a5b0f49c58a1b33c6fae1325bd08f2229146
+│   │   ├── 51
+│   │   │   └── 3aafd7f7363595d89e54ae6a4ca67242317bfc
+│   │   ├── 54
+│   │   │   ├── 9ca583184b48e384ce8fb28695fe048aa1ce03
+│   │   │   ├── 69bd3fcf444ddf002268f78086572768259d46
+│   │   │   ├── 368958ab3dfef18539bd7641d6b78838e34dba
+│   │   │   └── f34a84705e12c50c92711e2f0435030de0c51e
+│   │   ├── 55
+│   │   │   ├── 3e9e32064ea7a8cf808b302e9b26c6c78aafe6
+│   │   │   ├── 927f386de6942fdf72a8dfcadc3fd427fcc416
+│   │   │   └── de3a379e2ff2eec905ce9b27349ce778022fef
+│   │   ├── 58
+│   │   │   └── 2d8d48b2788cf12f2c35169ab07e19e86b9035
+│   │   ├── 59
+│   │   │   └── e4c8ee7e45e52e87eba6de72f885219109ff2c
+│   │   ├── 60
+│   │   │   └── 9ba9fa760f8e3d709cf17145fdf78f548db2fd
+│   │   ├── 62
+│   │   │   └── 73968245145bb71df1abc5c827a0b23510b32d
+│   │   ├── 64
+│   │   │   └── 9bd15de64b47ac9d25adc0da34ea54aae6e670
+│   │   ├── 66
+│   │   │   └── 09a643eb7d7ebc1688ec92d8949347748d1311
+│   │   ├── 69
+│   │   │   ├── 2a47bdca78d2b23f695e9b7f23a84ce81aa7d0
+│   │   │   └── 7bca7e59f705b8f67e63f2713de5fd0a88915c
+│   │   ├── 70
+│   │   │   └── e4505382279fdeb6af9392fbfeaaa74be9f668
+│   │   ├── 71
+│   │   │   ├── 2c406aeebb32316fa81b5e8d4f1e8ef77e7fe8
+│   │   │   ├── 3b470ba282b72e2fb86e76eceb7c1526dc8b2b
+│   │   │   ├── 9bc011ec9c24e5607dfa35202993e82dd2d4b8
+│   │   │   ├── 44a9b8940f8977130446d3896526f6ed7742f4
+│   │   │   ├── c17beada25c4ebb7876c1d01116900b5c8ad1e
+│   │   │   └── dbbb325b5a49279db41630be3b8810a3d96e68
+│   │   ├── 72
+│   │   │   └── bb307ed18c80e4ffa418c74c1ffc1427981a01
+│   │   ├── 73
+│   │   │   └── b0ce5dd0c4fa522efac5ca3be02653c25738c7
+│   │   ├── 74
+│   │   │   └── a96d05cb19a15700bf08cf43688e7af99386fa
+│   │   ├── 75
+│   │   │   ├── 296e7a6c08b751740e2fb38f2631e21361f2ac
+│   │   │   ├── b7789bf3288f2ee7696d912be1b62e498ce438
+│   │   │   └── fa3ea1cae02c2f00e11015b446f1faa2dc3913
+│   │   ├── 76
+│   │   │   ├── 80ef808c4d18cc462133828345a7cf5157c16d
+│   │   │   └── 94fb5c6aa9691d95078eccfcd612f4fbf909e4
+│   │   ├── 77
+│   │   │   └── a2e4508b14d7e195de077a0be2f6aa5bb21213
+│   │   ├── 78
+│   │   │   ├── 11ac101ecead9114abd3a4788a21f551925d27
+│   │   │   └── f36156bf8c8259a33f5a9618f353c51a2aaa92
+│   │   ├── 79
+│   │   │   ├── 6ce670f06d383d9226309cc88aef311faa676a
+│   │   │   └── 98811a07dccc03bd2382a66b42cea554d85674
+│   │   ├── 80
+│   │   │   ├── 687c41166b49d182fcf78c3e2b8a0757ec941f
+│   │   │   └── bd5dabd56f1f4e2eff892c1547312b76142fbc
+│   │   ├── 82
+│   │   │   ├── 599f9b4ea539f5f9f863dc99cdc378e5b3a775
+│   │   │   └── bf21e95322bef3f5be81113633ec119e44f746
+│   │   ├── 85
+│   │   │   ├── 9158a6375aeeb3354e04b1925ad0cad5b02f0f
+│   │   │   ├── def9d59927fe4cf311ac55f0982efb2b5a49c5
+│   │   │   └── ffe194ec6bfc7d29c8a5dfeed645aa8db7c426
+│   │   ├── 86
+│   │   │   ├── 38eec09c5508739f7c9474c576767ac728952f
+│   │   │   ├── 770f29beb8c5a1fe14c1259507ec2a9852f56b
+│   │   │   ├── a1c79e320eeb24a6b35faf5314fe94610d60bc
+│   │   │   ├── bd215e8a6e5d04855e3ebb94f42ce522f5eae4
+│   │   │   └── fc1f10e1a0fec6a359c9c677c9547ff0508196
+│   │   ├── 87
+│   │   │   └── 2e82b467048e278c4c62de79b9ed601d3bd69c
+│   │   ├── 88
+│   │   │   └── 84b5aad2053c71778fa066d61ddc4ec84378c1
+│   │   ├── 90
+│   │   │   └── c2a72d728bf2cb366ae28d7de841cb3a1e3fb2
+│   │   ├── 91
+│   │   │   ├── 49b79eb59f72cb4023f2d70e04c8777408627a
+│   │   │   └── a199873577be0d66601c677c2da248a49aacd5
+│   │   ├── 92
+│   │   │   └── b7ef44cf7af29118c29b02c20e61a6dcf4a242
+│   │   ├── 94
+│   │   │   └── 48c6c9a52ae226d7ea380becba138ed9639e81
+│   │   ├── 95
+│   │   │   ├── 7a3642f6ba0d04c10bb10db804a010d3e1a777
+│   │   │   └── 501b0e9d15d7779fd837dc38bb18d3e793d980
+│   │   ├── 97
+│   │   │   ├── a7784925b6b7145f5a3332d699b2ec51179c81
+│   │   │   └── cfa28e4e4a626c18da1a772fb7b3da573a1167
+│   │   ├── a1
+│   │   │   ├── 3cfca77ae4006663a9721cda2a84e72627fe83
+│   │   │   ├── a0b3180a874c04868cabe6f91689dc496741a7
+│   │   │   └── ee1121928ac4fd686b1e4a3af84889474601da
+│   │   ├── a2
+│   │   │   ├── 817112f3e808ca4095ee774b7cfa4618153f10
+│   │   │   └── cc8c9a7422775a5bfd52d5e74d553583c0642c
+│   │   ├── a3
+│   │   │   └── 233a49d26b94ee5a7d453625aad28033908cb5
+│   │   ├── a4
+│   │   │   ├── 40ca18cbcc8619db243c2e51988784bba9abc9
+│   │   │   └── 671ee4ce7f4a2c52031130a0a6c4504f99642c
+│   │   ├── a5
+│   │   │   └── 46ca1c91035e927f2949ab6ec15deebb5154be
+│   │   ├── a6
+│   │   │   └── ce4fb07f79ad746910e3c61df1dac5b72efe10
+│   │   ├── a7
+│   │   │   └── 0a6be8542baf03bbb61b1775c847aa64a3728f
+│   │   ├── a9
+│   │   │   └── d0aad20751342877e0b2ce6098e18b5432c326
+│   │   ├── aa
+│   │   │   ├── 49a8e4d4eba8cc2ab0501a62dd9a2247e25aa7
+│   │   │   └── a7b6dfd270907d98ebac2879776cb59a68ec09
+│   │   ├── ab
+│   │   │   └── 5eec09ba7abe35014fdcbe5723f822ba3b73dc
+│   │   ├── ac
+│   │   │   └── ef4b2db8ed43a63967ad85520fcefb7f53ba1a
+│   │   ├── ad
+│   │   │   └── 031f23199c7f736d10fe74ef9bc16319b984b5
+│   │   ├── ae
+│   │   │   ├── 7b53ab03ff9c6be1b1a9ebd112f83c67c8c617
+│   │   │   └── 11fe5e3186613d7cb992afe4cbc5360b895a19
+│   │   ├── af
+│   │   │   └── 2b1c8d9a81072f374e5cbc8f21f255fdde317c
+│   │   ├── b0
+│   │   │   └── 988fe2b90176fe6ffadf1ed7007a2587d212fb
+│   │   ├── b1
+│   │   │   ├── b1603a9a6fa8356834bba339b3b021c1096520
+│   │   │   └── ff920fb2dc7337799cd7268ebb1244228e9935
+│   │   ├── b2
+│   │   │   ├── 6e15aba91351bd017bb79af0cccbb0d63ca919
+│   │   │   └── 40c46af3e81252774ceb1029780732181cb16a
+│   │   ├── b3
+│   │   │   ├── 7e2e8206e4c60c222aaec934e35b552b2e89df
+│   │   │   └── 876c0c2b9e01c9dfabe7035a39a4fdc921f63f
+│   │   ├── b4
+│   │   │   ├── 383c3fa539537dadee25ab2c283319cb93a598
+│   │   │   └── 368825d6a35824bf62416a375c7738ff8a86f2
+│   │   ├── b5
+│   │   │   ├── 0256f399cda9c0e6fdbb0b86371360a3f5af53
+│   │   │   └── 852fc97ad4a9455e8a32728d28a3d5fd50c02f
+│   │   ├── b6
+│   │   │   ├── 0beaa042ff0d045d6b7351c1ad1cc59dbc2476
+│   │   │   ├── 13ed8c4d616018f82a4c57d422779fd427004c
+│   │   │   ├── a93bb59981b1cbaa3c54647ae52fbb91d1465d
+│   │   │   └── e6f49d7992638a10089300ffee703498dd9630
+│   │   ├── b7
+│   │   │   ├── 2a140b00fb217764b7c7c262af329d78c11699
+│   │   │   └── 3ef1a532ccea99718b1ad4387d4f742df57fa9
+│   │   ├── b8
+│   │   │   ├── 53d1b53c7cb6e56df7ddbcc30716abe88ae5b1
+│   │   │   ├── 4799f49fe634cd2dfda772fbfeae2e4e706993
+│   │   │   ├── 4476469d22dcc2ea02ba6d8fbc04de67ebf34b
+│   │   │   └── e2d4ebf31cc754c1c17a0dccf63a8a6d066ff6
+│   │   ├── b9
+│   │   │   ├── 87aebd1f144bcd87e16a375bb543d76f42c74a
+│   │   │   └── e3ab1f3a69ce89ce972be4d6dc98f6b498da35
+│   │   ├── ba
+│   │   │   ├── 5d83ff2aa2699278915b2162c8a9a469fc90fa
+│   │   │   └── 82c4ef7a5fe1abd3bdad76ae972575759251bf
+│   │   ├── bb
+│   │   │   └── de1c905e4851749d0a9d9ae6a49108af6fc382
+│   │   ├── bd
+│   │   │   └── 84b912df8f379bff96e27b7c7f5c06943a924d
+│   │   ├── be
+│   │   │   ├── 6f9298fd9472f3acedae1074f1cdfb3321107c
+│   │   │   └── 451ae0752043895c343d970283172713560e4b
+│   │   ├── bf
+│   │   │   ├── 2f19830f22cd5766c6021f89be5d7b44cd830f
+│   │   │   └── ff077a51bbf009081eb7d7e3dd38880108d1ed
+│   │   ├── c0
+│   │   │   ├── 1d1079030cd224072e4018481c9a496a968a76
+│   │   │   └── ee81299bd368b4c38a7947d1651a1e32348313
+│   │   ├── c1
+│   │   │   ├── 39d462b1c038476fadec5293f638add2762b42
+│   │   │   └── 4283ab65d926410a29487357e7243776764def
+│   │   ├── c2
+│   │   │   ├── 788915d89c9578231bc6e43663926b48f57270
+│   │   │   └── af896a3b95a5e7c5ad1cbc4d99d9cd32d1d26a
+│   │   ├── c4
+│   │   │   ├── 43d25bc6eb9cb6338b5c72eeb1cdbe1efe8c93
+│   │   │   └── f74e05532147f6d39483666041c61918c19858
+│   │   ├── c5
+│   │   │   └── 6443318e1c927f19ddae5738bb6c561e143001
+│   │   ├── c7
+│   │   │   ├── 1cb27e2e959daec363f285635dd27687dc89c9
+│   │   │   ├── 6c1baa32a52bdb79ef17def11b90790b816da6
+│   │   │   └── aa2a41b6e7727870341e08abb9a2833ecab978
+│   │   ├── c8
+│   │   │   └── 0a3d5b132bea7ef49e6bb71fba545c9fb81205
+│   │   ├── c9
+│   │   │   └── 184def710384d2580b9558bbdf0fbb0000b5fc
+│   │   ├── ca
+│   │   │   ├── 77ed7651b4f355aabbfc0d22cadcdd9c785701
+│   │   │   ├── 9338155d5d343a92baffaaa918f1e1a44b52b1
+│   │   │   └── e89d6fea9a05e31f86c7d4baf4d3b33b39f99d
+│   │   ├── cb
+│   │   │   ├── 1b05e7897600c507a0a83e6ddf43be4c1823bd
+│   │   │   ├── 3ec635ecf882d343b9db544774bed262af0207
+│   │   │   ├── 5e0b00a8935f49bdf6f74afadbe4db1e97b480
+│   │   │   └── f3957b74f3d68757c7f5f8de7e3658a358a570
+│   │   ├── cf
+│   │   │   └── 45f14b7515f872ccd861d2c499cbe058c2b9ff
+│   │   ├── d0
+│   │   │   ├── 712a49007a35055d710a8c9d6072ac189df83d
+│   │   │   └── df04b615b6aa3c648ea3f363979d61616c2102
+│   │   ├── d1
+│   │   │   └── a06005c4c54dce274b483c36a6a40f673554f8
+│   │   ├── d2
+│   │   │   └── 18b4ff14274f09839ccc6b7105f5e34499a102
+│   │   ├── d3
+│   │   │   └── 2f31f52b2d898f301ca17b47d489c9fc09ddb5
+│   │   ├── d4
+│   │   │   ├── 50962614b292bc84de846d98d876c4c89a1f77
+│   │   │   └── c1474f9cdf32c16f30a2efdc6e0c45ca43e227
+│   │   ├── d5
+│   │   │   └── d4930e9f3f318aa18114ab65b55330d3e1ee5f
+│   │   ├── d6
+│   │   │   ├── 006526762447f4189a29f06597965f206c5c5b
+│   │   │   ├── 50fe8a98e12fb7014cde70e99b6108de21b74c
+│   │   │   └── 69464fe5cc1e6daab0189eeea18cfe8a10b0db
+│   │   ├── d7
+│   │   │   └── 7f140cd92477f729fb93823a00c16174a1ee23
+│   │   ├── d8
+│   │   │   └── e42f0feb639e60f71c0cb2c0ab8dc57d531d2d
+│   │   ├── d9
+│   │   │   └── b1205f18f3590d62134795d5e873db8e0960fc
+│   │   ├── da
+│   │   │   ├── 9d654e1f6d3e56421c66dc46bb7c77d157ab73
+│   │   │   └── 17a85e6d0bf7bf216a178eea4a7dad95c0cef4
+│   │   ├── db
+│   │   │   └── 6ce64f80b0d91b44b61f0badbea0d8bc21d54e
+│   │   ├── dc
+│   │   │   ├── 77a7af864eb1b81805cf3bc4e4926f13ae007d
+│   │   │   └── 5486c313ca3944d14651fc6161ce9dffe2be0e
+│   │   ├── df
+│   │   │   └── c896a226672d7b9425c5582741b3c8fcebb96c
+│   │   ├── e0
+│   │   │   ├── d829b638a76e28b99b1d39eeaa7823e720b8d9
+│   │   │   └── db863357e59fa54d662f8617f464af4b32b85b
+│   │   ├── e1
+│   │   │   ├── 9c720bcd099528dd8821548492c75b506f9587
+│   │   │   └── f8b762f417a73d272384ab6f9dca7fa8b8e5f6
+│   │   ├── e3
+│   │   │   └── 1dde900b3b830970c371281c1e2d6fb93f0ead
+│   │   ├── e4
+│   │   │   └── 52f4b8990ba1651d4124032b0e02cc1d84453f
+│   │   ├── e5
+│   │   │   └── ddc83d98de1aff1e5991abc56584cc2348f6c7
+│   │   ├── e7
+│   │   │   └── f724e498ef7f9d96c8c5e782ac345e005fa932
+│   │   ├── e8
+│   │   │   ├── 8c3c932b83e1d96cc84d9d7b183c9c01ec8145
+│   │   │   └── f5859aa65257ed9f823db9636ef4196cf9f7e4
+│   │   ├── e9
+│   │   │   └── 0fcb7f9ef07db0b2afe7ef11dbb2bf9733d8ac
+│   │   ├── ea
+│   │   │   └── 61e2dbf4068ac50e0bc3e2f68d968426125e3d
+│   │   ├── ec
+│   │   │   ├── 216bb3fe9db44dea6827474d46f0b29a7261b8
+│   │   │   ├── 6318c17f75fb85fe61b5851a69ce3d7df87367
+│   │   │   └── f924a18432acc9bc43dec15039d4fc285b8fc2
+│   │   ├── f0
+│   │   │   └── 4f71c77d7719e6e5f16b0a8614a7419b162fd8
+│   │   ├── f1
+│   │   │   ├── 1e8fa50e9b5f1b2da91f62b80648817670c84c
+│   │   │   ├── 11b6923ac57a594a79c345af1a0f310603a2c5
+│   │   │   └── 67890132d2de5b235933b3125c5373120fd716
+│   │   ├── f3
+│   │   │   ├── 7de91cf02e361fb627ced137db727b55018842
+│   │   │   └── 15013bdfb0eb98436d7b92aed0f324c9d1496e
+│   │   ├── f6
+│   │   │   └── 2095bd4f935a57b1476de0bca99f7937603192
+│   │   ├── f7
+│   │   │   ├── 977ba0a6504a6f8206412f5061556d7ec4353f
+│   │   │   └── af0d2c35530a2e4fdf0a0be8f0ee16e2311186
+│   │   ├── f9
+│   │   │   ├── 0266c09e573281a21fa62dd04778659b92e9a2
+│   │   │   ├── 5ad80a59fb1dc869feaa750e45ac03a04bc828
+│   │   │   ├── 2275df39bd81db9c8fdd66416310b236c440e1
+│   │   │   ├── ac27e00615dd8a68306e55c4ae62673851bff7
+│   │   │   └── f64f898f3d19df4b740e480fe40971116c9e2f
+│   │   ├── fa
+│   │   │   ├── ce8a232c72a75a1cbef800a62369adcab9fa53
+│   │   │   └── ee4a4af3b8c91d0fdc84a41798d6053dd3cb4b
+│   │   ├── fb
+│   │   │   └── ab6f5023e0efe55a0f596ee8cb8c6040acfae5
+│   │   ├── fc
+│   │   │   ├── 7518935ea430214f7724621e43e17443b2bca4
+│   │   │   └── dfcc008ab5dde6e8242413212c19c2701aed4b
+│   │   ├── fd
+│   │   │   └── 21465fa526d78d8cb59186b277d8c236c7a65d
+│   │   ├── fe
+│   │   │   └── 7b424e805410baa934ebc361043fc8149db0a0
+│   │   ├── info
+│   │   └── pack
+│   ├── refs
+│   │   ├── heads
+│   │   │   └── main
+│   │   ├── remotes
+│   │   │   └── origin
+│   │   │       └── main
+│   │   └── tags
+│   ├── COMMIT_EDITMSG
+│   ├── config
+│   ├── description
+│   ├── HEAD
+│   └── index
+├── bsau_v2
+│   ├── Core
+│   │   ├── Inc
+│   │   │   ├── adc.h
+│   │   │   ├── bsau_adc.h
+│   │   │   ├── bsau_app.h
+│   │   │   ├── bsau_config.h
+│   │   │   ├── bsau_test.h
+│   │   │   ├── dma.h
+│   │   │   ├── gpio.h
+│   │   │   ├── log.h
+│   │   │   ├── main.h
+│   │   │   ├── nrf24l01.h
+│   │   │   ├── nrf24l01_test.h
+│   │   │   ├── spi.h
+│   │   │   ├── stm32l4xx_hal_conf.h
+│   │   │   ├── stm32l4xx_it.h
+│   │   │   ├── tim.h
+│   │   │   ├── usart.h
+│   │   │   └── wireless_packet.h
+│   │   ├── Src
+│   │   │   ├── adc.c
+│   │   │   ├── bsau_adc.c
+│   │   │   ├── bsau_app.c
+│   │   │   ├── bsau_test.c
+│   │   │   ├── dma.c
+│   │   │   ├── gpio.c
+│   │   │   ├── main.c
+│   │   │   ├── nrf24l01.c
+│   │   │   ├── nrf24l01_test.c
+│   │   │   ├── spi.c
+│   │   │   ├── stm32l4xx_hal_msp.c
+│   │   │   ├── stm32l4xx_it.c
+│   │   │   ├── syscalls.c
+│   │   │   ├── sysmem.c
+│   │   │   ├── system_stm32l4xx.c
+│   │   │   ├── tim.c
+│   │   │   ├── usart.c
+│   │   │   └── wireless_packet.c
+│   │   └── Startup
+│   │       └── startup_stm32l432kcux.s
+│   ├── Debug
+│   │   ├── Core
+│   │   │   ├── Src
+│   │   │   │   └── subdir.mk
+│   │   │   └── Startup
+│   │   │       └── subdir.mk
+│   │   ├── Drivers
+│   │   │   └── STM32L4xx_HAL_Driver
+│   │   │       └── Src
+│   │   │           └── subdir.mk
+│   │   ├── Release
+│   │   │   ├── Core
+│   │   │   │   ├── Src
+│   │   │   │   │   └── subdir.mk
+│   │   │   │   └── Startup
+│   │   │   │       └── subdir.mk
+│   │   │   └── Drivers
+│   │   │       └── STM32L4xx_HAL_Driver
+│   │   │           └── Src
+│   │   │               └── subdir.mk
+│   │   ├── makefile
+│   │   ├── objects.list
+│   │   ├── objects.mk
+│   │   └── sources.mk
+│   ├── docs
+│   │   ├── BSAU_ARCHITECTURE.md
+│   │   ├── BSAU_RUN_GUIDE.md
+│   │   └── BSAU_TEST_GUIDE.md
+│   ├── Drivers
+│   │   ├── CMSIS
+│   │   │   ├── Device
+│   │   │   │   └── ST
+│   │   │   │       └── STM32L4xx
+│   │   │   │           ├── Include
+│   │   │   │           │   ├── stm32l4xx.h
+│   │   │   │           │   ├── stm32l432xx.h
+│   │   │   │           │   └── system_stm32l4xx.h
+│   │   │   │           ├── Source
+│   │   │   │           │   └── Templates
+│   │   │   │           ├── License.md
+│   │   │   │           └── LICENSE.txt
+│   │   │   ├── Include
+│   │   │   │   ├── cmsis_armcc.h
+│   │   │   │   ├── cmsis_armclang.h
+│   │   │   │   ├── cmsis_armclang_ltm.h
+│   │   │   │   ├── cmsis_compiler.h
+│   │   │   │   ├── cmsis_gcc.h
+│   │   │   │   ├── cmsis_iccarm.h
+│   │   │   │   ├── cmsis_version.h
+│   │   │   │   ├── core_armv8mbl.h
+│   │   │   │   ├── core_armv8mml.h
+│   │   │   │   ├── core_armv81mml.h
+│   │   │   │   ├── core_cm0.h
+│   │   │   │   ├── core_cm0plus.h
+│   │   │   │   ├── core_cm1.h
+│   │   │   │   ├── core_cm3.h
+│   │   │   │   ├── core_cm4.h
+│   │   │   │   ├── core_cm7.h
+│   │   │   │   ├── core_cm23.h
+│   │   │   │   ├── core_cm33.h
+│   │   │   │   ├── core_cm35p.h
+│   │   │   │   ├── core_sc000.h
+│   │   │   │   ├── core_sc300.h
+│   │   │   │   ├── mpu_armv7.h
+│   │   │   │   ├── mpu_armv8.h
+│   │   │   │   └── tz_context.h
+│   │   │   └── LICENSE.txt
+│   │   └── STM32L4xx_HAL_Driver
+│   │       ├── Inc
+│   │       │   ├── Legacy
+│   │       │   │   └── stm32_hal_legacy.h
+│   │       │   ├── stm32l4xx_hal.h
+│   │       │   ├── stm32l4xx_hal_adc.h
+│   │       │   ├── stm32l4xx_hal_adc_ex.h
+│   │       │   ├── stm32l4xx_hal_cortex.h
+│   │       │   ├── stm32l4xx_hal_def.h
+│   │       │   ├── stm32l4xx_hal_dma.h
+│   │       │   ├── stm32l4xx_hal_dma_ex.h
+│   │       │   ├── stm32l4xx_hal_exti.h
+│   │       │   ├── stm32l4xx_hal_flash.h
+│   │       │   ├── stm32l4xx_hal_flash_ex.h
+│   │       │   ├── stm32l4xx_hal_flash_ramfunc.h
+│   │       │   ├── stm32l4xx_hal_gpio.h
+│   │       │   ├── stm32l4xx_hal_gpio_ex.h
+│   │       │   ├── stm32l4xx_hal_i2c.h
+│   │       │   ├── stm32l4xx_hal_i2c_ex.h
+│   │       │   ├── stm32l4xx_hal_pwr.h
+│   │       │   ├── stm32l4xx_hal_pwr_ex.h
+│   │       │   ├── stm32l4xx_hal_rcc.h
+│   │       │   ├── stm32l4xx_hal_rcc_ex.h
+│   │       │   ├── stm32l4xx_hal_spi.h
+│   │       │   ├── stm32l4xx_hal_spi_ex.h
+│   │       │   ├── stm32l4xx_hal_tim.h
+│   │       │   ├── stm32l4xx_hal_tim_ex.h
+│   │       │   ├── stm32l4xx_hal_uart.h
+│   │       │   ├── stm32l4xx_hal_uart_ex.h
+│   │       │   ├── stm32l4xx_ll_adc.h
+│   │       │   ├── stm32l4xx_ll_bus.h
+│   │       │   ├── stm32l4xx_ll_cortex.h
+│   │       │   ├── stm32l4xx_ll_crs.h
+│   │       │   ├── stm32l4xx_ll_dma.h
+│   │       │   ├── stm32l4xx_ll_dmamux.h
+│   │       │   ├── stm32l4xx_ll_exti.h
+│   │       │   ├── stm32l4xx_ll_gpio.h
+│   │       │   ├── stm32l4xx_ll_lpuart.h
+│   │       │   ├── stm32l4xx_ll_pwr.h
+│   │       │   ├── stm32l4xx_ll_rcc.h
+│   │       │   ├── stm32l4xx_ll_spi.h
+│   │       │   ├── stm32l4xx_ll_system.h
+│   │       │   ├── stm32l4xx_ll_tim.h
+│   │       │   ├── stm32l4xx_ll_usart.h
+│   │       │   └── stm32l4xx_ll_utils.h
+│   │       ├── Src
+│   │       │   ├── stm32l4xx_hal.c
+│   │       │   ├── stm32l4xx_hal_adc.c
+│   │       │   ├── stm32l4xx_hal_adc_ex.c
+│   │       │   ├── stm32l4xx_hal_cortex.c
+│   │       │   ├── stm32l4xx_hal_dma.c
+│   │       │   ├── stm32l4xx_hal_dma_ex.c
+│   │       │   ├── stm32l4xx_hal_exti.c
+│   │       │   ├── stm32l4xx_hal_flash.c
+│   │       │   ├── stm32l4xx_hal_flash_ex.c
+│   │       │   ├── stm32l4xx_hal_flash_ramfunc.c
+│   │       │   ├── stm32l4xx_hal_gpio.c
+│   │       │   ├── stm32l4xx_hal_i2c.c
+│   │       │   ├── stm32l4xx_hal_i2c_ex.c
+│   │       │   ├── stm32l4xx_hal_pwr.c
+│   │       │   ├── stm32l4xx_hal_pwr_ex.c
+│   │       │   ├── stm32l4xx_hal_rcc.c
+│   │       │   ├── stm32l4xx_hal_rcc_ex.c
+│   │       │   ├── stm32l4xx_hal_spi.c
+│   │       │   ├── stm32l4xx_hal_spi_ex.c
+│   │       │   ├── stm32l4xx_hal_tim.c
+│   │       │   ├── stm32l4xx_hal_tim_ex.c
+│   │       │   ├── stm32l4xx_hal_uart.c
+│   │       │   └── stm32l4xx_hal_uart_ex.c
+│   │       └── LICENSE.txt
+│   ├── InfiniTech_BSAU_Skeleton_v1.0.ioc
+│   ├── README.md
+│   └── STM32L432KCUX_FLASH.ld
+├── cpcu_v2
+│   ├── config
+│   │   ├── cmdline_additions.txt
+│   │   └── config.txt
+│   ├── datasets
+│   ├── docs
+│   │   ├── export
+│   │   │   ├── 01_System_Block_Diagram.pdf
+│   │   │   ├── 02_System_Flowchart.pdf
+│   │   │   ├── 03_Safety_Monitor.pdf
+│   │   │   ├── 04_IPC_Subsystem.pdf
+│   │   │   ├── 05_DSP_ML_Pipeline.pdf
+│   │   │   ├── 06_Kernel_Supervisor.pdf
+│   │   │   ├── 07_NRF24L01_Radio_Driver.pdf
+│   │   │   ├── 08_PCA9685_Servo_Driver.pdf
+│   │   │   └── 09_TUI_Dashboard_Mockup.pdf
+│   │   ├── CPCU_ARCHITECTURE.md
+│   │   ├── CPCU_CONFIGURATION.md
+│   │   ├── CPCU_RUN_GUIDE.md
+│   │   └── CPCU_TEST_GUIDE.md
+│   ├── include
+│   │   ├── cpcu_ipc.h
+│   │   ├── cpcu_log.h
+│   │   ├── cpcu_pca9685.h
+│   │   ├── cpcu_safety.h
+│   │   ├── cpcu_smooth.h
+│   │   ├── cpcu_tui.h
+│   │   ├── cpcu_tui_freq.h
+│   │   ├── demo_signals.h
+│   │   ├── nrf24l01_linux.h
+│   │   └── wireless_packet.h
+│   ├── models
+│   ├── scripts
+│   │   ├── bsau_dataset_collector.py
+│   │   ├── cpcu.service
+│   │   ├── cpcu_dsp.py
+│   │   ├── cpcu_ipc_bridge.py
+│   │   └── launch.sh
+│   ├── src
+│   │   ├── cpcu_io.c
+│   │   ├── cpcu_ipc.c
+│   │   ├── cpcu_kernel.c
+│   │   ├── cpcu_log.c
+│   │   ├── cpcu_pca9685.c
+│   │   ├── cpcu_safety.c
+│   │   ├── cpcu_smooth.c
+│   │   ├── cpcu_tui.c
+│   │   ├── cpcu_tui_data.c
+│   │   ├── cpcu_tui_render.c
+│   │   ├── nrf24l01_linux.c
+│   │   └── wireless_packet.c
+│   ├── test
+│   │   ├── pca_testbench.c
+│   │   ├── safety_testbench.c
+│   │   ├── signal_testbench.c
+│   │   ├── test_codec.c
+│   │   ├── test_dsp_pipeline.py
+│   │   └── test_ipc_bridge.py
+│   ├── CMakeLists.txt
+│   ├── README.md
+│   ├── run_tests.sh
+│   └── setup_pi.sh
+├── .gitignore
+├── LICENSE
+├── log.txt
+├── PROJECT_STRUCTURE.txt
+├── README.md
+└── SYSTEM_GUIDE.md

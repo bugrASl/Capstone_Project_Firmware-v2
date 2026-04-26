@@ -128,22 +128,31 @@ each page means.
 ## 2. Fresh Pi setup (one-time)
 
 ```bash
-sudo apt install -y git
-git clone <your-repo-url> ~/cpcu_v2
-cd ~/cpcu_v2
-sudo bash setup_pi.sh
-sudo reboot
+git clone <your-repo-url> ~/prosthetic_hand
+cd ~/prosthetic_hand/cpcu_v2
+./setup_pi.sh                       # self-elevates via sudo (one prompt)
+sudo reboot                         # the only sudo command you'll type today
 ```
 
-**What `setup_pi.sh` does, briefly:**
+**What `setup_pi.sh` does (v2.3, sudo-wrapped internally):**
 
-1.  Installs build toolchain (`gcc`, `cmake`, `libncurses-dev`) and Python
-    deps (`numpy`, `scipy`, `scikit-learn`, `joblib`).
-2.  Enables SPI and I²C in `/boot/firmware/config.txt`.
-3.  Appends `isolcpus=1,2,3 nohz_full=1,2,3` to `/boot/firmware/cmdline.txt`
-    so the Linux scheduler leaves those cores alone.
-4.  Sets CPU governor to `performance` and locks the ARM clock to 2.8 GHz.
-5.  Creates `/opt/cpcu/{bin,scripts,models,test}` directories.
+1.  Self-elevates via `exec sudo "$0" "$@"` so you only see one
+    password prompt regardless of how many privileged steps it runs.
+2.  Installs the build toolchain (`gcc`, `cmake`, `libncurses-dev`,
+    `tmux`) and Python deps (`numpy`, `scipy`, `scikit-learn`,
+    `joblib`).
+3.  Enables SPI and I²C in `/boot/firmware/config.txt`.
+4.  Appends `isolcpus=1,2,3 nohz_full=1,2,3 rcu_nocbs=1,2,3` to
+    `/boot/firmware/cmdline.txt` so the Linux scheduler leaves those
+    cores alone.
+5.  Creates `spi`, `i2c`, `gpio` groups (idempotent), drops a udev
+    rule at `/etc/udev/rules.d/90-cpcu.rules` granting group access
+    to `/dev/spidev*`, `/dev/i2c-*`, `/dev/gpiochip*`, and adds your
+    real user (the one that ran the script — picked up via
+    `$SUDO_USER`) to all three groups.
+6.  Creates `/opt/cpcu/{bin,scripts,models,test}` and `/var/log/cpcu/`
+    and **chowns them to your user** so subsequent `cmake --install`
+    and log-tailing work without sudo.
 
 Verify after reboot:
 
@@ -151,6 +160,7 @@ Verify after reboot:
 cat /sys/devices/system/cpu/isolated        # Expected: 1-3
 ls /dev/spidev0.0                           # Expected: exists
 ls /dev/i2c-1                               # Expected: exists
+groups                                      # Expected: ... spi i2c gpio ...
 vcgencmd measure_clock arm                  # Expected: ~2800000000
 python3 -c "import numpy, scipy, joblib, sklearn; print('OK')"
 ```
@@ -158,27 +168,32 @@ python3 -c "import numpy, scipy, joblib, sklearn; print('OK')"
 **What can go wrong:**
 
 -   `isolated` prints `""` (empty): `cmdline.txt` was not edited → re-run
-    `setup_pi.sh` and reboot. **All RT guarantees depend on this.**
+    `./setup_pi.sh` and reboot. **All RT guarantees depend on this.**
 -   `/dev/spidev0.0` missing: SPI still disabled →
-    `sudo raspi-config` → Interface Options → SPI.
--   `/dev/i2c-1` missing: I²C still disabled → same place, I2C.
+    `sudo raspi-config` → Interface Options → SPI. *(One of the rare
+    places a manual sudo is needed; raspi-config has no non-sudo
+    equivalent.)*
+-   `/dev/i2c-1` missing: I²C still disabled → same place, I²C.
+-   `groups` doesn't show `spi`/`i2c`/`gpio`: log out and back in
+    (group membership is set at login).
 
 ---
 
 ## 3. Build
 
 ```bash
-cd ~/cpcu_v2
-mkdir build && cd build
-cmake ..
-make -j4
+cd ~/prosthetic_hand/cpcu_v2
+cmake -S . -B build                 # configure (out-of-tree)
+cmake --build build -j4             # compile all 7 binaries
 ```
 
 Verify:
 
 ```bash
-ls cpcu_io cpcu_kernel cpcu_tui pca_testbench signal_testbench test_codec
-# All six binaries should exist.
+ls build/cpcu_io build/cpcu_kernel build/cpcu_tui \
+   build/test_codec build/safety_testbench \
+   build/pca_testbench build/signal_testbench
+# All seven binaries should exist.
 ```
 
 **What each binary does:**
@@ -187,23 +202,29 @@ ls cpcu_io cpcu_kernel cpcu_tui pca_testbench signal_testbench test_codec
 |--------------------|-------------|--------------------------------------------------|
 | `cpcu_kernel`      | Core 0      | Supervisor. Spawns `cpcu_io` + `cpcu_dsp.py`. Watchdogs them. Owns `/var/lock/cpcu.lock`. |
 | `cpcu_io`          | Core 3 (RT) | Reads NRF packets → sensor ring. Reads motor seqlock → writes PCA9685. |
-| `cpcu_tui`         | any         | ncurses dashboard. 4 pages, read-only, safe to attach/detach live. |
-| `test_codec`       | any         | Unit test: pack/unpack + ring-buffer round-trip. No hardware. |
+| `cpcu_tui`         | any         | ncurses dashboard. 7 pages (v3.4 split build), read-only, safe to attach/detach live. |
+| `test_codec`       | any         | Unit test: pack/unpack + ring-buffer round-trip. No hardware. **7 PASS.** |
+| `safety_testbench` | any         | Automated safety-FSM harness. **33 PASS (v2.3).** |
 | `pca_testbench`    | Pi (I2C)    | Interactive servo calibration. Standalone — does not talk to IPC. |
 | `signal_testbench` | any         | End-to-end signal integrity TUI. Uses IPC when live, synthetic in `--demo`. |
 
 Build a single target:
 
 ```bash
-cmake --build . --target cpcu_tui           # Just the TUI
-cmake --build . --target pca_testbench      # Just servo testbench
-cmake --build . --target signal_testbench   # Just signal testbench
+cmake --build build --target cpcu_tui           # Just the TUI
+cmake --build build --target pca_testbench      # Just servo testbench
+cmake --build build --target signal_testbench   # Just signal testbench
 ```
 
 **What can go wrong:**
 
--   `Curses not found`: `sudo apt install libncurses-dev`.
--   `cmake: command not found`: `sudo apt install cmake`.
+-   `Curses not found`: re-run `./setup_pi.sh` (it installs `libncurses-dev`).
+-   `cmake: command not found`: re-run `./setup_pi.sh` (it installs `cmake`).
+-   `add_executable references unknown source...`: you're invoking `cmake`
+    from the wrong directory. The `CMakeLists.txt` lives at
+    `cpcu_v2/CMakeLists.txt` and references `src/file.c`, `test/file.c`,
+    `include/`. Use `cmake -S . -B build` from `cpcu_v2/`, not from a
+    parent or `bsau_v2/`.
 
 ---
 
@@ -218,22 +239,34 @@ hardware.
 ./run_tests.sh 1
 ```
 
+Three test groups run, all expected green:
+
+| Group               | Source                          | Pass count |
+|---------------------|---------------------------------|------------|
+| TB-CODEC            | `test/test_codec.c`             | **7 PASS** |
+| TB-SAF (FSM)        | `test/safety_testbench.c`       | **33 PASS (v2.3)** |
+| TB-DSP (pipeline)   | `test/test_dsp_pipeline.py`     | **65 PASS (v2.3)** |
+
 Or manually:
 
 ```bash
-./test_codec                            # Codec round-trip: 7 PASS, 0 FAIL
-python3 ../test/test_dsp_pipeline.py    # DSP pipeline: all PASS
+build/test_codec
+build/safety_testbench
+python3 test/test_dsp_pipeline.py
 ```
 
 **What this proves:** codec packing/unpacking is bit-exact, ring buffer is
-lock-free-safe under concurrent push/pop, Python DSP produces the expected
-RMS/ML outputs on known inputs. If any of this fails, **stop** — nothing
-downstream will work.
+lock-free-safe under concurrent push/pop, the safety FSM transitions
+correctly through every fault path *and* recovery path (radio,
+battery, DSP stall, I²C, ring overflow with v2.3 delta-recovery,
+thermal), and the Python DSP produces the expected feature outputs
+on known analytical inputs. If any of this fails, **stop** —
+nothing downstream will work.
 
 ### 4.2 Demo mode — preview the TUIs without hardware
 
 ```bash
-./cpcu_tui --demo
+build/cpcu_tui --demo
 # Press 1/2/3/4/5/6/7 to see all pages.
 #   1=Overview 2=Radio/IO 3=DSP/AI 4=Waves 5=Health 6=Dataset 7=Config
 # Try w/[/] to cycle waveforms and F/B/G/O/I/R for fault injection.
@@ -241,7 +274,7 @@ downstream will work.
 #                   t to toggle RAW/FILTERED, r to cancel a capture.
 # Press q to quit.
 
-./signal_testbench --demo
+build/signal_testbench --demo
 # See synthetic sine waveforms + Goertzel analysis. Press q to quit.
 ```
 
@@ -263,8 +296,12 @@ it explains what each test actually checks and how to interpret the output.
 ## 5. Install
 
 ```bash
-cd ~/cpcu_v2/build
-sudo make install
+cmake --install build               # No sudo: /opt/cpcu is owned by you
+                                    # (setup_pi.sh chowned it).
+./scripts/launch.sh grant-caps      # Self-elevates: setcap CAP_SYS_NICE +
+                                    # CAP_IPC_LOCK on cpcu_io and cpcu_kernel
+                                    # so they can take SCHED_FIFO and
+                                    # mlockall without running as root.
 ```
 
 This copies:
@@ -272,7 +309,10 @@ This copies:
 -   C binaries → `/opt/cpcu/bin/`
 -   Python scripts → `/opt/cpcu/scripts/`
 -   Launch script → `/opt/cpcu/scripts/launch.sh`
--   Systemd service → `/etc/systemd/system/cpcu.service`
+
+The systemd unit file is **not** copied at install time — it's
+generated and installed in one step by
+`./scripts/launch.sh install-service` (see §6.2 below).
 
 Deploy the ML model **separately** — it is not in the repo:
 
@@ -280,70 +320,102 @@ Deploy the ML model **separately** — it is not in the repo:
 scp emg_rf_model.pkl pi@<pi-ip>:/opt/cpcu/models/
 ```
 
-Create the log directory (the first run will attempt to create it, but
-creating it up-front lets you confirm permissions):
-
-```bash
-sudo mkdir -p /var/log/cpcu
-sudo chmod 755 /var/log/cpcu
-```
+The log directory (`/var/log/cpcu`) was created and chowned to your
+user by `setup_pi.sh`.
 
 ---
 
 ## 6. Run
 
-There are two ways to run CPCU: **production** (managed by systemd, auto-starts
-at boot) and **development** (you launch it by hand and watch the console).
-Use dev mode while bringing up new hardware. Use systemd once it works.
+There are two ways to run CPCU: **interactive** (you launch it by hand
+in a tmux session and watch everything live — best for hardware bring-up
+and debugging) and **production** (managed by systemd, auto-starts at
+boot — for actual deployment).
 
-### 6.1 Production (systemd)
+Either way, the only sudo prompts you'll see come from `systemctl`
+itself when you ask it to start/stop a service; the script wrappers
+have all the privilege handling done for you.
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable cpcu      # Auto-start on boot
-sudo systemctl start cpcu       # Start now
-sudo systemctl status cpcu      # Check status
-journalctl -u cpcu -f           # Live logs
-```
-
-Systemd invokes `/opt/cpcu/scripts/launch.sh`, which calls
-`./cpcu_kernel --log`. The `--log` flag is what turns on **per-module CSV
-logging** to `/var/log/cpcu/log_*.csv`. See §7.5.
-
-### 6.2 Development (manual, two terminals)
-
-Start-order matters: the kernel creates the shared-memory region, so it must
-come up first. The TUI and testbenches all bail out with a clear error if
-`/dev/shm/cpcu_ipc` doesn't exist yet.
+### 6.1 Interactive (one tmux session, recommended for development)
 
 ```bash
-# Terminal 1: Start kernel (this also launches cpcu_io and cpcu_dsp.py)
-ssh -t pi@<pi-ip> 'cd /opt/cpcu/bin && sudo ./cpcu_kernel --log'
+./scripts/launch.sh tui              # tmux: KERNEL window + TUI window
+                                     #   Ctrl-b 0/1   switch windows
+                                     #   Ctrl-b d     detach (keeps running)
 
-# Terminal 2: Open TUI
-ssh -t pi@<pi-ip> '/opt/cpcu/bin/cpcu_tui'
+./scripts/launch.sh attach           # later: re-attach to that session
+./scripts/launch.sh stop             # later: shut everything down
 ```
 
-Add `--debug` after `--log` if you want DEBUG-level logs:
+Modes available (all sudo-free):
+
+| Mode | What it spawns |
+|---|---|
+| `./scripts/launch.sh kernel`   | `cpcu_kernel --log` in foreground (no tmux) |
+| `./scripts/launch.sh tui`      | tmux: KERNEL + TUI windows |
+| `./scripts/launch.sh signal`   | tmux: KERNEL + SIGNAL (signal_testbench) |
+| `./scripts/launch.sh collect`  | tmux: KERNEL + TUI, capture-workflow reminder banner |
+| `./scripts/launch.sh pca`      | `pca_testbench` only (no kernel, no tmux) |
+| `./scripts/launch.sh menu`     | Interactive picker (default if launched on a TTY) |
+| `./scripts/launch.sh attach`   | Re-attach to the running cpcu tmux session |
+| `./scripts/launch.sh stop`     | Kill the running cpcu tmux session and all children |
+
+Inside tmux:
+
+```
+Ctrl-b 0          switch to KERNEL window
+Ctrl-b 1          switch to TUI / SIGNAL / etc. window
+Ctrl-b w          interactive window picker
+Ctrl-b d          detach (everything keeps running in the background)
+Ctrl-b ?          tmux help
+```
+
+### 6.2 Production (systemd, auto-start at boot)
+
+Generate and install the unit file (one-shot, after a fresh install):
 
 ```bash
-sudo ./cpcu_kernel --log --debug
+./scripts/launch.sh install-service     # self-elevates via sudo
+                                        #   - writes /etc/systemd/system/cpcu.service
+                                        #     (User=$REAL_USER, AmbientCapabilities=
+                                        #      CAP_SYS_NICE CAP_IPC_LOCK)
+                                        #   - applies setcap to cpcu_io + cpcu_kernel
+                                        #   - systemctl daemon-reload + enable
 ```
+
+The unit runs as **your** user, not root, and is granted the two
+capabilities `cpcu_io` actually needs (`CAP_SYS_NICE` for `SCHED_FIFO`,
+`CAP_IPC_LOCK` for `mlockall`). Operate it with the standard
+systemctl commands:
+
+```bash
+sudo systemctl start cpcu       # Start now (sudo here is unavoidable —
+                                # systemctl requires it to mutate state)
+sudo systemctl stop cpcu        # Stop
+sudo systemctl status cpcu      # Status
+sudo systemctl restart cpcu     # Restart after edits
+
+journalctl -u cpcu -f           # Live logs (no sudo needed for read-only)
+```
+
+Systemd invokes `/opt/cpcu/scripts/launch.sh kernel`, which calls
+`./cpcu_kernel --log`. The `--log` flag is what turns on **per-module
+CSV logging** to `/var/log/cpcu/log_*.csv`. See §7.5.
 
 ### 6.3 Stop
 
 ```bash
-sudo systemctl stop cpcu        # Systemd
-# Or Ctrl+C in the cpcu_kernel terminal — it traps SIGINT and shuts down
-# cpcu_io + cpcu_dsp.py cleanly (servos parked at neutral, PCA9685 switched
-# off, NRF radio powered down, CSV log files flushed and closed).
+./scripts/launch.sh stop        # tmux session: kills KERNEL + TUI + everything
+sudo systemctl stop cpcu        # Or systemd path
+                                # Or Ctrl+C in the kernel window — traps SIGINT.
 ```
 
-**What "clean shutdown" means** (shown in the logs): cpcu_io first drives all
-servos to their neutral pulse width, waits 300 ms so they physically settle,
-then calls `PCA_AllOff` (clears every PWM channel) so the servos go limp
-instead of holding torque. Finally the NRF is powered down, the I²C/SPI
-handles are released, and the log files are flushed.
+**What "clean shutdown" means** (shown in the logs): cpcu_io first
+drives all servos to their neutral pulse width, waits 300 ms so they
+physically settle, then calls `PCA_AllOff` (clears every PWM channel)
+so the servos go limp instead of holding torque. Finally the NRF is
+powered down, the I²C/SPI handles are released, and the log files are
+flushed.
 
 ---
 
@@ -362,10 +434,10 @@ tmux select-pane -t 0
 tmux split-window -v
 
 # Navigate: Ctrl+b then arrow keys.
-# Pane 0 (top-left):     sudo journalctl -u cpcu -f
+# Pane 0 (top-left):     journalctl -u cpcu -f
 # Pane 1 (bottom-left):  watch -n 2 "vcgencmd measure_temp; ps -eo pid,comm,psr,pri | grep cpcu"
 # Pane 2 (top-right):    /opt/cpcu/bin/cpcu_tui
-# Pane 3 (bottom-right): sudo /opt/cpcu/bin/pca_testbench
+# Pane 3 (bottom-right): /opt/cpcu/bin/pca_testbench
 #
 # Detach:    Ctrl+b d
 # Reattach:  tmux attach -t cpcu
@@ -550,7 +622,7 @@ These run independently of the main CPCU pipeline:
 
 ```bash
 # PCA9685 servo calibration (direct I2C, no kernel needed)
-sudo /opt/cpcu/bin/pca_testbench
+/opt/cpcu/bin/pca_testbench
 #   Controls: arrows, PgUp/PgDn, m/M min/max, n/N neutral, 0 kill,
 #             's' toggle slew smoother, 'A' write all channels,
 #             'r' read back MODE1/MODE2/PRESCALE registers, 'q' quit.
@@ -558,7 +630,7 @@ sudo /opt/cpcu/bin/pca_testbench
 #             (override default pulse limits and start with slew on)
 
 # Signal integrity (needs kernel + cpcu_io + BSAU transmitting)
-sudo /opt/cpcu/bin/signal_testbench
+/opt/cpcu/bin/signal_testbench
 #   Shows: 8-ch raw-ADC waveform + Goertzel freq analysis + Vpp + SNR.
 #   Notice: this TUI plots the RAW ADC stream off the ring buffer — it
 #           does NOT apply any DSP. For DSP-output waveforms use cpcu_tui
@@ -578,7 +650,7 @@ sudo /opt/cpcu/bin/signal_testbench
 #   Header bar shows `[DEMO <WAVE> <FREQ>Hz]` so you always know what
 #   the signal generator is producing.
 #   Safety testbench (automated, Phase 1):
-sudo /opt/cpcu/bin/safety_testbench
+/opt/cpcu/bin/safety_testbench
 #   Exercises the safety FSM without hardware: radio-loss timeout,
 #   low-battery trip, sequence-gap storm, ring overflow, I2C streak.
 #   Runs 7 test groups / 33 checks (v2.3), prints PASS/FAIL, exits non-zero
@@ -678,7 +750,7 @@ what was written (0x0F, 0x03, 76), the SPI link has noise or a wiring fault.
 
 ### "PCA init failed"
 
-Check I²C wiring (SDA GPIO 2, SCL GPIO 3), run `sudo i2cdetect -y 1` and
+Check I²C wiring (SDA GPIO 2, SCL GPIO 3), run `i2cdetect -y 1` and
 confirm address `0x40`, verify 3.3 V power and that the board has its 4.7 kΩ
 pull-ups populated.
 
@@ -690,7 +762,7 @@ pull-ups populated.
 
 Start `cpcu_kernel` first — it creates the shared-memory region. TUIs and
 testbenches refuse to attach to stale shared memory from an earlier version,
-which is what this error means. Fix: `sudo rm /dev/shm/cpcu_ipc` then restart.
+which is what this error means. Fix: `rm /dev/shm/cpcu_ipc` then restart.
 
 ### Servos don't move
 
@@ -703,7 +775,7 @@ wrong:
     isn't running (see next).
 3.  Page 3: is the gesture ≠ `REST`? If always REST, the ML model may be
     mis-loaded or the EMG signal is too weak.
-4.  `sudo i2cdetect -y 1` shows 0x40? If not, PCA9685 is unpowered or not
+4.  `i2cdetect -y 1` shows 0x40? If not, PCA9685 is unpowered or not
     wired.
 5.  Is the **servo power supply** actually on? Servos draw from the 6V rail,
     not from the Pi.
@@ -733,7 +805,7 @@ contact and the BSAU's amplifier stage.
 ```bash
 # Build
 cd ~/cpcu_v2/build && cmake .. && make -j4
-sudo make install
+cmake --install build
 
 # Systemd
 sudo systemctl start|stop|restart|status|enable|disable cpcu
@@ -747,7 +819,7 @@ journalctl -u cpcu -f
 ./cpcu_tui --demo              # Full TUI demo (no hardware)
 
 # Hardware
-sudo i2cdetect -y 1
+i2cdetect -y 1
 vcgencmd measure_temp
 vcgencmd measure_clock arm
 cat /sys/devices/system/cpu/isolated

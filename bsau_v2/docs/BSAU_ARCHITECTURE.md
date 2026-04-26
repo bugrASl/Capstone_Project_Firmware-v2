@@ -1219,7 +1219,7 @@ loop:
   7. Post result to shared atomic for Core 3
 ```
 
-### 14.6 Dataset Capture Path (CPCU TUI, Page 7)
+### 14.6 Dataset Capture Path (CPCU TUI, Page 6)
 
 Runs on Core 0 alongside the regular TUI render. Reads the sensor ring
 buffer WITHOUT advancing the tail (the Python DSP process is still the
@@ -1256,7 +1256,7 @@ the other must be updated in the same commit or a subtle distribution
 shift will appear between training-time and runtime features.
 
 A BSAU-side capture (via `bsau_dataset_collector.py` on USART1) and a
-CPCU-side capture (via TUI Page 7) of the same muscle contraction
+CPCU-side capture (via TUI Page 6) of the same muscle contraction
 produce two CSV files with the same 8-column shape and no header. The
 BSAU file contains raw 12-bit ADC ints; the CPCU file contains either
 raw ints (RAW mode) or filtered floats in volts (FILTERED mode). Column

@@ -1,4 +1,4 @@
-# BSAU Test Guide — v2.1
+# BSAU Test Guide — v2.4 (annotated for CPCU v2.3 recoverable safety)
 
 **Author:** bugrASl
 **Date:** April 2026
