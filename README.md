@@ -1,8 +1,8 @@
 # Prosthetic Hand Capstone — InfiniTech (BSAU + CPCU)
 
-[![Status: v2.3.6](https://img.shields.io/badge/Status-v2.3.6-brightgreen.svg)](#)
+[![Status: v2.3.8](https://img.shields.io/badge/Status-v2.3.8-brightgreen.svg)](#)
 [![BSAU: v2.4](https://img.shields.io/badge/BSAU-v2.4-blue.svg)](bsau_v2/README.md)
-[![CPCU: v2.3.6](https://img.shields.io/badge/CPCU-v2.3.6-blue.svg)](cpcu_v2/README.md)
+[![CPCU: v2.3.8](https://img.shields.io/badge/CPCU-v2.3.8-blue.svg)](cpcu_v2/README.md)
 [![Tests: 168 PASS](https://img.shields.io/badge/Tests-168%20PASS-brightgreen.svg)](cpcu_v2/docs/CPCU_TEST_GUIDE.md)
 
 **EE493/494 Capstone Design Project · METU, Spring 2026.**
@@ -126,6 +126,8 @@ and there's no way around it.
 
 | Version | Date | Where | What |
 |---|---|---|---|
+| **v2.3.8 (TUI live editor)** | Apr 2026 | `cpcu_tui_editor.{h,c}`, `cpcu_tui.c`, `cpcu_tui_render.c`, `cpcu_kernel.c`, `cpcu_ipc.h`, `editor_testbench.c` | Press `e` on CONFIG page → arm parks (v2.3.4 handshake) → spreadsheet editor for 13 runtime fields (servo limits/bias, smoother knobs, DSP thresholds, grip levels). Arrows navigate, Enter+digits edit, Esc cancels, `r` reverts, Ctrl+S saves via v2.3.6 `CFG_PatchFile` and SIGHUPs kernel. New `kernel_pid` field in IPC_ControlBlock (consumed reserved bytes; IPC_VERSION 0x0204 → 0x0205). 24 new unit tests (TB-ED01..TB-ED05). 226/226 PASS. See [`cpcu_v2/docs/TUI_EDITOR.md`](cpcu_v2/docs/TUI_EDITOR.md). |
+| **v2.3.7 (soft-grip + stall watchdog)** | Apr 2026 | `cpcu_dsp.py`, `cpcu_io.c`, `cpcu_ipc.h`, `cpcu_tui_render.c`, `runtime.json`, `test_dsp_pipeline.py` | Two-layer gripper hardware protection. dsp clamps integrator at `grip_firm_us` (default 1100). io watchdog retreats to `grip_touch_us` (1200) if smoother current+target stay at the floor for `grip_stall_recover_ms` (2000). Clears on natural release (250 ms debounce) or SAFE. New `io_gripper_stalls` counter in IPC_Diagnostics (no layout change), shown on TUI HEALTH page. 3 new tests (TB-DSP17). 202/202 PASS. See [`cpcu_v2/docs/SOFT_GRIP.md`](cpcu_v2/docs/SOFT_GRIP.md). |
 | **v2.3.6 (pca_testbench round-trip + live smoother tuning)** | Apr 2026 | `cpcu_config.{h,c}`, `pca_testbench.c`, `cpcu_io.c`, `config_testbench.c` | `CFG_PatchFile()` — surgical JSON edit. `pca_testbench` loads `runtime.json` on startup, gains `[`/`]`/`b`/`B`/`v`/`a`/`d`/`S`/`L` keys to tune servo limits, bias, and smoother (velocity/accel/deadband) at the bench and save back. cpcu_io re-applies smoother values on `config_seq` change (covers SIGHUP reload). Other JSON fields (gesture_velocity etc.) preserved byte-for-byte. 13 new tests (TB-CFG09/CFG10). 199/199 PASS. See [`cpcu_v2/docs/RUNTIME_CONFIG.md`](cpcu_v2/docs/RUNTIME_CONFIG.md) §10. |
 | **v2.3.5 (CPCU DSP, velocity gestures)** | Apr 2026 | `cpcu_dsp.py`, `runtime.json`, `test_dsp_pipeline.py` | Hybrid velocity-mode gestures. Per-class per-servo rates in JSON drive a stateful target integrator scaled by SVM confidence. Hold gesture longer = arm closes deeper. Backward-compatible: classes without velocity rows stay in fixed-pose mode. 18 new tests (TB-DSP11..TB-DSP16). 186/186 PASS. See [`cpcu_v2/docs/VELOCITY_MODE.md`](cpcu_v2/docs/VELOCITY_MODE.md). |
 | **v2.3.4 (CPCU TUI, edit-mode)** | Apr 2026 | `cpcu_ipc.{h}`, `cpcu_io.c`, `cpcu_tui.c`, `cpcu_tui_render.c`, `cpcu_dsp.py`, `cpcu_ipc_bridge.py` | Edit-mode handshake. Press `e` on CONFIG page → arm parks at neutral → editor unlocks. Safety FSM has priority. 3 new atomic bytes + timestamp in IPC_ControlBlock (no layout change, IPC_VERSION 0x0204). 168/168 PASS unchanged. See [`cpcu_v2/docs/EDIT_MODE.md`](cpcu_v2/docs/EDIT_MODE.md). |
@@ -171,6 +173,8 @@ once to explain that feature in full).
 | [`cpcu_v2/docs/RUNTIME_CONFIG.md`](cpcu_v2/docs/RUNTIME_CONFIG.md) | Runtime/compile-time tunable split — `runtime.json` + `configure.sh` | v2.3.3 |
 | [`cpcu_v2/docs/EDIT_MODE.md`](cpcu_v2/docs/EDIT_MODE.md) | Press `e` on TUI page 7 → arm parks → editor unlocks. Cross-process handshake protocol | v2.3.4 |
 | [`cpcu_v2/docs/VELOCITY_MODE.md`](cpcu_v2/docs/VELOCITY_MODE.md) | Per-class per-servo velocity rates → stateful target integration with confidence scaling | v2.3.5 |
+| [`cpcu_v2/docs/SOFT_GRIP.md`](cpcu_v2/docs/SOFT_GRIP.md) | Two-layer gripper protection: dsp soft clamp at `grip_firm_us` + io stall watchdog with retreat | v2.3.7 |
+| [`cpcu_v2/docs/TUI_EDITOR.md`](cpcu_v2/docs/TUI_EDITOR.md) | Live runtime-config editor on TUI's CONFIG page — spreadsheet-style cursor, Ctrl+S commit via `CFG_PatchFile` + SIGHUP | v2.3.8 |
 
 ## Hardware
 

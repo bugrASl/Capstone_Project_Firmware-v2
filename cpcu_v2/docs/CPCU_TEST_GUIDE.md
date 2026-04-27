@@ -1,4 +1,4 @@
-# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4 / velocity v2.3.5 / patch v2.3.6
+# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4 / velocity v2.3.5 / patch v2.3.6 / soft-grip v2.3.7 / editor v2.3.8
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -152,6 +152,11 @@ python3 test/test_dsp_pipeline.py
     clamping (±5000 µs/s), unknown-class names dropped with warning,
     floor-≥-ceil invariant rejected, JSONC line comments + trailing
     commas tolerated. See [`VELOCITY_MODE.md`](VELOCITY_MODE.md) §7.
+-   **(v2.3.7) Soft-grip loader (TB-DSP17)** — `grip_firm_us` parsed
+    from runtime.json: defaults to 1100 when absent, parsed correctly
+    when present, out-of-range values rejected with warning. See
+    [`SOFT_GRIP.md`](SOFT_GRIP.md). The io-side watchdog is hardware-
+    tested, not unit-tested.
 
 **Pass criterion:** all assertions pass.
 
@@ -359,7 +364,48 @@ tick during normal operation). The pattern matches the established
 motor-cmd seqlock and is documented in
 [`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) §5.
 
-### 3.6 TUI demo validation (visual, no hardware)
+### 3.6 TB-ED — TUI live editor (automated, no hardware) (v2.3.8)
+
+```bash
+build/editor_testbench
+```
+
+**What it checks:** state-machine correctness for the TUI editor
+without ncurses rendering. The editor's drawing functions are
+exercised on hardware (visual check); the *logic* lives in
+`ED_HandleKey`, `ED_Init`, `ED_RevertAll`, `ed_save`, all of which
+are testable from a regular C unit-test driver.
+
+The 24 checks fall into 5 groups:
+
+1. **TB-ED01 ED_Init() loads disk values** — fresh runtime.json gets
+   parsed, `disk` and `draft` cells equal, `dirty` cells all false,
+   field count matches the declared table size.
+2. **TB-ED02 NAV-mode arrows move cursor** — verified indirectly by
+   editing a cell after navigation and checking the *correct* row
+   went dirty.
+3. **TB-ED03 Range clamping** — typing 9999 into a `servo_bias_us`
+   cell (range -100..100) clamps to 100; -500 clamps to -100.
+4. **TB-ED04 Esc cancels in-flight entry** — typing digits then Esc
+   leaves the cell unchanged and not dirty.
+5. **TB-ED05 Ctrl+S round-trip** — dirty a cell, save, reload from
+   disk; the new value is there AND untouched cells (notably the
+   gripper-only smoother preset on cell 5) survived.
+
+**Pass criterion:** stdout shows `[PASS]` for all 24 checks, exit
+code 0. The render path is hardware-tested.
+
+**What it means when it fails:**
+
+- "ED_Init returned false" → `runtime.json` not at `/opt/cpcu/`
+  or `config/`, or symlink is broken. Editor can't surface fields
+  it doesn't know baseline for.
+- "9999 clamped to range_max=100" failed → range checks broken;
+  patcher could write out-of-range to JSON.
+- "round-trip — disk value after save = X" failed → `CFG_PatchFile`
+  isn't actually persisting, or the save path picked the wrong file.
+
+### 3.7 TUI demo validation (visual, no hardware)
 
 ```bash
 ./cpcu_tui --demo

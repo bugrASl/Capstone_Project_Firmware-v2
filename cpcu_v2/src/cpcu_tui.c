@@ -59,6 +59,7 @@
  */
 
 #include "cpcu_tui.h"
+#include "cpcu_tui_editor.h"        /* v2.3.8 live editor */
 
 #include <locale.h>
 #include <stdatomic.h>
@@ -76,6 +77,12 @@
  */
 
 volatile sig_atomic_t  g_run         =   1;
+
+/* v2.3.8: track whether ED_Init() has been called for the current
+ * session of EDITING. Reset to false when leaving EDITING so re-entry
+ * picks up fresh disk values (e.g. if pca_testbench saved between
+ * sessions). */
+static bool            g_ed_initialized_seen = false;
 Page                   current_page  =   PAGE_OVERVIEW;
 bool                   demo_mode     =   false;
 bool                   show_splash   =   true;
@@ -305,6 +312,38 @@ int main(int argc, char *argv[])
 
         /*-------------- Key dispatch -------------------------------------------------------*/
         int ch = getch();
+
+        /* v2.3.8: TUI live editor on CONFIG page.
+         * When in EDITING state (handshake complete, arm parked), the
+         * editor consumes nav keys (arrows, Enter, digits, Esc, Ctrl+S,
+         * 'r'). Page-switch keys (1-7), 'e' (exit edit-mode), 'q' still
+         * fall through to the global handler below. */
+        if(current_page == PAGE_CONFIG && !demo_mode)
+        {
+            uint8_t edit_active = atomic_load_explicit(
+                &ipc.ctrl->edit_mode_active, memory_order_acquire);
+            if(edit_active)
+            {
+                /* Lazy init on first entry to EDITING. */
+                if(!ED_GetField(0) || !g_ed_initialized_seen)
+                {
+                    ED_Init();
+                    g_ed_initialized_seen = true;
+                }
+                if(ED_HandleKey(ch, &ipc))
+                    goto after_dispatch;     /* editor consumed it */
+            }
+            else
+            {
+                /* Lost EDITING (e.g. user pressed 'e' to exit, or SAFE
+                 * forced exit). Reset the lazy-init guard so re-entry
+                 * starts fresh. Drafts are preserved across re-entry
+                 * unless dsp/io reloaded the file in between (then
+                 * ED_Init refreshes disk and clears dirty). */
+                g_ed_initialized_seen = false;
+            }
+        }
+
         switch(ch)
         {
             case '1': current_page = PAGE_OVERVIEW; break;
@@ -438,6 +477,8 @@ int main(int argc, char *argv[])
             case 'q': case 'Q': g_run = 0; break;
             default: break;
         }
+
+after_dispatch:
 
         usleep(REFRESH_US);
     }

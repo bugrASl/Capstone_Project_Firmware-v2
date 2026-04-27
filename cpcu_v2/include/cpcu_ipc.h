@@ -36,7 +36,7 @@ extern "C" {
 #define IPC_SHM_NAME            "/cpcu_ipc"
 #define IPC_SHM_PERMS           0644            /* Owner RW, Group/Others R */
 #define IPC_MAGIC               0x494E4654UL    /* "INFT" - Infinitech */
-#define IPC_VERSION             0x0204          /* v2.3.4 — added edit_mode_* control bytes */
+#define IPC_VERSION             0x0205          /* v2.3.8 — added kernel_pid for TUI Ctrl+S SIGHUP */
 
 #define IPC_SENSOR_RING_SIZE    1024
 #define IPC_SENSOR_RING_MASK    (IPC_SENSOR_RING_SIZE - 1)
@@ -77,7 +77,16 @@ typedef struct __attribute__((aligned(64)))
     uint8_t             _pad_edit[5];
     _Atomic uint64_t    edit_mode_request_us;
 
-    uint8_t             _reserved0[12];
+    /* v2.3.8: kernel pid published for the TUI live editor's Ctrl+S
+     * handler — after CFG_PatchFile rewrites runtime.json, the TUI
+     * sends SIGHUP to this pid so the kernel re-parses and republishes
+     * IPC_RuntimeConfig. cpcu_kernel writes this once at startup;
+     * other processes only read. 0 = not yet ready (TUI shows
+     * "kernel not available, save deferred" if so). 4-byte uint32_t,
+     * consumes 4 of the 12 reserved bytes. */
+    _Atomic uint32_t    kernel_pid;
+
+    uint8_t             _reserved0[8];
 
     /* Cache line 1:    Producer Index (Core 3 writes, Cores 1-2 read) */
     _Atomic uint32_t    sensor_head __attribute__((aligned(64)));
@@ -146,7 +155,15 @@ typedef struct __attribute__((aligned(128)))
     _Atomic uint32_t    dsp_ring_underflows;
     _Atomic uint32_t    dsp_inferences;
 
-    uint32_t            _reserved[5];
+    /* v2.3.7: gripper stall watchdog. Incremented every time the
+     * stall watchdog in cpcu_io.c retreats the gripper from its
+     * mechanical floor after grip_stall_recover_ms continuous time
+     * pinned there. See SOFT_GRIP.md. Read by the TUI's HEALTH page.
+     * Allocated from the existing _reserved[5] pool — no layout
+     * change, IPC_VERSION unchanged. */
+    _Atomic uint32_t    io_gripper_stalls;
+
+    uint32_t            _reserved[4];
 } IPC_Diagnostics;
 
 _Static_assert( sizeof(IPC_Diagnostics) == 128, "IPC_Diagnostics must be 128 bytes (2 cache lines)" );

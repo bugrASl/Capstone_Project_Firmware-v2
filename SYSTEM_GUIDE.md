@@ -1,8 +1,8 @@
-# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.6)
+# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.8)
 
 **Author:** bugrASl
 **Date:** April 2026
-**Status:** v2.3.6 (pca_testbench round-trip + live smoother tuning — bench-discovered calibration persists to runtime.json)
+**Status:** v2.3.8 (TUI live editor — runtime values tunable in-system without restart)
 
 ---
 
@@ -18,6 +18,30 @@ head instead of a recipe you can't modify.
 > **What changed since v2.1.** This document was extended several times
 > as the project matured. The biggest deltas:
 >
+> - **v2.3.8 (TUI live editor)** — Press `e` on the TUI's CONFIG page
+>   → arm parks via the v2.3.4 handshake → the spec-sheet view
+>   transforms into a navigable spreadsheet editor. Arrows move
+>   between 13 runtime fields (servo min/max/bias, smoother knobs,
+>   DSP thresholds, grip levels). Enter starts numeric entry; digits
+>   build the value; Enter commits with range-clamp; Esc cancels.
+>   Ctrl+S writes dirty cells via the v2.3.6 `CFG_PatchFile` patcher
+>   and SIGHUPs cpcu_kernel — the smoother re-applies within 20 ms.
+>   `r` reverts unsaved drafts. New `kernel_pid` field in
+>   `IPC_ControlBlock` (IPC_VERSION 0x0204 → 0x0205). 24 new unit
+>   tests for the editor's state machine. See
+>   [`cpcu_v2/docs/TUI_EDITOR.md`](cpcu_v2/docs/TUI_EDITOR.md).
+> - **v2.3.7 (soft-grip + stall watchdog)** — Two-layer gripper
+>   hardware protection. cpcu_dsp.py's velocity-mode integrator
+>   clamps at `grip_firm_us` (default 1100 µs) so holding `hand_flex`
+>   longer can't keep closing the jaws past a safe firm-hold position.
+>   cpcu_io's stall watchdog is the lower-layer backstop: if the
+>   smoother current AND target both sit at the mechanical floor for
+>   `grip_stall_recover_ms` (default 2000 ms), retreat to
+>   `grip_touch_us` (1200) and clamp until the user naturally releases
+>   (250 ms debounce). New `io_gripper_stalls` counter in
+>   `IPC_Diagnostics` (no layout change), shown on the TUI's HEALTH
+>   page. 3 new unit tests for the loader; io watchdog is hardware-
+>   tested. See [`cpcu_v2/docs/SOFT_GRIP.md`](cpcu_v2/docs/SOFT_GRIP.md).
 > - **v2.3.6 (pca_testbench round-trip + live smoother tuning)** — Adds
 >   `CFG_PatchFile()`, a surgical JSON edit that preserves fields
 >   it doesn't know about. `pca_testbench` loads `runtime.json` on

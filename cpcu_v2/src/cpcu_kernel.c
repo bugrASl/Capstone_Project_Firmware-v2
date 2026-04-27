@@ -252,7 +252,7 @@ int main(int argc, char *argv[])
         LOG_I("KERN", "file logging enabled -> %s/log_*.csv", LOG_DIR_DEFAULT);
     }
 
-    LOG_I("KERN", "=== CPCU Kernel Supervisor (Core 0) v2.3.3 ===");
+    LOG_I("KERN", "=== CPCU Kernel Supervisor (Core 0) v2.3.8 ===");
     signal(SIGINT,  on_sig);
     signal(SIGTERM, on_sig);
     signal(SIGHUP,  on_sighup);                 /* v2.3.3 */
@@ -265,6 +265,11 @@ int main(int argc, char *argv[])
         Log_CloseFiles();
         return 1;
     }
+
+    /* v2.3.8: publish our pid so the TUI live editor can SIGHUP us
+     * after a Ctrl+S commit. The TUI sees kernel_pid == 0 until
+     * IPC_Create returned, so we publish immediately after. */
+    atomic_store(&ipc.ctrl->kernel_pid, (uint32_t)getpid());
 
     /* v2.3.3: load runtime config BEFORE spawning children, so they
      * see a populated config region from their first IPC read. Try

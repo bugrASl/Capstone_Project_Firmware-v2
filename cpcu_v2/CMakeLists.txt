@@ -112,10 +112,11 @@ if(CURSES_FOUND)
         src/cpcu_tui.c
         src/cpcu_tui_render.c
         src/cpcu_tui_data.c
+        src/cpcu_tui_editor.c
     )
-    target_link_libraries(cpcu_tui PRIVATE cpcu_codec cpcu_ipc cpcu_log ${CURSES_LIBRARIES} rt m)
+    target_link_libraries(cpcu_tui PRIVATE cpcu_codec cpcu_ipc cpcu_config cpcu_log ${CURSES_LIBRARIES} rt m)
     target_include_directories(cpcu_tui PRIVATE ${CURSES_INCLUDE_DIRS})
-    message(STATUS "ncurses found — cpcu_tui will be built (3-file)")
+    message(STATUS "ncurses found — cpcu_tui will be built (4-file)")
 else()
     message(STATUS "ncurses not found — cpcu_tui will NOT be built")
 endif()
@@ -168,6 +169,17 @@ if(CURSES_FOUND)
     target_link_libraries(signal_testbench PRIVATE cpcu_codec cpcu_ipc ${CURSES_LIBRARIES} rt m)
     target_include_directories(signal_testbench PRIVATE ${CURSES_INCLUDE_DIRS})
     message(STATUS "ncurses found — signal_testbench will be built")
+
+    ## TUI editor testbench (v2.3.8) — exercises ED_HandleKey state
+    ## machine without rendering. Needs ncurses headers for key
+    ## constants (KEY_UP etc.) but doesn't initscr().
+    add_executable(editor_testbench
+        test/editor_testbench.c
+        src/cpcu_tui_editor.c
+    )
+    target_link_libraries(editor_testbench PRIVATE cpcu_config cpcu_ipc cpcu_log ${CURSES_LIBRARIES} rt m)
+    target_include_directories(editor_testbench PRIVATE ${CURSES_INCLUDE_DIRS})
+    message(STATUS "ncurses found — editor_testbench will be built")
 endif()
 
 ## Enable CTest
@@ -176,6 +188,9 @@ add_test(NAME codec_roundtrip COMMAND test_codec)
 add_test(NAME safety_fsm      COMMAND safety_testbench)
 add_test(NAME smoother_unit   COMMAND smooth_testbench)
 add_test(NAME config_loader   COMMAND config_testbench)
+if(CURSES_FOUND)
+    add_test(NAME editor_unit COMMAND editor_testbench)
+endif()
 
 ##============= INSTALL ====================================================================
 

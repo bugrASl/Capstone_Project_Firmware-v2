@@ -6,7 +6,7 @@ pipeline, and commands up to 6 servo motors via a PCA9685 PWM driver.
 
 [![Platform: RPi5](https://img.shields.io/badge/Platform-Raspberry%20Pi%205-c51a4a.svg)](#hardware)
 [![Language: C11 / Python 3](https://img.shields.io/badge/Language-C11%20%7C%20Python%203-green.svg)](#software-architecture)
-[![Version: v2.3.6](https://img.shields.io/badge/Version-v2.3.6-brightgreen.svg)](#)
+[![Version: v2.3.8](https://img.shields.io/badge/Version-v2.3.8-brightgreen.svg)](#)
 
 > **First time with this repo?** Start from the root
 > [`../SYSTEM_GUIDE.md`](../SYSTEM_GUIDE.md) — it covers the whole system
@@ -462,6 +462,20 @@ For BSAU-side tests (TB-100 through TB-309): [`../bsau_v2/docs/BSAU_TEST_GUIDE.m
   drive a stateful target integrator in cpcu_dsp.py scaled by SVM
   confidence. Hold gesture longer = arm closes deeper. Backwards-
   compatible: classes without velocity rows stay fixed-pose.
+- **[`docs/SOFT_GRIP.md`](docs/SOFT_GRIP.md)** — *v2.3.7.*
+  Two-layer gripper hardware protection. dsp's integrator clamps at
+  `grip_firm_us` so holding hand_flex can't close the jaws past a
+  safe firm-hold position. cpcu_io's stall watchdog retreats to
+  `grip_touch_us` if the gripper has been pinned at the floor for
+  `grip_stall_recover_ms`. Counter in IPC_Diagnostics surfaced on
+  the TUI HEALTH page.
+- **[`docs/TUI_EDITOR.md`](docs/TUI_EDITOR.md)** — *v2.3.8.*
+  Press `e` on the TUI's CONFIG page → arm parks → spreadsheet
+  editor opens. Spreadsheet of 13 runtime fields covering servo
+  limits/bias, smoother knobs, DSP thresholds, grip levels.
+  Arrows navigate, Enter+digits edit, Esc cancels, `r` reverts,
+  Ctrl+S commits via `CFG_PatchFile` and SIGHUPs cpcu_kernel for
+  live reload.
 
 ### Cross-references
 - **[`../bsau_v2/README.md`](../bsau_v2/README.md)** — transmitter

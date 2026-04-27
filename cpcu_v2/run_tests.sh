@@ -299,6 +299,27 @@ if echo "$PHASES" | grep -q "1"; then
         echo -e "${YELLOW}[SKIP]${RESET} config_testbench not built"
     fi
 
+    ## Find or build editor_testbench (v2.3.8 — TUI editor state machine)
+    ED_BIN=""
+    if [ -f ./editor_testbench ]; then
+        ED_BIN="./editor_testbench"
+    elif [ -f build/editor_testbench ]; then
+        ED_BIN="build/editor_testbench"
+    else
+        echo "[BUILD] Compiling editor_testbench..."
+        if [ -d build ]; then
+            cd build && make editor_testbench && cd ..
+            ED_BIN="build/editor_testbench"
+        fi
+    fi
+
+    if [ -n "${ED_BIN}" ]; then
+        run_test "TB-ED01..ED05: TUI Live Editor" \
+            "${ED_BIN}"
+    else
+        echo -e "${YELLOW}[SKIP]${RESET} editor_testbench not built (likely missing ncurses)"
+    fi
+
     run_test "TB-DSP: DSP Pipeline Validation" \
         "python3 test/test_dsp_pipeline.py"
 fi

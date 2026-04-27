@@ -22,6 +22,7 @@
  */
 
 #include "cpcu_tui.h"
+#include "cpcu_tui_editor.h"        /* v2.3.8 — ED_Render */
 
 #include <ctype.h>
 #include <math.h>
@@ -1355,6 +1356,20 @@ void draw_page_health(int r, IPC_Context *ipc,
     else
         ADD_ROW("SAFE trips",  2, "%u  (persistent instability)", safe_ents);
 
+    /* 11. v2.3.7 gripper stall watchdog. Counts every time cpcu_io
+     * had to retreat the gripper from grip_firm because it had been
+     * pinned at the floor for grip_stall_recover_ms. Single fires
+     * are normal during heavy gripping; persistent fires suggest
+     * grip_firm_us is set too low. */
+    uint32_t grip_stalls = atomic_load(&ipc->diag->io_gripper_stalls);
+    if(grip_stalls == 0)
+        ADD_ROW("Gripper stalls", 0, "0  (no watchdog activity)");
+    else if(grip_stalls < 5)
+        ADD_ROW("Gripper stalls", 1, "%u  (occasional retreats)", grip_stalls);
+    else
+        ADD_ROW("Gripper stalls", 2,
+                "%u  (raise grip_firm_us in runtime.json)", grip_stalls);
+
     #undef ADD_ROW
 
     /*---- Count the overall statuses for summary line ----*/
@@ -1725,6 +1740,16 @@ void draw_page_config(int r, IPC_Context *ipc)
     mvprintw(r, 1, "%-*s", g_tui_w - 2, banner_text);
     attroff(COLOR_PAIR(banner_color) | A_BOLD);
     r += 2;
+
+    /* v2.3.8: in EDITING state, render the live editor instead of the
+     * spec-sheet view. The editor's key bindings are handled in
+     * cpcu_tui.c's main loop; here we only draw. Outside EDITING the
+     * spec sheet renders (the user is viewing, not editing). */
+    if(edit_req && edit_active)
+    {
+        ED_Render(r);
+        return;       /* editor rendered; spec sheet skipped */
+    }
 
     /*==================== BSAU SIDE ====================*/
     draw_section(r, 1,       "BSAU (BIOSIGNAL ACQUISITION UNIT)");
