@@ -64,7 +64,16 @@
 
 /*============= LAYOUT =====================================================================*/
 
-#define STEP_FINE       5           /* Arrow key step (us) */
+#define STEP_FINE       10          /* Arrow key step (us). MUST be >
+                                       PCA9685's 4.88 us/tick resolution
+                                       so each keypress reliably crosses
+                                       a tick boundary. 5 us was on the
+                                       boundary and was a no-op every
+                                       other press. 10 us = ~2 ticks
+                                       per press = always visible. Also
+                                       coincides with SMOOTH_DEFAULT_DEAD-
+                                       BAND so a sub-deadband manual move
+                                       can never be silently swallowed. */
 #define STEP_COARSE     50          /* Page Up/Down step (us) */
 #define REFRESH_US      50000       /* 20 Hz */
 #define SMOOTH_DT_US    50000       /* 20 Hz update if smoother is on */

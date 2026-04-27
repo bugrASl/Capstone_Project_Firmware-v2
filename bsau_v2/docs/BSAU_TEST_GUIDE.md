@@ -23,26 +23,26 @@ means when it fails** note right under it — don't guess.
 
 ## Table of Contents
 
-**Part A — Walkthrough**
-1.  [Test philosophy (why this order)](#1-test-philosophy-why-this-order)
-2.  [Quick start](#2-quick-start)
-3.  [Phase 1 — Build sanity](#3-phase-1--build-sanity)
-4.  [Phase 2 — Codec round-trip (`TEST_PKT_LOG`)](#4-phase-2--codec-round-trip-test_pkt_log)
-5.  [Phase 3 — ADC pipeline (`TEST_ADC_CSV` / `TEST_CSV`)](#5-phase-3--adc-pipeline-test_adc_csv--test_csv)
-6.  [Phase 4 — Goertzel DFT verify (`TEST_DFT_LOG`)](#6-phase-4--goertzel-dft-verify-test_dft_log)
-7.  [Phase 5 — NRF self-test (`TEST_NRF_LOG`)](#7-phase-5--nrf-self-test-test_nrf_log)
-8.  [Phase 6 — Integration with CPCU](#8-phase-6--integration-with-cpcu)
-9.  [DATASET mode smoke test](#9-dataset-mode-smoke-test)
-10. [Regression policy — what to re-run after a change](#10-regression-policy--what-to-re-run-after-a-change)
-11. [Equipment checklist](#11-equipment-checklist)
+- **Part A — Walkthrough**
+  - 1.  [Test philosophy (why this order)](#1-test-philosophy-why-this-order)
+  - 2.  [Quick start](#2-quick-start)
+  - 3.  [Phase 1 — Build sanity](#3-phase-1--build-sanity)
+  - 4.  [Phase 2 — Codec round-trip (`TEST_PKT_LOG`)](#4-phase-2--codec-round-trip-test_pkt_log)
+  - 5.  [Phase 3 — ADC pipeline (`TEST_ADC_CSV` / `TEST_CSV`)](#5-phase-3--adc-pipeline-test_adc_csv--test_csv)
+  - 6.  [Phase 4 — Goertzel DFT verify (`TEST_DFT_LOG`)](#6-phase-4--goertzel-dft-verify-test_dft_log)
+  - 7.  [Phase 5 — NRF self-test (`TEST_NRF_LOG`)](#7-phase-5--nrf-self-test-test_nrf_log)
+  - 8.  [Phase 6 — Integration with CPCU](#8-phase-6--integration-with-cpcu)
+  - 9.  [DATASET mode smoke test](#9-dataset-mode-smoke-test)
+  - 10. [Regression policy — what to re-run after a change](#10-regression-policy--what-to-re-run-after-a-change)
+  - 11. [Equipment checklist](#11-equipment-checklist)
 
-**Part B — Test Reference**
-- [B.1 Tier 1 — BSAU Standalone](#b1-tier-1--bsau-standalone) (TB-100 … TB-108)
-- [B.2 Tier 2 — CPCU Standalone](#b2-tier-2--cpcu-standalone) (TB-200 … TB-206)
-- [B.3 Tier 3 — End-to-End Integration](#b3-tier-3--end-to-end-integration) (TB-300 … TB-309)
-- [B.4 Test equipment summary (per test)](#b4-test-equipment-summary-per-test)
-- [B.5 Test execution order (board bring-up)](#b5-test-execution-order-board-bring-up)
-- [B.6 Regression policy — exhaustive (by changed file)](#b6-regression-policy--exhaustive-by-changed-file)
+- **Part B — Test Reference**
+  - [B.1 Tier 1 — BSAU Standalone](#b1-tier-1--bsau-standalone) (TB-100 … TB-108)
+  - [B.2 Tier 2 — CPCU Standalone](#b2-tier-2--cpcu-standalone) (TB-200 … TB-206)
+  - [B.3 Tier 3 — End-to-End Integration](#b3-tier-3--end-to-end-integration) (TB-300 … TB-309)
+  - [B.4 Test equipment summary (per test)](#b4-test-equipment-summary-per-test)
+  - [B.5 Test execution order (board bring-up)](#b5-test-execution-order-board-bring-up)
+  - [B.6 Regression policy — exhaustive (by changed file)](#b6-regression-policy--exhaustive-by-changed-file)
 
 ---
 
