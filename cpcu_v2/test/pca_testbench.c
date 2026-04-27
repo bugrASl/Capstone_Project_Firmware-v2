@@ -174,6 +174,29 @@ static int find_preset_idx(uint16_t value, const uint16_t *list, int n)
     return -1;
 }
 
+/* Fine-step adjustment: ',' and '.' nudge the most-recently-touched
+ * smoother knob (vel/acc/dead) for the SELECTED servo. This pairs
+ * with v/a/d (cycle preset) — press v to ballpark, ',' / '.' to
+ * dial in to an exact value. The "last touched" semantic is global
+ * (not per-servo), so switching servos with UP/DOWN preserves which
+ * knob is being adjusted.
+ *
+ * Step sizes match each knob's natural granularity:
+ *   velocity  100 us/s    (range 100..10000 per JSON loader)
+ *   accel     500 us/s^2  (range 500..50000)
+ *   deadband    1 us      (range 0..50) */
+typedef enum { SMK_NONE = 0, SMK_VEL, SMK_ACC, SMK_DEAD } SmoothKnob;
+static SmoothKnob        last_smoother_knob = SMK_NONE;
+#define VEL_STEP    100
+#define ACC_STEP    500
+#define DEAD_STEP   1
+#define VEL_LO      100
+#define VEL_HI      10000
+#define ACC_LO      500
+#define ACC_HI      50000
+#define DEAD_LO     0
+#define DEAD_HI     50
+
 /*============= HELPERS ====================================================================*/
 
 static void clamp_servo(int idx)
@@ -467,10 +490,10 @@ static void draw_screen(void)
     mvprintw(r + 1, 1, "PgUp/PgDn +/- %d us          n  neutral (1500)", STEP_COARSE);
     mvprintw(r + 2, 1, "m  jog to MIN  M  jog to MAX  N  all neutral   A  write all at once");
     mvprintw(r + 3, 1, "[  set MIN     ]  set MAX     b  set BIAS  B  clear BIAS");
-    mvprintw(r + 4, 1, "v  cycle VEL   a  cycle ACC   d  cycle DEAD     S  save  L  reload");
-    mvprintw(r + 5, 1, "r  refresh registers          s  toggle smoother (now: %s)",
+    mvprintw(r + 4, 1, "v  cycle VEL   a  cycle ACC   d  cycle DEAD   ,/.  fine -/+");
+    mvprintw(r + 5, 1, "S  save        L  reload      r  refresh registers");
+    mvprintw(r + 6, 1, "s  toggle smoother (now: %s)  0  all OFF (disable PWM)  q  quit",
              smooth_enabled ? "ON" : "OFF");
-    mvprintw(r + 6, 1, "0  all OFF (disable PWM)      q  quit");
     attroff(COLOR_PAIR(CP_DIM));
     r += 7;
 
@@ -526,13 +549,18 @@ static void print_usage(const char *prog)
         "  ]          set the current jog as MAX for the selected servo\n"
         "  b          set the current deviation from neutral as BIAS\n"
         "  B          clear BIAS for the selected servo\n"
-        "  S          save min/max/bias to the loaded runtime.json\n"
+        "  v          cycle smoother VELOCITY preset for selected servo\n"
+        "  a          cycle smoother ACCELERATION preset\n"
+        "  d          cycle smoother DEADBAND preset\n"
+        "  , .        fine -/+ on the LAST-touched smoother knob (vel/acc/dead)\n"
+        "             step sizes: vel %d us/s, acc %d us/s^2, dead %d us\n"
+        "  S          save min/max/bias/smoother values to runtime.json\n"
         "  L          reload from disk (discards unsaved jogs)\n"
         "Example workflow:\n"
         "  sudo %s --config config/runtime.json\n"
         "  # jog with arrows, press [ at the mechanical min, ] at the max,\n"
         "  # then S to save. Then on the live system: kill -HUP $(pgrep cpcu_kernel)\n",
-        prog, prog);
+        prog, VEL_STEP, ACC_STEP, DEAD_STEP, prog);
 }
 
 int main(int argc, char *argv[])
@@ -879,7 +907,9 @@ int main(int argc, char *argv[])
              * to the next preset for the SELECTED servo. The change
              * is applied immediately to the smoother so the next
              * jog uses the new values — you can feel the difference
-             * within ~50 ms. Save with 'S' to persist to JSON. */
+             * within ~50 ms. Save with 'S' to persist to JSON.
+             *
+             * After cycling, ',' / '.' fine-adjust the same knob. */
             case 'v':
                 {
                     int idx = find_preset_idx(smooth_vel[selected],
@@ -887,9 +917,10 @@ int main(int argc, char *argv[])
                     int next = (idx < 0) ? 0 : ((idx + 1) % VEL_PRESET_COUNT);
                     smooth_vel[selected] = VEL_PRESETS[next];
                     SMOOTH_SetSpeed(&smooth, selected, smooth_vel[selected]);
+                    last_smoother_knob = SMK_VEL;
                     cal_dirty = true;
                     snprintf(status_line, sizeof(status_line),
-                             "Servo %d VEL = %u us/s (unsaved)",
+                             "Servo %d VEL = %u us/s (unsaved, ',' / '.' to fine-adjust)",
                              selected, smooth_vel[selected]);
                     status_until = time(NULL) + 3;
                 }
@@ -901,9 +932,10 @@ int main(int argc, char *argv[])
                     int next = (idx < 0) ? 0 : ((idx + 1) % ACC_PRESET_COUNT);
                     smooth_acc[selected] = ACC_PRESETS[next];
                     SMOOTH_SetAccel(&smooth, selected, smooth_acc[selected]);
+                    last_smoother_knob = SMK_ACC;
                     cal_dirty = true;
                     snprintf(status_line, sizeof(status_line),
-                             "Servo %d ACC = %u us/s^2 (unsaved)",
+                             "Servo %d ACC = %u us/s^2 (unsaved, ',' / '.' to fine-adjust)",
                              selected, smooth_acc[selected]);
                     status_until = time(NULL) + 3;
                 }
@@ -915,10 +947,70 @@ int main(int argc, char *argv[])
                     int next = (idx < 0) ? 0 : ((idx + 1) % DEAD_PRESET_COUNT);
                     smooth_dead[selected] = DEAD_PRESETS[next];
                     SMOOTH_SetDeadband(&smooth, selected, smooth_dead[selected]);
+                    last_smoother_knob = SMK_DEAD;
                     cal_dirty = true;
                     snprintf(status_line, sizeof(status_line),
-                             "Servo %d DEAD = %u us (unsaved)",
+                             "Servo %d DEAD = %u us (unsaved, ',' / '.' to fine-adjust)",
                              selected, smooth_dead[selected]);
+                    status_until = time(NULL) + 3;
+                }
+                break;
+
+            /* v2.3.6: ',' and '.' fine-adjust the LAST-TOUCHED smoother
+             * knob (vel/acc/dead) for the SELECTED servo. Range-clamped
+             * to match the JSON loader's accepted bounds so save can't
+             * fail later on a value the bench let you type. */
+            case ',':
+            case '.':
+                {
+                    bool inc = (ch == '.');
+                    if(last_smoother_knob == SMK_NONE)
+                    {
+                        snprintf(status_line, sizeof(status_line),
+                                 "Press v/a/d first to select a smoother knob, "
+                                 "then ',' / '.' to fine-adjust");
+                        status_until = time(NULL) + 3;
+                        break;
+                    }
+                    if(last_smoother_knob == SMK_VEL)
+                    {
+                        int v = (int)smooth_vel[selected]
+                              + (inc ? VEL_STEP : -VEL_STEP);
+                        if(v < VEL_LO) v = VEL_LO;
+                        if(v > VEL_HI) v = VEL_HI;
+                        smooth_vel[selected] = (uint16_t)v;
+                        SMOOTH_SetSpeed(&smooth, selected, smooth_vel[selected]);
+                        cal_dirty = true;
+                        snprintf(status_line, sizeof(status_line),
+                                 "Servo %d VEL = %u us/s (unsaved)",
+                                 selected, smooth_vel[selected]);
+                    }
+                    else if(last_smoother_knob == SMK_ACC)
+                    {
+                        int v = (int)smooth_acc[selected]
+                              + (inc ? ACC_STEP : -ACC_STEP);
+                        if(v < ACC_LO) v = ACC_LO;
+                        if(v > ACC_HI) v = ACC_HI;
+                        smooth_acc[selected] = (uint16_t)v;
+                        SMOOTH_SetAccel(&smooth, selected, smooth_acc[selected]);
+                        cal_dirty = true;
+                        snprintf(status_line, sizeof(status_line),
+                                 "Servo %d ACC = %u us/s^2 (unsaved)",
+                                 selected, smooth_acc[selected]);
+                    }
+                    else /* SMK_DEAD */
+                    {
+                        int v = (int)smooth_dead[selected]
+                              + (inc ? DEAD_STEP : -DEAD_STEP);
+                        if(v < DEAD_LO) v = DEAD_LO;
+                        if(v > DEAD_HI) v = DEAD_HI;
+                        smooth_dead[selected] = (uint16_t)v;
+                        SMOOTH_SetDeadband(&smooth, selected, smooth_dead[selected]);
+                        cal_dirty = true;
+                        snprintf(status_line, sizeof(status_line),
+                                 "Servo %d DEAD = %u us (unsaved)",
+                                 selected, smooth_dead[selected]);
+                    }
                     status_until = time(NULL) + 3;
                 }
                 break;

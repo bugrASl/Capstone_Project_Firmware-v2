@@ -453,6 +453,7 @@ sudo ./pca_testbench --config config/runtime.json
 #   v                cycle smoother VELOCITY preset for selected servo
 #   a                cycle smoother ACCELERATION preset
 #   d                cycle smoother DEADBAND preset
+#   , .              fine -/+ on the last-touched smoother knob
 #   S                save min/max/bias/smoother values to runtime.json
 #   L                reload from disk (discards unsaved jogs)
 #   q                quit (warns if unsaved)
@@ -484,6 +485,23 @@ than entering numeric values. Each press steps to the next preset
 for the *selected* servo and immediately applies it to the live
 smoother — you feel the change on the next jog. Save with `S` to
 commit; `L` to reload from disk and discard unsaved changes.
+
+For exact values between presets, `,` and `.` fine-adjust the
+**last-touched** smoother knob for the selected servo. Press `v`
+to ballpark velocity, then `,` and `.` to nudge in 100 µs/s
+increments. Switching servos with UP/DOWN preserves which knob
+is being adjusted — the "last touched" semantic is global, not
+per-servo. Step sizes:
+
+| Knob | Cycle preset | Fine step (`,` / `.`) | Range |
+|---|---|---|---|
+| velocity | `v` | 100 µs/s | 100..10000 |
+| acceleration | `a` | 500 µs/s² | 500..50000 |
+| deadband | `d` | 1 µs | 0..50 |
+
+The fine ranges match what the JSON loader's range-check accepts,
+so the bench can never let you set a value the live system would
+reject on reload.
 
 The presets, ordered by cycle:
 
