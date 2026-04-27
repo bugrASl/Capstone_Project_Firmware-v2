@@ -1,4 +1,4 @@
-# CPCU Configuration Reference — v2.3.1
+# CPCU Configuration Reference — v2.3.2
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -156,12 +156,29 @@ voltage hovers around the critical threshold.
 | `SMOOTH_DEFAULT_VELOCITY` | 2000 | µs/s — full 2000 µs span in 1.0 s if cruising |
 | `SMOOTH_DEFAULT_ACCEL` | 8000 | µs/s² — reach max velocity in 250 ms |
 | `SMOOTH_SETTLE_THRESH` | 2 | Within this many µs of target = settled |
+| `SMOOTH_DEFAULT_DEADBAND` | 10 | **(v2.3.2)** Hold-pose deadband, µs (≈0.9°). Once a servo settles, fresh PCA writes are suppressed until the target moves more than this from the last latched value. Kills static jitter from the servo's internal P controller being re-triggered every 50 Hz tick. See [`JITTER_MITIGATION.md`](JITTER_MITIGATION.md). |
 
 These are the *defaults*, applied to all 6 channels at `SMOOTH_Init`.
 Per-servo overrides happen in `cpcu_io.c` (see §5). Lower
 `SMOOTH_DEFAULT_VELOCITY` if your servos mechanically bind at peak
 speed. Lower `SMOOTH_DEFAULT_ACCEL` if you hear/see jolts at the start
 of motion.
+
+### Tuning the hold-pose deadband
+
+Per-servo via `SMOOTH_SetDeadband(ctx, channel, deadband_us)`.
+
+| Setting | Effect | When to use |
+|---|---|---|
+| `0` | Deadband disabled — always writes every tick | Debugging; verifying jitter is host-induced (compare with vs without) |
+| `4` (≈0.36°) | Tight | Wrist or fine-motion joints where you want responsive small moves |
+| `10` (≈0.9°, default) | Balanced | All arm joints unless you have a reason to deviate |
+| `25` (≈2.3°) | Loose | Joints that twitch a lot under load, where you accept "steppy" slow motion as a trade |
+
+The deadband does NOT fix gravity-driven sag, mechanical resonance,
+power-supply ripple, or cross-coupled jitter from a stalled servo.
+See [`JITTER_MITIGATION.md`](JITTER_MITIGATION.md) §5 for the
+distinction.
 
 ---
 

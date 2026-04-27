@@ -6,7 +6,7 @@ pipeline, and commands up to 6 servo motors via a PCA9685 PWM driver.
 
 [![Platform: RPi5](https://img.shields.io/badge/Platform-Raspberry%20Pi%205-c51a4a.svg)](#hardware)
 [![Language: C11 / Python 3](https://img.shields.io/badge/Language-C11%20%7C%20Python%203-green.svg)](#software-architecture)
-[![Version: v2.3.1](https://img.shields.io/badge/Version-v2.3.1-brightgreen.svg)](#)
+[![Version: v2.3.2](https://img.shields.io/badge/Version-v2.3.2-brightgreen.svg)](#)
 
 > **First time with this repo?** Start from the root
 > [`../SYSTEM_GUIDE.md`](../SYSTEM_GUIDE.md) — it covers the whole system
@@ -194,6 +194,7 @@ cpcu_v2/
 │   ├── pca_testbench.c            # Interactive PCA9685 servo calibration TUI
 │   ├── signal_testbench.c         # End-to-end signal integrity TUI
 │   └── safety_testbench.c         # Automated safety-FSM harness (38 checks, v2.3.1)
+│   ├── smooth_testbench.c        # Smoother + deadband unit harness (28 checks, v2.3.2)
 │
 ├── datasets/                      # v2.1: collected EMG recordings ({label}_{N}.csv)
 ├── models/                        # emg_rf_model.pkl lives here (not in repo)
@@ -249,7 +250,7 @@ This produces seven binaries under `build/`:
 - `cpcu_kernel` — Core 0 supervisor + watchdog
 - `cpcu_tui` — ncurses dashboard (3-file v3.4)
 - `test_codec` — codec round-trip tests (7 PASS)
-- `safety_testbench` — safety-FSM tests (38 PASS, v2.3.1)
+- `safety_testbench` — safety-FSM tests (38 PASS, v2.3.1) + smoother tests (28 PASS, v2.3.2)
 - `pca_testbench` — interactive servo calibration TUI
 - `signal_testbench` — interactive signal integrity TUI
 
@@ -279,6 +280,7 @@ chmod +x run_tests.sh
 ./run_tests.sh 1            # Phase 1: software-only (any machine)
                             #   → test_codec       (7 PASS)
                             #   → safety_testbench (38 PASS, v2.3.1)
+                            #   → smooth_testbench   (28 PASS, v2.3.2)
                             #   → test_dsp_pipeline.py (65 PASS, v2.3)
 ./run_tests.sh 1 2          # Phase 1 + IPC validation (needs kernel running)
 ./run_tests.sh              # All phases (Pi with all peripherals wired)
@@ -443,6 +445,10 @@ For BSAU-side tests (TB-100 through TB-309): [`../bsau_v2/docs/BSAU_TEST_GUIDE.m
 - **[`docs/BOOT_AND_SYNC.md`](docs/BOOT_AND_SYNC.md)** — *v2.3.1.*
   Why you no longer need to coordinate BSAU/CPCU power-on order.
   Cold-start grace period explained.
+- **[`docs/JITTER_MITIGATION.md`](docs/JITTER_MITIGATION.md)** —
+  *v2.3.2.* Why the static arm "buzzes", why hobby servos do that,
+  and how the hold-pose deadband suppresses it. Per-servo deadband
+  tuning, what it doesn't fix.
 
 ### Cross-references
 - **[`../bsau_v2/README.md`](../bsau_v2/README.md)** — transmitter

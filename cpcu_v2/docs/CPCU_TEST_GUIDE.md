@@ -1,4 +1,4 @@
-# CPCU Test Guide — v3.4
+# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -170,7 +170,7 @@ Exercises the safety finite-state-machine without any hardware. The
 binary drives the FSM through its state-transition matrix, injecting
 each failure mode and verifying the expected response.
 
-**Seven test groups, 31 individual checks, all must PASS:**
+**Eight test groups, 38 individual checks, all must PASS:**
 
 1.  **Happy path** — no faults; FSM stays `RUNNING` forever, counters
     are monotonic, no spurious SAFE entries.
@@ -187,7 +187,7 @@ each failure mode and verifying the expected response.
     trip — absorbed by `SAFETY_SeqGap`.
 5.  **Ring overflow** — push `io_ring_overflows` to ≥ 150 (delta of 150
     above the baseline 0, threshold 100). FSM trips `SAFE`. *(This is
-    one of the 31 testbench checks and continues to pass against the
+    one of the testbench checks and continues to pass against the
     v2.3 logic because the fault threshold is now applied to the
     delta-since-baseline, which equals the cumulative count when
     starting from 0.)* **Suggested v2.3 follow-up test (manual):**
@@ -202,11 +202,29 @@ each failure mode and verifying the expected response.
 7.  **State-transition graph** — drive the FSM through every legal
     edge (`INIT → RUNNING → DEGRADED → RECOVERING → RUNNING → SAFE`)
     and verify no illegal transitions occur under any input.
+8.  **Boot grace period (TB-SAF09, v2.3.1)** — verifies the cold-start
+    radio grace. Four scenarios:
+    - **a.** Inside 5 s grace, no packets ever received → FSM stays
+      `RUNNING` (no spurious fault). Pre-v2.3.1 this would have
+      tripped at 750 ms.
+    - **b.** Grace expired (>5 s), still no packets → FSM transitions
+      to `DEGRADED`. Genuinely-dead BSAU is still flagged, just
+      after the grace.
+    - **c.** First packet arrives during grace → grace gate lifts;
+      a subsequent 800 ms silence trips `DEGRADED` normally
+      (post-first-packet timeout semantics resume immediately).
+    - **d.** Regression check — post-warmup timeout behaviour is
+      unchanged from pre-v2.3.1 (defensive guard against the grace
+      somehow leaking into established-RUNNING state).
 
-**Pass criteria:** stdout shows `[PASS]` for all 33 checks (was 31 pre-v2.3
-— TB-SAF02 was extended with `e/f/g` for the v2.2 SAFE-recovery path that
-the original test couldn't see), exit code is 0. On fail the binary prints
-which group and which check, with expected vs actual state.
+    See [`BOOT_AND_SYNC.md`](BOOT_AND_SYNC.md) for the full
+    rationale, including why 5 s is the right grace value.
+
+**Pass criteria:** stdout shows `[PASS]` for all 38 checks (was 31
+pre-v2.3 — TB-SAF02 was extended with `e/f/g` for the v2.2
+SAFE-recovery path; v2.3.1 added 5 more in TB-SAF09), exit code is 0.
+On fail the binary prints which group and which check, with expected
+vs actual state.
 
 **Interactive version:** to exercise the same faults live with visual
 feedback, run `./cpcu_tui --demo` and use `F` / `B` / `G` / `O` / `I`
@@ -222,7 +240,59 @@ expected threshold.
 # of the fault-injection hotkeys.
 ```
 
-### 3.4 TUI demo validation (visual, no hardware)
+### 3.4 TB-SMOOTHER — smoother + deadband (automated, no hardware)
+
+```bash
+./smooth_testbench
+# or (runs as part of the full Phase 1 sweep):
+ctest -R smoother_unit --output-on-failure
+```
+
+Self-contained unit harness for `cpcu_smooth.c`. Drives the smoother
+through synthetic inputs and verifies the v2.1 deadband logic
+alongside the existing trapezoidal-motion behaviour.
+
+**Eight test groups, 28 individual checks, all must PASS:**
+
+1.  **TB-SMO01 Init defaults** — every channel starts with sane state:
+    `current = target = start_us`, `settled = true`, `enabled = true`,
+    `hold_deadband_us = SMOOTH_DEFAULT_DEADBAND` (10), `ever_written
+    = false`, `last_written_us = 0`.
+2.  **TB-SMO02 Trapezoidal motion** — for a 400 µs move, `SMOOTH_Update`
+    converges within ~1 s wall-clock budget at 50 Hz, settles cleanly,
+    velocity zeroed at settle.
+3.  **TB-SMO03 Deadband holds** — verifies `SMOOTH_ShouldWrite` returns:
+    - `false` for a settled channel matching `last_written_us`
+    - `false` for a settled channel within the deadband
+    - `true` for a settled channel outside the deadband
+    - `true` for a channel still in motion
+4.  **TB-SMO04 Deadband disabled** — `SMOOTH_SetDeadband(ch, 0)` forces
+    every-tick writes, recovering pre-v2.3.2 behaviour.
+5.  **TB-SMO05 Initial-write rule** — first write goes through even
+    if `current = start_us` (smoother is "settled" but PCA hasn't
+    been told yet); subsequent writes honour the deadband.
+6.  **TB-SMO06 MarkWritten coherence** — `SMOOTH_MarkWritten` updates
+    the per-channel shadow, doesn't leak across channels.
+7.  **TB-SMO07 Snap preserves deadband state** — `SMOOTH_Snap` zeroes
+    velocity and marks settled, but does NOT touch `last_written_us`
+    or `ever_written`. The post-Snap state correctly triggers the
+    next `ShouldWrite` because `current` has diverged from
+    `last_written`.
+8.  **TB-SMO08 Out-of-range channel safety** — passing channel `< 0`
+    or `>= PCA_SERVO_COUNT` to the API doesn't crash; reads return
+    sane defaults.
+
+**Pass criteria:** stdout shows `[PASS]` for all 28 checks, exit code
+is 0. On fail the binary prints which group and which check.
+
+This testbench is purely software — it does not exercise the
+*physical* effect of the deadband on real servos (that's by design;
+hobby servo behaviour is too noisy to assert on automated). To verify
+the deadband on real hardware, see [`JITTER_MITIGATION.md`](JITTER_MITIGATION.md)
+§2 (the "with vs without deadband" comparison) and use
+`pca_testbench` to inspect a servo at rest.
+
+### 3.5 TUI demo validation (visual, no hardware)
 
 ```bash
 ./cpcu_tui --demo
@@ -306,7 +376,7 @@ terminal**: you're running an older build that hardcoded `g_mini_h=4`.
 Rebuild with the current `signal_testbench.c` — layout now scales
 vertically with `g_term_h`.
 
-### 3.5 Note on `signal_testbench` (what it is, what it isn't)
+### 3.6 Note on `signal_testbench` (what it is, what it isn't)
 
 `signal_testbench` plots the **raw ADC stream** straight off the IPC ring.
 It is a physical-layer test: function-gen → BSAU ADC → NRF TX → NRF RX →
@@ -409,7 +479,7 @@ the PCA9685 + NRF24L01+ wired.
 
 ```
   UP/DOWN                select servo
-  LEFT/RIGHT             +/- 5 us
+  LEFT/RIGHT             +/- 10 us
   PgUp / PgDn            +/- 50 us
   m / M                  jump to min / max
   n                      neutral selected servo

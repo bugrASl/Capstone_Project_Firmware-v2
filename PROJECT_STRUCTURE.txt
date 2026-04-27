@@ -1,5 +1,5 @@
 #
-#   Prosthetic Hand Capstone — Project Directory Structure (v2.3.1)
+#   Prosthetic Hand Capstone — Project Directory Structure (v2.3.2)
 #   Author: bugrASl
 #   Date:   April 2026
 #
@@ -12,7 +12,25 @@
 #   touched by that change are listed in the "v2.1 DATASET mode" section
 #   below.
 #
-#   v2.3.1 (April 2026, latest):
+#   v2.3.2 (April 2026, latest):
+#     - cpcu_v2/include/cpcu_smooth.h             v2.1   — hold_deadband_us +
+#                                                       last_written_us shadow,
+#                                                       SMOOTH_ShouldWrite +
+#                                                       SMOOTH_MarkWritten API
+#     - cpcu_v2/src/cpcu_smooth.c                 v2.1   — deadband decision
+#                                                       logic, ever_written gate
+#     - cpcu_v2/src/cpcu_io.c                     v2.3.2 — gates PCA writes on
+#                                                       SMOOTH_ShouldWrite,
+#                                                       updates shadow on
+#                                                       SAFE-snap and AllOff paths
+#     - cpcu_v2/test/smooth_testbench.c           new  — 28 unit tests for
+#                                                       deadband + motion (TB-SMO01..08)
+#     - cpcu_v2/CMakeLists.txt                          — registers smooth_testbench
+#     - cpcu_v2/run_tests.sh                            — runs smooth_testbench
+#                                                       in Phase 1
+#     - cpcu_v2/docs/JITTER_MITIGATION.md         new  — full topic doc
+#
+#   v2.3.1 (April 2026):
 #     - cpcu_v2/include/cpcu_safety.h             v2.3.1 — SAFETY_RADIO_BOOT_GRACE_MS
 #                                                       constant + boot_us +
 #                                                       first_packet_seen fields
@@ -59,8 +77,8 @@
 #     - All docs refreshed for v3.4 page reorder, v2.3 ring recovery,
 #       v2.4 NRF non-fatal, no-sudo policy.
 #
-#   Total automated tests: 7 (codec) + 38 (safety FSM, +5 in v2.3.1) + 65 (DSP pipeline)
-#                        = 110 PASS in Phase 1.
+#   Total automated tests: 7 (codec) + 38 (safety FSM, +5 in v2.3.1) + 28 (smoother, new in v2.3.2) + 65 (DSP pipeline)
+#                        = 138 PASS in Phase 1.
 #
 
 # =============================================================================

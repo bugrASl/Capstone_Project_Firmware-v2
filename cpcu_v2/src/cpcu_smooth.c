@@ -3,12 +3,20 @@
  *  @brief      Per-servo trapezoidal motion profile smoother.
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.0
+ *  @version    2.1
+ *
+ *  v2.1 (2026-04, CPCU v2.3.2):
+ *      - Hold-pose deadband. SMOOTH_ShouldWrite() and SMOOTH_MarkWritten()
+ *        added; cpcu_io.c gates PCA writes on ShouldWrite. Prevents the
+ *        "1 µs jitter loop" where a settled servo's internal controller
+ *        was being re-triggered by every 50 Hz refresh.
+ *        See cpcu_v2/docs/JITTER_MITIGATION.md.
  */
 
 #include "cpcu_smooth.h"
 
 #include <math.h>
+#include <stdlib.h>     /* abs() */
 
 /*============= INIT =======================================================*/
 
@@ -16,14 +24,21 @@ void SMOOTH_Init(SMOOTH_Context *ctx, uint16_t start_us)
 {
     for(int i = 0; i < PCA_SERVO_COUNT; i++)
     {
-        ctx->current_f[i]    = (float)start_us;
-        ctx->velocity_f[i]   = 0.0f;
-        ctx->current[i]      = start_us;
-        ctx->target[i]       = start_us;
-        ctx->max_velocity[i] = SMOOTH_DEFAULT_VELOCITY;
-        ctx->max_accel[i]    = SMOOTH_DEFAULT_ACCEL;
-        ctx->enabled[i]      = true;
-        ctx->settled[i]      = true;
+        ctx->current_f[i]        = (float)start_us;
+        ctx->velocity_f[i]       = 0.0f;
+        ctx->current[i]          = start_us;
+        ctx->target[i]           = start_us;
+        ctx->max_velocity[i]     = SMOOTH_DEFAULT_VELOCITY;
+        ctx->max_accel[i]        = SMOOTH_DEFAULT_ACCEL;
+        ctx->enabled[i]          = true;
+        ctx->settled[i]          = true;
+
+        /* v2.1 deadband state. start_us has not been written yet
+         * — ever_written stays false until cpcu_io confirms the
+         * first PCA write via SMOOTH_MarkWritten. */
+        ctx->hold_deadband_us[i] = SMOOTH_DEFAULT_DEADBAND;
+        ctx->last_written_us[i]  = 0;
+        ctx->ever_written[i]     = false;
     }
 }
 
@@ -207,4 +222,59 @@ bool SMOOTH_AllSettled(const SMOOTH_Context *ctx)
     for(int i = 0; i < PCA_SERVO_COUNT; i++)
         if(!ctx->settled[i]) return false;
     return true;
+}
+
+/*============= v2.1 DEADBAND ==============================================*/
+/*
+ *  Three-rule logic in SMOOTH_ShouldWrite:
+ *
+ *      1. Channel never written before  -> ALWAYS write (initial PWM).
+ *      2. Smoother in motion (!settled) -> ALWAYS write (track motion).
+ *      3. Smoother settled              -> write only if
+ *                                          |current - last_written| > deadband.
+ *
+ *  Rule (1) prevents a freshly-initialised servo from being silent on
+ *  startup just because its starting target equals SMOOTH_Init's value.
+ *  Rule (2) ensures the smoother's per-tick interpolation always reaches
+ *  the PCA — the deadband only suppresses redundant *holding* writes.
+ *  Rule (3) is the actual jitter killer: when current matches what the
+ *  PCA already has, sending the same pulse width again forces the
+ *  servo's internal P controller to re-evaluate, which can perturb the
+ *  hold position. Skip the write -> the servo coasts on its existing
+ *  PWM signal -> no re-trigger.
+ *
+ *  When deadband_us == 0 the channel always writes (deadband disabled,
+ *  pre-v2.1 behaviour).
+ */
+
+void SMOOTH_SetDeadband(SMOOTH_Context *ctx, int channel, uint16_t deadband_us)
+{
+    if(channel < 0 || channel >= PCA_SERVO_COUNT) return;
+    ctx->hold_deadband_us[channel] = deadband_us;
+}
+
+bool SMOOTH_ShouldWrite(const SMOOTH_Context *ctx, int channel)
+{
+    if(channel < 0 || channel >= PCA_SERVO_COUNT) return false;
+
+    /* Rule 1: never written before */
+    if(!ctx->ever_written[channel]) return true;
+
+    /* Rule 2: motion in progress */
+    if(!ctx->settled[channel])      return true;
+
+    /* Rule 3: settled — gate on deadband */
+    uint16_t db = ctx->hold_deadband_us[channel];
+    if(db == 0) return true;        /* deadband disabled */
+
+    int diff = (int)ctx->current[channel] - (int)ctx->last_written_us[channel];
+    if(diff < 0) diff = -diff;
+    return diff > (int)db;
+}
+
+void SMOOTH_MarkWritten(SMOOTH_Context *ctx, int channel, uint16_t written_us)
+{
+    if(channel < 0 || channel >= PCA_SERVO_COUNT) return;
+    ctx->last_written_us[channel] = written_us;
+    ctx->ever_written[channel]    = true;
 }

@@ -1,9 +1,9 @@
 # Prosthetic Hand Capstone — InfiniTech (BSAU + CPCU)
 
-[![Status: v2.3.1](https://img.shields.io/badge/Status-v2.3.1-brightgreen.svg)](#)
+[![Status: v2.3.2](https://img.shields.io/badge/Status-v2.3.2-brightgreen.svg)](#)
 [![BSAU: v2.4](https://img.shields.io/badge/BSAU-v2.4-blue.svg)](bsau_v2/README.md)
-[![CPCU: v2.3.1](https://img.shields.io/badge/CPCU-v2.3.1-blue.svg)](cpcu_v2/README.md)
-[![Tests: 110 PASS](https://img.shields.io/badge/Tests-110%20PASS-brightgreen.svg)](cpcu_v2/docs/CPCU_TEST_GUIDE.md)
+[![CPCU: v2.3.2](https://img.shields.io/badge/CPCU-v2.3.2-blue.svg)](cpcu_v2/README.md)
+[![Tests: 138 PASS](https://img.shields.io/badge/Tests-138%20PASS-brightgreen.svg)](cpcu_v2/docs/CPCU_TEST_GUIDE.md)
 
 **EE493/494 Capstone Design Project · METU, Spring 2026.**
 
@@ -42,7 +42,7 @@ cmake --install build               # No sudo: /opt/cpcu is owned by you
 cp /path/to/emg_rf_model.pkl /opt/cpcu/models/
 
 # 5. Run the test suite (no hardware needed for Phase 1)
-./run_tests.sh 1                    # → 7+38+65 = 110 PASS
+./run_tests.sh 1                    # → 7+38+28+65 = 138 PASS
 
 # 6. Launch the system
 ./scripts/launch.sh tui             # tmux: KERNEL window + TUI window
@@ -89,7 +89,7 @@ prosthetic_hand/
     ├── README.md        ← CPCU-specific quick reference
     ├── include/         ← 10 C headers (cpcu_safety.h v2.3, cpcu_tui.h v3.4, …)
     ├── src/             ← 12 C sources (cpcu_io.c v2.3, cpcu_tui*.{c} v3.4, …)
-    ├── test/            ← 4 testbenches + 2 Python tests (110 PASS total)
+    ├── test/            ← 4 testbenches + 2 Python tests (138 PASS total)
     ├── scripts/         ← Python DSP, IPC bridge, launch.sh v2.5
     ├── docs/            ← CPCU_ARCHITECTURE.md v3.4, CPCU_RUN_GUIDE.md, …
     │   └── export/      ← 9 PDF design diagrams
@@ -126,7 +126,8 @@ and there's no way around it.
 
 | Version | Date | Where | What |
 |---|---|---|---|
-| **v2.3.1 (CPCU safety)** | Apr 2026 | `cpcu_safety.{h,c}`, `safety_testbench.c` | Cold-start radio grace period (`SAFETY_RADIO_BOOT_GRACE_MS = 5 s`). Eliminates BSAU/CPCU power-on coordination. New TB-SAF09 (5 sub-checks). 110/110 PASS. See [`cpcu_v2/docs/BOOT_AND_SYNC.md`](cpcu_v2/docs/BOOT_AND_SYNC.md). |
+| **v2.3.2 (CPCU smoother)** | Apr 2026 | `cpcu_smooth.{h,c}`, `cpcu_io.c`, `smooth_testbench.c` | Hold-pose deadband — settled servos no longer get redundant 50 Hz refreshes, killing static jitter. 28 new unit tests (TB-SMO01..SMO08). Total 138/138 PASS. See [`cpcu_v2/docs/JITTER_MITIGATION.md`](cpcu_v2/docs/JITTER_MITIGATION.md). |
+| **v2.3.1 (CPCU safety)** | Apr 2026 | `cpcu_safety.{h,c}`, `safety_testbench.c` | Cold-start radio grace period (`SAFETY_RADIO_BOOT_GRACE_MS = 5 s`). Eliminates BSAU/CPCU power-on coordination. New TB-SAF09 (5 sub-checks). See [`cpcu_v2/docs/BOOT_AND_SYNC.md`](cpcu_v2/docs/BOOT_AND_SYNC.md). |
 | **v2.4 (BSAU)** | Apr 2026 | `bsau_app.c` | NRF init no longer fatal. Bounded retry + periodic 500-packet health check. Profile-uniform across DATASET / RELEASE / DEBUG. |
 | **v2.3 (CPCU safety)** | Apr 2026 | `cpcu_safety.{h,c}` | Ring-overflow recoverable (delta + 5 s quiescence); `SAFETY_VBAT_DIVIDER` restored to 2.0 (was wrongly 1.0); `SAFETY_UpdateState()` now called from `cpcu_io.c` step 5. |
 | **v3.4 (CPCU TUI)** | Apr 2026 | `cpcu_tui*.{c,h}` | Split into 3 .c + 1 .h (was 2900-line monolith); CONFIG → page 7; live-data on keys 1-6; IO heartbeat thresholds expressed relative to 100 ms period. |
@@ -162,6 +163,7 @@ once to explain that feature in full).
 |---|---|---|
 | [`cpcu_v2/docs/GESTURE_MAPPING.md`](cpcu_v2/docs/GESTURE_MAPPING.md) | First-principles guide to `GESTURE_SERVO_MAP`: hobby servos, pulse widths, the discovery workflow | v2.3 |
 | [`cpcu_v2/docs/BOOT_AND_SYNC.md`](cpcu_v2/docs/BOOT_AND_SYNC.md) | Cold-start choreography — why you no longer need to coordinate BSAU/CPCU power-on order | v2.3.1 |
+| [`cpcu_v2/docs/JITTER_MITIGATION.md`](cpcu_v2/docs/JITTER_MITIGATION.md) | Why the static arm "buzzes", how the hold-pose deadband fixes it, what it doesn't fix | v2.3.2 |
 
 ## Hardware
 

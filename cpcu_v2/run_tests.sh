@@ -251,10 +251,31 @@ if echo "$PHASES" | grep -q "1"; then
     fi
 
     if [ -n "${SAF_BIN}" ]; then
-        run_test "TB-SAF01..SAF07: Safety FSM Validation" \
+        run_test "TB-SAF01..SAF09: Safety FSM Validation" \
             "${SAF_BIN}"
     else
         echo -e "${YELLOW}[SKIP]${RESET} safety_testbench not built"
+    fi
+
+    ## Find or build smooth_testbench (v2.3.2 — deadband + motion unit tests)
+    SMO_BIN=""
+    if [ -f ./smooth_testbench ]; then
+        SMO_BIN="./smooth_testbench"
+    elif [ -f build/smooth_testbench ]; then
+        SMO_BIN="build/smooth_testbench"
+    else
+        echo "[BUILD] Compiling smooth_testbench..."
+        if [ -d build ]; then
+            cd build && make smooth_testbench && cd ..
+            SMO_BIN="build/smooth_testbench"
+        fi
+    fi
+
+    if [ -n "${SMO_BIN}" ]; then
+        run_test "TB-SMO01..SMO08: Smoother Deadband + Motion" \
+            "${SMO_BIN}"
+    else
+        echo -e "${YELLOW}[SKIP]${RESET} smooth_testbench not built"
     fi
 
     run_test "TB-DSP: DSP Pipeline Validation" \

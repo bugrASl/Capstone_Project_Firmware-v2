@@ -1,8 +1,8 @@
-# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.1)
+# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.2)
 
 **Author:** bugrASl
 **Date:** April 2026
-**Status:** v2.3.1 (boot grace period — eliminates BSAU/CPCU power-on coordination)
+**Status:** v2.3.2 (boot grace period — eliminates BSAU/CPCU power-on coordination)
 
 ---
 
@@ -18,6 +18,12 @@ head instead of a recipe you can't modify.
 > **What changed since v2.1.** This document was extended several times
 > as the project matured. The biggest deltas:
 >
+> - **v2.3.2 (CPCU smoother, hold-pose deadband)** — Settled servos no
+>   longer get redundant PWM refreshes, killing the host-induced
+>   static jitter that made the arm "buzz". Per-servo deadband
+>   (default 10 µs ≈ 0.9°). New `smooth_testbench` adds 28 unit tests
+>   for the deadband + trapezoidal-motion behaviour. See
+>   [`cpcu_v2/docs/JITTER_MITIGATION.md`](cpcu_v2/docs/JITTER_MITIGATION.md).
 > - **v2.3.1 (CPCU safety, boot grace)** — `SAFETY_RADIO_BOOT_GRACE_MS`
 >   (5 s) suppresses the radio fault on cold boot until either the
 >   first packet arrives or the grace expires. Eliminates the
@@ -50,7 +56,7 @@ head instead of a recipe you can't modify.
 >   `sudo apt` — which Linux requires for those specific operations.
 > - **safety_testbench** now exercises the full RUNNING → SAFE →
 >   RUNNING recovery path (extended from 5 to 7 sub-checks in TB-SAF02);
->   total automated tests: **110 PASS** across `test_codec`,
+>   total automated tests: **138 PASS** across `test_codec`,
 >   `safety_testbench`, and `test_dsp_pipeline.py`.
 
 If you are ever stuck on a step, check the corresponding **"What can go
@@ -83,64 +89,64 @@ in this document, though.
 
 ## Table of Contents
 
-**Part 1 — System Overview**
-1.1 [What this system does](#11-what-this-system-does)
-1.2 [The two boxes](#12-the-two-boxes)
-1.3 [How they talk to each other](#13-how-they-talk-to-each-other)
-1.4 [Build modes — a preview](#14-build-modes--a-preview)
-1.5 [Dataset mode — what's new in v2.1](#15-dataset-mode--whats-new-in-v21)
-1.6 [Project vocabulary (must-knows)](#16-project-vocabulary-must-knows)
+- **Part 1 — System Overview**
+  - 1.1 [What this system does](#11-what-this-system-does)
+  - 1.2 [The two boxes](#12-the-two-boxes)
+  - 1.3 [How they talk to each other](#13-how-they-talk-to-each-other)
+  - 1.4 [Build modes — a preview](#14-build-modes--a-preview)
+  - 1.5 [Dataset mode — what's new in v2.1](#15-dataset-mode--whats-new-in-v21)
+  - 1.6 [Project vocabulary (must-knows)](#16-project-vocabulary-must-knows)
 
-**Part 2 — What You Need**
-2.1 [Bill of materials — BSAU side](#21-bill-of-materials--bsau-side)
-2.2 [Bill of materials — CPCU side](#22-bill-of-materials--cpcu-side)
-2.3 [Cables, connectors, tools](#23-cables-connectors-tools)
-2.4 [Software you'll install](#24-software-youll-install)
+- **Part 2 — What You Need**
+  - 2.1 [Bill of materials — BSAU side](#21-bill-of-materials--bsau-side)
+  - 2.2 [Bill of materials — CPCU side](#22-bill-of-materials--cpcu-side)
+  - 2.3 [Cables, connectors, tools](#23-cables-connectors-tools)
+  - 2.4 [Software you'll install](#24-software-youll-install)
 
-**Part 3 — Hardware Setup**
-3.1 [Safety first](#31-safety-first)
-3.2 [BSAU — wiring the STM32 Nucleo](#32-bsau--wiring-the-stm32-nucleo)
-3.3 [CPCU — wiring the Raspberry Pi 5](#33-cpcu--wiring-the-raspberry-pi-5)
-3.4 [Pre-power checks (before you plug anything in)](#34-pre-power-checks-before-you-plug-anything-in)
-3.5 [First power-on](#35-first-power-on)
+- **Part 3 — Hardware Setup**
+  - 3.1 [Safety first](#31-safety-first)
+  - 3.2 [BSAU — wiring the STM32 Nucleo](#32-bsau--wiring-the-stm32-nucleo)
+  - 3.3 [CPCU — wiring the Raspberry Pi 5](#33-cpcu--wiring-the-raspberry-pi-5)
+  - 3.4 [Pre-power checks (before you plug anything in)](#34-pre-power-checks-before-you-plug-anything-in)
+  - 3.5 [First power-on](#35-first-power-on)
 
-**Part 4 — Software Setup**
-4.1 [Your laptop (dev workstation)](#41-your-laptop-dev-workstation)
-4.2 [BSAU toolchain (STM32CubeIDE)](#42-bsau-toolchain-stm32cubeide)
-4.3 [Raspberry Pi OS bring-up](#43-raspberry-pi-os-bring-up)
-4.4 [Cloning the project](#44-cloning-the-project)
+- **Part 4 — Software Setup**
+  - 4.1 [Your laptop (dev workstation)](#41-your-laptop-dev-workstation)
+  - 4.2 [BSAU toolchain (STM32CubeIDE)](#42-bsau-toolchain-stm32cubeide)
+  - 4.3 [Raspberry Pi OS bring-up](#43-raspberry-pi-os-bring-up)
+  - 4.4 [Cloning the project](#44-cloning-the-project)
 
-**Part 5 — Testing (in the correct order)**
-5.1 [Why bottom-up matters](#51-why-bottom-up-matters)
-5.2 [The full test sequence at a glance](#52-the-full-test-sequence-at-a-glance)
-5.3 [Software-only tests (no hardware)](#53-software-only-tests-no-hardware)
-5.4 [BSAU standalone tests (just the STM32, no Pi)](#54-bsau-standalone-tests-just-the-stm32-no-pi)
-5.5 [CPCU standalone tests (just the Pi, no STM32)](#55-cpcu-standalone-tests-just-the-pi-no-stm32)
-5.6 [Integration tests (both boards)](#56-integration-tests-both-boards)
-5.7 [Qualification — endurance and recovery](#57-qualification--endurance-and-recovery)
+- **Part 5 — Testing (in the correct order)**
+  - 5.1 [Why bottom-up matters](#51-why-bottom-up-matters)
+  - 5.2 [The full test sequence at a glance](#52-the-full-test-sequence-at-a-glance)
+  - 5.3 [Software-only tests (no hardware)](#53-software-only-tests-no-hardware)
+  - 5.4 [BSAU standalone tests (just the STM32, no Pi)](#54-bsau-standalone-tests-just-the-stm32-no-pi)
+  - 5.5 [CPCU standalone tests (just the Pi, no STM32)](#55-cpcu-standalone-tests-just-the-pi-no-stm32)
+  - 5.6 [Integration tests (both boards)](#56-integration-tests-both-boards)
+  - 5.7 [Qualification — endurance and recovery](#57-qualification--endurance-and-recovery)
 
-**Part 6 — Running the System (daily operation)**
-6.1 [Pre-flight checklist](#61-pre-flight-checklist)
-6.2 [Typical startup sequence](#62-typical-startup-sequence)
-6.3 [Production run (RELEASE mode, systemd)](#63-production-run-release-mode-systemd)
-6.4 [Development run (DEBUG mode, manual)](#64-development-run-debug-mode-manual)
-6.5 [Monitoring while it's running](#65-monitoring-while-its-running)
-6.6 [Clean shutdown](#66-clean-shutdown)
+- **Part 6 — Running the System (daily operation)**
+  - 6.1 [Pre-flight checklist](#61-pre-flight-checklist)
+  - 6.2 [Typical startup sequence](#62-typical-startup-sequence)
+  - 6.3 [Production run (RELEASE mode, systemd)](#63-production-run-release-mode-systemd)
+  - 6.4 [Development run (DEBUG mode, manual)](#64-development-run-debug-mode-manual)
+  - 6.5 [Monitoring while it's running](#65-monitoring-while-its-running)
+  - 6.6 [Clean shutdown](#66-clean-shutdown)
 
-**Part 7 — Dataset Collection (v2.1)**
-7.1 [Why two captures](#71-why-two-captures)
-7.2 [Capturing BSAU-side (UART)](#72-capturing-bsau-side-uart)
-7.3 [Capturing CPCU-side (TUI Page 6)](#73-capturing-cpcu-side-tui-page-6)
-7.4 [Verifying a capture pair](#74-verifying-a-capture-pair)
+- **Part 7 — Dataset Collection (v2.1)**
+  - 7.1 [Why two captures](#71-why-two-captures)
+  - 7.2 [Capturing BSAU-side (UART)](#72-capturing-bsau-side-uart)
+  - 7.3 [Capturing CPCU-side (TUI Page 6)](#73-capturing-cpcu-side-tui-page-6)
+  - 7.4 [Verifying a capture pair](#74-verifying-a-capture-pair)
 
-**Part 8 — Troubleshooting**
-8.1 [Symptom to cause, BSAU side](#81-symptom-to-cause-bsau-side)
-8.2 [Symptom to cause, CPCU side](#82-symptom-to-cause-cpcu-side)
-8.3 [Symptom to cause, integration](#83-symptom-to-cause-integration)
+- **Part 8 — Troubleshooting**
+  - 8.1 [Symptom to cause, BSAU side](#81-symptom-to-cause-bsau-side)
+  - 8.2 [Symptom to cause, CPCU side](#82-symptom-to-cause-cpcu-side)
+  - 8.3 [Symptom to cause, integration](#83-symptom-to-cause-integration)
 
-**Part 9 — Reference**
-9.1 [Command cheatsheet](#91-command-cheatsheet)
-9.2 [Where to go next](#92-where-to-go-next)
+- **Part 9 — Reference**
+  - 9.1 [Command cheatsheet](#91-command-cheatsheet)
+  - 9.2 [Where to go next](#92-where-to-go-next)
 
 ---
 
@@ -1280,7 +1286,7 @@ A TUI opens. Controls:
 | Key | Action |
 |-----|--------|
 | ↑/↓ | Select servo |
-| ←/→ | -/+ 5 µs pulse width |
+| ←/→ | -/+ 10 µs pulse width (1 PCA9685 tick = 4.88 µs; 5 µs was on the boundary so half the keypresses produced no change) |
 | PgUp/PgDn | -/+ 50 µs |
 | m / M | Jump to min / max |
 | n / N | Neutral selected / all |

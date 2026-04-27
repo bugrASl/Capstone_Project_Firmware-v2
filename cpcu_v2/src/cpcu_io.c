@@ -3,13 +3,34 @@
  *  @brief      Core 3 — Real-time I/O controller
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.3
+ *  @version    2.3.2
  *  @details    Deterministic loop:
  *                  1. Busy-poll NRF via spidev         -> read payload
  *                  2. WL_Unpack -> seq/safety/link     -> push to SPSC ring
  *                  3. Rate-limited (50 Hz) PCA servo update via I2C
  *                  4. Safety checks: radio, DSP, I2C, thermal, ring
  *                  5. Heartbeat to shared memory for watchdog
+ *
+ *              v2.3.2 changes:
+ *                  - Per-servo PCA writes are now gated on
+ *                    SMOOTH_ShouldWrite() to suppress redundant refreshes
+ *                    of settled servos. A servo holding its target within
+ *                    its hold_deadband_us[] window stops being commanded,
+ *                    which kills static jitter caused by the servo's
+ *                    internal P controller fighting backlash and gravity
+ *                    sag on every 50 Hz tick.
+ *                  - SAFETY_FeedI2C is only invoked on ticks that
+ *                    actually performed I/O, so a pure-deadband tick
+ *                    (all servos settled, no writes) doesn't pollute
+ *                    the I²C health counters.
+ *                  - SMOOTH_MarkWritten called after each successful
+ *                    write to keep the deadband shadow coherent.
+ *                  - PCA_SetAllNeutral (SAFE-snap path) and PCA_AllOff
+ *                    (I²C-streak path) update the shadow appropriately:
+ *                    the SAFE path marks all written; the AllOff path
+ *                    clears ever_written so the first post-recovery
+ *                    write always goes through.
+ *                  - See cpcu_v2/docs/JITTER_MITIGATION.md.
  *
  *              v2.3 changes:
  *                  - Now calls SAFETY_UpdateState() once per loop after the
@@ -353,20 +374,42 @@ int main(int argc, char *argv[])
                 /* Advance smoother toward targets */
                 SMOOTH_Update(&smooth, servo_dt);
 
-                /* Write smoothed positions to servos (one I2C burst per channel) */
+                /* Write smoothed positions to servos (one I2C burst per
+                 * channel). v2.3.2: gate each write on SMOOTH_ShouldWrite
+                 * to suppress redundant refreshes of settled servos —
+                 * see docs/JITTER_MITIGATION.md. Servos still in motion,
+                 * or sitting outside the deadband from their last latched
+                 * value, write every tick as before. */
                 PCA_Status pca_ret  =   PCA_OK;
+                bool       any_io   =   false;
                 for(int s = 0; s < PCA_SERVO_COUNT; s++)
                 {
+                    if(!SMOOTH_ShouldWrite(&smooth, s))
+                        continue;       /* deadband — let the servo coast */
+
                     PCA_Status r    =   PCA_SetServo(&pca, (uint8_t)s, smooth.current[s]);
-                    if(r != PCA_OK)
+                    if(r == PCA_OK)
+                    {
+                        SMOOTH_MarkWritten(&smooth, s, smooth.current[s]);
+                    }
+                    else
                     {
                         pca_ret =   r;
                     }
+                    any_io = true;
                 }
-                SAFETY_FeedI2C(&safety, pca_ret == PCA_OK);
 
-                if(pca_ret == PCA_OK)   i2c_err_streak  =   0;
-                else                    i2c_err_streak++;
+                /* Only feed I2C health if we actually performed I/O this
+                 * tick. A pure-deadband tick (all servos settled, no
+                 * writes) shouldn't be miscounted as either a success
+                 * or a failure. */
+                if(any_io)
+                {
+                    SAFETY_FeedI2C(&safety, pca_ret == PCA_OK);
+
+                    if(pca_ret == PCA_OK)   i2c_err_streak  =   0;
+                    else                    i2c_err_streak++;
+                }
 
                 /* If I2C has been failing for over 500 ms (25 ticks @ 50 Hz),
                  * assume the bus is wedged and kill all outputs with PCA_AllOff.
@@ -378,6 +421,13 @@ int main(int argc, char *argv[])
                           i2c_err_streak);
                     PCA_AllOff(&pca);
                     i2c_err_streak = 0;
+
+                    /* v2.3.2: AllOff clears the PCA's PWM registers, so
+                     * what was "last_written" no longer reflects hardware.
+                     * Reset the deadband shadow so the first write after
+                     * the bus recovers always goes through. */
+                    for(int s = 0; s < PCA_SERVO_COUNT; s++)
+                        smooth.ever_written[s] = false;
                 }
             }
             else if(pca_ok)
@@ -388,6 +438,14 @@ int main(int argc, char *argv[])
                 SMOOTH_Snap(&smooth);
 
                 PCA_SetAllNeutral(&pca);
+
+                /* v2.3.2: keep the deadband shadow coherent with what's
+                 * actually latched in the PCA. Without this, the next
+                 * SMOOTH_ShouldWrite would see ever_written=true with
+                 * last_written != neutral, and write another redundant
+                 * neutral on the very next tick. */
+                for(int s = 0; s < PCA_SERVO_COUNT; s++)
+                    SMOOTH_MarkWritten(&smooth, s, PCA_SERVO_NEUTRAL);
             }
         }
 

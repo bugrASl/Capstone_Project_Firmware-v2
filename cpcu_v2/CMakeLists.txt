@@ -131,6 +131,15 @@ add_executable(safety_testbench
 )
 target_link_libraries(safety_testbench PRIVATE cpcu_codec m)
 
+## Smoother testbench (always buildable, no hardware needed).
+## v2.3.2 — exercises the new hold-pose deadband logic plus the
+## existing trapezoidal-motion behaviour. See cpcu_smooth.h v2.1.
+add_executable(smooth_testbench
+    test/smooth_testbench.c
+    src/cpcu_smooth.c
+)
+target_link_libraries(smooth_testbench PRIVATE m)
+
 ## PCA9685 servo testbench (interactive TUI, needs ncurses + I2C hardware)
 ## v2.2: now depends on cpcu_smooth.c (slew/smoother feature exposed via 's' / --smooth)
 if(CURSES_FOUND)
@@ -154,6 +163,7 @@ endif()
 enable_testing()
 add_test(NAME codec_roundtrip COMMAND test_codec)
 add_test(NAME safety_fsm      COMMAND safety_testbench)
+add_test(NAME smoother_unit   COMMAND smooth_testbench)
 
 ##============= INSTALL ====================================================================
 

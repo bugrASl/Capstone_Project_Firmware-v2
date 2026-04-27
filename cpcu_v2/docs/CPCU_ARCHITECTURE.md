@@ -312,11 +312,36 @@ Servo update (50 Hz):
     2. PCA_SafetyClamp()         -> clamp to mechanical limits
     3. SMOOTH_SetAllTargets()    -> feed to smoother
     4. SMOOTH_Update(dt)         -> advance positions
-    5. PCA_SetServo(smooth.current[]) -> write smoothed values
+    5. for each servo s:
+         if SMOOTH_ShouldWrite(s):                  # v2.3.2 deadband gate
+           PCA_SetServo(s, smooth.current[s])       # I²C write
+           SMOOTH_MarkWritten(s, smooth.current[s]) # close the loop
   else:
     1. SMOOTH_Snap()             -> instant jump to neutral
     2. PCA_SetAllNeutral()       -> write 1500 us to all channels
+    3. for each servo s:
+         SMOOTH_MarkWritten(s, neutral)             # keep shadow coherent
 ```
+
+### 5.6 Hold-pose deadband (v2.3.2)
+
+Once a servo has settled at its target, further PCA writes are
+suppressed until either the smoother resumes motion or the target
+moves outside the per-channel `hold_deadband_us` (default 10 µs ≈
+0.9°). This kills static jitter caused by the servo's internal P
+controller being re-triggered by every 50 Hz refresh.
+
+The PCA9685 keeps generating PWM forever once configured — skipping
+I²C writes does NOT mean stopping the servo, it means not perturbing
+its internal control loop. The deadband is the *only* thing being
+suppressed; motion always writes, and the first write of any session
+always goes through.
+
+`SMOOTH_ShouldWrite(ctx, ch)` returns the gate decision; consumers
+must call `SMOOTH_MarkWritten(ctx, ch, written_us)` after every
+successful write to keep the shadow coherent. SAFE-snap and AllOff
+paths in cpcu_io update the shadow appropriately. Full design:
+[`JITTER_MITIGATION.md`](JITTER_MITIGATION.md).
 
 ---
 
