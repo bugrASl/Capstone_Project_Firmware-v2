@@ -1,8 +1,8 @@
-# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.4)
+# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.5)
 
 **Author:** bugrASl
 **Date:** April 2026
-**Status:** v2.3.4 (TUI edit-mode handshake — safe live calibration without killing the arm)
+**Status:** v2.3.5 (velocity-mode gestures — graded control via stateful target integration)
 
 ---
 
@@ -18,6 +18,15 @@ head instead of a recipe you can't modify.
 > **What changed since v2.1.** This document was extended several times
 > as the project matured. The biggest deltas:
 >
+> - **v2.3.5 (CPCU DSP, velocity-mode gestures)** — Per-class per-servo
+>   velocity rates in `runtime.json` drive a stateful target integrator
+>   in `cpcu_dsp.py`, scaled by SVM confidence. Holding a gesture
+>   longer makes the arm move further (instead of snapping to a fixed
+>   pose); brief detection dropouts hold position rather than
+>   resetting. `rest` stays freeze-mode and drains targets to neutral.
+>   Hybrid: classes without velocity rows preserve v2.3.4 fixed-pose
+>   behaviour. 18 new unit tests for the loader. See
+>   [`cpcu_v2/docs/VELOCITY_MODE.md`](cpcu_v2/docs/VELOCITY_MODE.md).
 > - **v2.3.4 (CPCU TUI, edit-mode handshake)** — Pressing `e` on the
 >   CONFIG page (page 7) raises an IPC flag; cpcu_io parks the
 >   smoother at neutral and acks once `SMOOTH_AllSettled()`; cpcu_dsp.py
@@ -75,7 +84,7 @@ head instead of a recipe you can't modify.
 >   `sudo apt` — which Linux requires for those specific operations.
 > - **safety_testbench** now exercises the full RUNNING → SAFE →
 >   RUNNING recovery path (extended from 5 to 7 sub-checks in TB-SAF02);
->   total automated tests: **168 PASS** across `test_codec`,
+>   total automated tests: **186 PASS** across `test_codec`,
 >   `safety_testbench`, and `test_dsp_pipeline.py`.
 
 If you are ever stuck on a step, check the corresponding **"What can go

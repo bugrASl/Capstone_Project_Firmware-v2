@@ -219,9 +219,9 @@ MODEL_PATH              =   os.path.join(MODEL_DIR, "hmi_svm_model_200hz.joblib"
 SCALER_PATH             =   os.path.join(MODEL_DIR, "hmi_scaler_200hz.joblib")
 THRESHOLDS_PATH         =   os.path.join(MODEL_DIR, "noise_thresholds.json")
 
-# Debounce (matches predict.py)
+# Debounce defaults — overridden by runtime.json on startup if present.
 PROBABILITY_THRESHOLD   =   0.65
-CONFIRMATION_THRESHOLD  =   3
+CONFIRMATION_THRESHOLD  =   3                      # falls back to JSON's hysteresis_votes
 
 # Servo defaults
 SERVO_NEUTRAL_US        =   1500
@@ -231,6 +231,15 @@ NUM_SERVOS              =   6
 DRAIN_PERIOD_S          =   0.020       # 50 Hz
 DRAIN_BATCH             =   200
 
+# v2.3.5: hardware safety envelope (compile-time mins/maxes from
+# cpcu_pca9685.h). dsp clamps published targets to these, cpcu_io
+# clamps again on its side after applying servo_bias_us. Both clamps
+# are needed: dsp's clamp gives the user immediate feedback in the
+# TUI confidence display ("you've integrated past the limit, bias is
+# saturated"), io's clamp is the absolute safety net.
+SERVO_MIN_US            =   [ 498, 1074, 1074, 1001, 1001,  976]
+SERVO_MAX_US            =   [2500, 1953, 1953, 2002, 2002, 1733]
+
 # Default servo poses per gesture, in microseconds (6 servos).
 # Gestures the team's predict.py acknowledges in its color_map (and
 # therefore the trained SVM is known to emit):
@@ -239,12 +248,235 @@ DRAIN_BATCH             =   200
 # with more classes; if the current .joblib doesn't know that class,
 # the entry simply never fires.
 # Any model.classes_ entry NOT in this map falls back to all-neutral.
+#
+# v2.3.5: this map is now the FALLBACK for "freeze-mode" gestures only.
+# Velocity-mode gestures use GESTURE_BEHAVIOR (loaded from runtime.json,
+# see VELOCITY_MODE.md). Any class without a velocity entry falls back
+# to GESTURE_SERVO_MAP[label] as a fixed pose, preserving v2.3.4
+# behaviour.
 GESTURE_SERVO_MAP       =   {
     "rest":         [1500, 1500, 1500, 1500, 1500, 1500],
     "biceps_flex":  [1500, 1700, 1500, 1500, 1500, 1500],
     "hand_flex":    [1700, 1500, 1500, 1700, 1700, 1700],
     "hand_open":    [1300, 1500, 1500, 1300, 1300, 1300],
 }
+
+# v2.3.5: gesture-behaviour map. Keys are class names, values are
+# dicts with:
+#   "mode": "freeze" | "velocity"
+#   "rate": [int]*NUM_SERVOS    (us/s, signed, only used when mode=velocity)
+#
+# "rest" is always freeze (target unchanged, hold pose).
+# Other classes default to freeze if absent from the velocity map
+# in runtime.json — keeping v2.3.4 behaviour as the safe default.
+#
+# Loaded from runtime.json's "gesture_velocity" object on startup.
+# Format in JSON:
+#   "gesture_velocity": {
+#       "biceps_flex": [0, 200, 0, 0, 0, 0],     // close elbow
+#       "hand_flex":   [200, 0, 0, 200, 200, 200] // close hand
+#   }
+# Negative values reverse direction. Zero rates effectively disable
+# velocity mode for that channel (target += 0 = unchanged).
+GESTURE_BEHAVIOR        =   {
+    "rest":         {"mode": "freeze", "rate": [0]*NUM_SERVOS},
+    # Other classes populated at runtime from JSON; default freeze.
+}
+
+# Confidence interpolation for velocity scaling. When the SVM's
+# probability for the active class is at the floor, integration speed
+# is 0 (effectively frozen). When at the ceiling, full speed. Linear
+# ramp between. Loaded from runtime.json on startup.
+INTERP_CONF_FLOOR       =   0.40        # 40%
+INTERP_CONF_CEIL        =   0.85        # 85%
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  RUNTIME CONFIG LOADER  (v2.3.5)
+# ══════════════════════════════════════════════════════════════════════
+# v2.3.3 introduced cpcu_v2/config/runtime.json and the C-side parser
+# in cpcu_config.c, mirrored to IPC_RuntimeConfig in shared memory.
+# That covers everything cpcu_io needs (servo limits, deadband, bias).
+#
+# This v2.3.5 step needs the gesture-velocity rows, which are
+# string-keyed by class name and so don't fit cleanly into the C
+# parser's flat-array model. So dsp loads its own slice of the JSON
+# directly. Same file, different consumer.
+#
+# Three rules:
+#   1. If runtime.json is missing or unparseable, log a WARNING and
+#      use the in-code defaults. dsp must boot — kernel already
+#      refuse-to-started if the JSON was truly broken.
+#   2. Velocity rows for unknown classes (not in model.classes_) are
+#      silently ignored. Adding a class to JSON doesn't crash dsp.
+#   3. Classes WITHOUT a velocity row stay in freeze mode (the safe
+#      v2.3.4 default).
+
+RUNTIME_CONFIG_PATH_DEFAULT  =  "/opt/cpcu/config.json"
+RUNTIME_CONFIG_PATH_FALLBACK = "config/runtime.json"
+
+
+def load_dsp_runtime_config(model_classes, path=None):
+    """Read the dsp-side slice of runtime.json.
+
+    Returns (interp_floor, interp_ceil, hysteresis_votes, behavior_map)
+    where behavior_map is the populated GESTURE_BEHAVIOR.
+
+    If the file can't be opened or parsed, defaults are used and a
+    warning is printed. cpcu_kernel will already have failed earlier
+    if the JSON was structurally bad.
+    """
+    floor    = INTERP_CONF_FLOOR
+    ceil_    = INTERP_CONF_CEIL
+    votes    = CONFIRMATION_THRESHOLD
+    behavior = {"rest": {"mode": "freeze", "rate": [0]*NUM_SERVOS}}
+    # Default: every model class is freeze with its existing pose.
+    for cls in model_classes:
+        if cls != "rest":
+            behavior[cls] = {"mode": "freeze", "rate": [0]*NUM_SERVOS}
+
+    candidate_paths = [path] if path else [
+        RUNTIME_CONFIG_PATH_DEFAULT,
+        RUNTIME_CONFIG_PATH_FALLBACK,
+    ]
+    raw = None
+    used_path = None
+    for p in candidate_paths:
+        if not p: continue
+        try:
+            with open(p, "r") as f:
+                # Strip // comment-keys on the fly. Same lenient
+                # convention as the C parser.
+                text = f.read()
+            raw = json.loads(_strip_jsonc_comments(text))
+            used_path = p
+            break
+        except (OSError, ValueError) as e:
+            print(f"[DSP] runtime config {p} not usable: {e}", flush=True)
+            continue
+
+    if raw is None:
+        print(f"[DSP] WARNING: no runtime config loaded, using defaults",
+              flush=True)
+        return floor, ceil_, votes, behavior
+
+    # Tolerant: missing fields keep their defaults.
+    try:
+        if "interp_conf_floor_pct" in raw:
+            floor = float(raw["interp_conf_floor_pct"]) / 100.0
+        if "interp_conf_ceil_pct" in raw:
+            ceil_ = float(raw["interp_conf_ceil_pct"]) / 100.0
+        if "hysteresis_votes" in raw:
+            votes = int(raw["hysteresis_votes"])
+
+        # Sanity: floor < ceil. Otherwise the lerp blows up.
+        if floor >= ceil_:
+            print(f"[DSP] WARNING: interp floor {floor:.2f} >= ceil "
+                  f"{ceil_:.2f} from runtime.json — using defaults",
+                  flush=True)
+            floor, ceil_ = INTERP_CONF_FLOOR, INTERP_CONF_CEIL
+
+        gv = raw.get("gesture_velocity", {})
+        if not isinstance(gv, dict):
+            print(f"[DSP] WARNING: gesture_velocity must be an object, "
+                  f"got {type(gv).__name__} — ignoring", flush=True)
+        else:
+            for cls_name, rates in gv.items():
+                if cls_name not in model_classes:
+                    print(f"[DSP] gesture_velocity['{cls_name}'] not in "
+                          f"model.classes_ — ignored", flush=True)
+                    continue
+                if not isinstance(rates, list) or len(rates) != NUM_SERVOS:
+                    print(f"[DSP] gesture_velocity['{cls_name}']: "
+                          f"expected list of {NUM_SERVOS}, ignoring",
+                          flush=True)
+                    continue
+                # Range check — clamp loudly rather than silently.
+                clean = []
+                for r in rates:
+                    try:
+                        v = int(r)
+                    except (TypeError, ValueError):
+                        v = 0
+                    # +/- 5000 us/s is already extreme; stay defensive.
+                    if v < -5000 or v > 5000:
+                        print(f"[DSP] gesture_velocity['{cls_name}']: "
+                              f"rate {v} clamped to +/-5000", flush=True)
+                        v = max(-5000, min(5000, v))
+                    clean.append(v)
+                # Velocity mode if any rate is non-zero, else freeze.
+                mode = "velocity" if any(v != 0 for v in clean) else "freeze"
+                behavior[cls_name] = {"mode": mode, "rate": clean}
+    except Exception as e:
+        print(f"[DSP] runtime config parse error: {e}, using defaults",
+              flush=True)
+        return INTERP_CONF_FLOOR, INTERP_CONF_CEIL, CONFIRMATION_THRESHOLD, behavior
+
+    print(f"[DSP] runtime config loaded from {used_path}: "
+          f"floor={floor:.2f} ceil={ceil_:.2f} votes={votes}", flush=True)
+    for cls_name, beh in behavior.items():
+        if beh["mode"] == "velocity":
+            print(f"[DSP]   velocity-mode '{cls_name}': "
+                  f"rate={beh['rate']}", flush=True)
+
+    return floor, ceil_, votes, behavior
+
+
+def _strip_jsonc_comments(text):
+    """Strip // line comments so the C parser's lenient JSONC works
+    in Python's strict json too.
+
+    Naive line-by-line stripping breaks on lines like:
+        "// schema_version": "REQUIRED..."
+    where the // is INSIDE a string literal — we must not strip that.
+    Walk the file character-by-character tracking whether we're inside
+    a quoted string. Backslash-quote sequences inside strings are
+    handled. Block comments (/* ... */) are also stripped for safety
+    even though the project doesn't use them in JSON.
+    """
+    out = []
+    i = 0
+    n = len(text)
+    in_str = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i+1])
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+            i += 1
+            continue
+        # Not in a string.
+        if c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i+1] == "/":
+            # Line comment — skip to newline (preserve the newline).
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i+1] == "*":
+            # Block comment.
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i+1] == "/"):
+                i += 1
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+
+    text = "".join(out)
+    # Drop trailing commas before } and ] (the runtime.json template
+    # is well-formed but tolerate hand-edited mistakes).
+    import re
+    text = re.sub(r",(\s*[}\]])", r"\1", text)
+    return text
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -386,6 +618,29 @@ def run_inference(verbose=False):
     # v2.3.4 — edit-mode handshake state
     edit_mode_seen      =   False
 
+    # v2.3.5 — velocity-mode integrator state.
+    # current_target_us[s] is the dsp's authoritative target for each
+    # servo. cpcu_io's smoother trapezoidally walks toward whatever we
+    # publish. Initialized to neutral on every fresh boot — there is
+    # no snapshot persistence across runs, by design (a stuck pose
+    # from yesterday's session shouldn't define today's startup).
+    current_target_us   =   [SERVO_NEUTRAL_US] * NUM_SERVOS
+    last_integrate_t    =   time.monotonic()
+    last_safe_state     =   False        # for fault-recovery snap
+
+    # Load runtime-config slice owned by dsp (interp thresholds,
+    # hysteresis votes, gesture-velocity rows). model.classes_ tells
+    # us which class names exist, so unknown JSON entries can be
+    # warned about cleanly. If model load failed earlier,
+    # model.classes_ is empty and behavior_map will only contain
+    # "rest" — velocity mode is then a no-op (correct behaviour).
+    if model is not None:
+        model_class_names = [str(c) for c in model.classes_]
+    else:
+        model_class_names = ["rest"]
+    interp_floor, interp_ceil, hysteresis_votes, behavior_map = \
+        load_dsp_runtime_config(model_class_names)
+
     # Periodic-report state
     last_report_t       =   time.monotonic()
     inferences_done     =   0
@@ -442,12 +697,13 @@ def run_inference(verbose=False):
                 label   =   str(model.classes_[ai])
                 conf    =   float(probs[ai])
 
-                # Hysteresis matching predict.py:
-                # need CONFIRMATION_THRESHOLD consecutive predictions
-                # above PROBABILITY_THRESHOLD to switch state
+                # Hysteresis: need `hysteresis_votes` consecutive
+                # predictions above PROBABILITY_THRESHOLD to switch
+                # state. Threshold is loaded from runtime.json on
+                # startup (default 3, range 1-20).
                 if conf > PROBABILITY_THRESHOLD and label != current_state:
                     consecutive_count  +=   1
-                    if consecutive_count >= CONFIRMATION_THRESHOLD:
+                    if consecutive_count >= hysteresis_votes:
                         current_state   =   label
                         consecutive_count   =   0
                 else:
@@ -482,10 +738,12 @@ def run_inference(verbose=False):
             if edit_req:
                 if not edit_mode_seen:
                     # First tick we noticed it — commit to rest, stop
-                    # publishing, ack.
+                    # publishing, ack. Reset target to neutral so on
+                    # exit we don't snap back to a held pose.
                     current_state    =   "rest"
                     consecutive_count =  0
                     last_active_class =  CLASS_REST
+                    current_target_us =  [SERVO_NEUTRAL_US] * NUM_SERVOS
                     ipc.write_edit_dsp_ack(1)
                     edit_mode_seen   =   True
                     if verbose:
@@ -493,6 +751,7 @@ def run_inference(verbose=False):
                               "motor cmds suspended", flush=True)
                 # Don't publish motor_cmd. cpcu_io is parking at neutral
                 # via its own handshake responder.
+                last_integrate_t  =   time.monotonic()  # avoid dt spike on exit
             else:
                 if edit_mode_seen:
                     # Just exited edit mode. Clear ack so TUI sees us
@@ -502,11 +761,80 @@ def run_inference(verbose=False):
                     if verbose:
                         print("[DSP] edit-mode exited -> resuming", flush=True)
 
-                # Drive servos from the gesture map (or neutral if unmapped)
-                servo_us    =   GESTURE_SERVO_MAP.get(
-                                    current_state,
-                                    [SERVO_NEUTRAL_US] * NUM_SERVOS
-                                )
+                # v2.3.5: fault-recovery snap. If cpcu_io has been forced
+                # SAFE since our last integration step, target snaps back
+                # to neutral so we begin re-integration from a known pose
+                # when the system recovers. Without this, a fault during
+                # mid-flex would have us continuing to integrate from the
+                # mid-flex target as soon as SAFE clears — surprising.
+                sys_state = ipc.read_system_state()
+                in_safe   = (sys_state == 2)        # IPC_STATE_SAFE
+                if in_safe and not last_safe_state:
+                    current_target_us = [SERVO_NEUTRAL_US] * NUM_SERVOS
+                    if verbose:
+                        print("[DSP] SAFE detected -> target snapped to neutral",
+                              flush=True)
+                last_safe_state = in_safe
+
+                # Per-tick dt for the integrator. Inference cadence is
+                # ~10 Hz (every WINDOW_HOP samples), so dt ≈ 0.1 s.
+                # Exact value matters because rate is in us/s.
+                now_t           =   time.monotonic()
+                dt              =   now_t - last_integrate_t
+                last_integrate_t =  now_t
+                if dt > 0.5:    # we just stalled (paused, debugger), ignore
+                    dt          =   0.0
+
+                # Confidence scaling: linear lerp between floor and ceil.
+                # Below floor -> 0 (no integration, hold).
+                # Above ceil  -> 1 (full speed).
+                # Linear ramp between.
+                # conf is the SVM probability of `current_state`. If the
+                # model is disabled, conf_pct stays 0 and scale = 0.
+                conf_frac       =   conf_pct / 100.0
+                if conf_frac <= interp_floor:
+                    scale       =   0.0
+                elif conf_frac >= interp_ceil:
+                    scale       =   1.0
+                else:
+                    scale       =   (conf_frac - interp_floor) / \
+                                    (interp_ceil - interp_floor)
+
+                # Behaviour lookup: freeze (target unchanged) or
+                # velocity (integrate target += rate * dt * scale).
+                # Unknown class falls back to fixed-pose from
+                # GESTURE_SERVO_MAP (preserves v2.3.4 behaviour).
+                beh             =   behavior_map.get(current_state)
+                if beh is None:
+                    # Class predicted but not in our behaviour map.
+                    # Use the legacy fixed pose if known.
+                    fallback     =  GESTURE_SERVO_MAP.get(
+                                        current_state,
+                                        [SERVO_NEUTRAL_US]*NUM_SERVOS)
+                    current_target_us = list(fallback)
+                elif beh["mode"] == "freeze":
+                    # Hold whatever target we currently have. For
+                    # 'rest' specifically, snap to neutral so a long
+                    # rest period drains us back to the home pose
+                    # rather than holding the last gesture's target.
+                    if current_state == "rest":
+                        current_target_us = [SERVO_NEUTRAL_US]*NUM_SERVOS
+                    # else: just hold (no-op).
+                else:    # velocity mode
+                    rates       =   beh["rate"]
+                    for s in range(NUM_SERVOS):
+                        delta   =   rates[s] * dt * scale
+                        new_v   =   current_target_us[s] + delta
+                        # Clamp to compile-time hardware limits. cpcu_io
+                        # clamps again after applying servo_bias_us;
+                        # this clamp is for dsp's own sanity.
+                        new_v   =   max(SERVO_MIN_US[s],
+                                        min(SERVO_MAX_US[s], new_v))
+                        current_target_us[s] = new_v
+
+                # Publish the (possibly clamped, possibly integrated) target.
+                # Round to int us for the IPC u16 field.
+                servo_us        =   [int(round(v)) for v in current_target_us]
                 ipc.write_motor_cmd(servo_us, last_active_class, conf_pct)
 
             ipc.inc_dsp_inferences()

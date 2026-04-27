@@ -1,4 +1,4 @@
-# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4
+# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4 / velocity v2.3.5
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -146,6 +146,12 @@ python3 test/test_dsp_pipeline.py
     (REST, fist, pinch, point, thumbs-up, wrist-rotate, open).
 -   Noise gate attenuates sub-threshold inputs.
 -   Model file loads without version errors.
+-   **(v2.3.5) Runtime config loader (TB-DSP11..TB-DSP16)** —
+    six groups, 18 individual checks: defaults when file missing,
+    velocity-row parsing (positive + negative rates), out-of-range
+    clamping (±5000 µs/s), unknown-class names dropped with warning,
+    floor-≥-ceil invariant rejected, JSONC line comments + trailing
+    commas tolerated. See [`VELOCITY_MODE.md`](VELOCITY_MODE.md) §7.
 
 **Pass criterion:** all assertions pass.
 
@@ -157,6 +163,10 @@ python3 test/test_dsp_pipeline.py
 -   "Feature columns mismatch" → someone reordered the feature vector;
     re-export the model or fix `cpcu_dsp.py`.
 -   "Model file load error" → scikit-learn or numpy version mismatch.
+-   **(v2.3.5) "TB-DSP12 velocity row not loaded"** → check
+    `gesture_velocity` in `runtime.json` is valid JSON and the class
+    names match `model.classes_`. The loader's startup log lists every
+    velocity-mode row it accepted.
 
 ### 3.3 TB-SAFETY — safety FSM (automated, no hardware)
 

@@ -38,5 +38,17 @@
     "// grip_stall_recover_ms": "OPTIONAL. Time to wait before backing off gripper if commanded position has been at servo_min for this duration. Default 2000.",
     "grip_stall_recover_ms": 2000,
 
-    "// notes": "Lines starting with // are JSON-illegal but tolerated by cpcu_config.c's lenient parser. Strict parsers will reject them — use configure.sh to regenerate or strip them before piping through jq."
+    "// gesture_velocity": "OPTIONAL (v2.3.5). Per-gesture per-servo velocity in us/s, signed. Consumed by cpcu_dsp.py only — the C parser ignores this field. When a row is present and any rate is non-zero, that gesture switches from freeze-mode (hold a fixed pose) to velocity-mode (target += rate * dt * confidence_scale). Range +/- 5000 us/s. Class names must match model.classes_; unknown names are warned and dropped. See VELOCITY_MODE.md.",
+    "gesture_velocity": {
+        "// rest":         "rest stays freeze (no integration). Targets snap toward neutral.",
+        "rest":         [0, 0, 0, 0, 0, 0],
+        "// biceps_flex":  "Close the elbow joint over time. Hold gesture longer = elbow closes deeper.",
+        "biceps_flex":  [0, 200, 0, 0, 0, 0],
+        "// hand_flex":    "Close the hand. All four hand joints move together.",
+        "hand_flex":    [200, 0, 0, 200, 200, 200],
+        "// hand_open":    "Open the hand. Negative rates reverse direction.",
+        "hand_open":    [-200, 0, 0, -200, -200, -200]
+    },
+
+    "// notes": "Lines starting with // are JSON-illegal but tolerated by cpcu_config.c's lenient parser AND by cpcu_dsp.py's loader. Strict parsers will reject them — use configure.sh to regenerate or strip them before piping through jq."
 }

@@ -1,8 +1,8 @@
 # Prosthetic Hand Capstone — InfiniTech (BSAU + CPCU)
 
-[![Status: v2.3.4](https://img.shields.io/badge/Status-v2.3.4-brightgreen.svg)](#)
+[![Status: v2.3.5](https://img.shields.io/badge/Status-v2.3.5-brightgreen.svg)](#)
 [![BSAU: v2.4](https://img.shields.io/badge/BSAU-v2.4-blue.svg)](bsau_v2/README.md)
-[![CPCU: v2.3.4](https://img.shields.io/badge/CPCU-v2.3.4-blue.svg)](cpcu_v2/README.md)
+[![CPCU: v2.3.5](https://img.shields.io/badge/CPCU-v2.3.5-blue.svg)](cpcu_v2/README.md)
 [![Tests: 168 PASS](https://img.shields.io/badge/Tests-168%20PASS-brightgreen.svg)](cpcu_v2/docs/CPCU_TEST_GUIDE.md)
 
 **EE493/494 Capstone Design Project · METU, Spring 2026.**
@@ -126,6 +126,7 @@ and there's no way around it.
 
 | Version | Date | Where | What |
 |---|---|---|---|
+| **v2.3.5 (CPCU DSP, velocity gestures)** | Apr 2026 | `cpcu_dsp.py`, `runtime.json`, `test_dsp_pipeline.py` | Hybrid velocity-mode gestures. Per-class per-servo rates in JSON drive a stateful target integrator scaled by SVM confidence. Hold gesture longer = arm closes deeper. Backward-compatible: classes without velocity rows stay in fixed-pose mode. 18 new tests (TB-DSP11..TB-DSP16). 186/186 PASS. See [`cpcu_v2/docs/VELOCITY_MODE.md`](cpcu_v2/docs/VELOCITY_MODE.md). |
 | **v2.3.4 (CPCU TUI, edit-mode)** | Apr 2026 | `cpcu_ipc.{h}`, `cpcu_io.c`, `cpcu_tui.c`, `cpcu_tui_render.c`, `cpcu_dsp.py`, `cpcu_ipc_bridge.py` | Edit-mode handshake. Press `e` on CONFIG page → arm parks at neutral → editor unlocks. Safety FSM has priority. 3 new atomic bytes + timestamp in IPC_ControlBlock (no layout change, IPC_VERSION 0x0204). 168/168 PASS unchanged. See [`cpcu_v2/docs/EDIT_MODE.md`](cpcu_v2/docs/EDIT_MODE.md). |
 | **v2.3.3 (CPCU runtime config)** | Apr 2026 | `cpcu_config.{h,c}`, `cpcu_kernel.c`, `cpcu_io.c`, `cpcu_ipc.{h,c}`, `configure.sh`, `runtime.json`, `config_testbench.c` | JSON runtime config + `configure.sh` for compile-time `#define`s. Per-servo bias offsets are the first runtime consumer (cpcu_io applies before clamping). 30 new unit tests (TB-CFG01..CFG08). 168/168 PASS. See [`cpcu_v2/docs/RUNTIME_CONFIG.md`](cpcu_v2/docs/RUNTIME_CONFIG.md). |
 | **v2.3.2 (CPCU smoother)** | Apr 2026 | `cpcu_smooth.{h,c}`, `cpcu_io.c`, `smooth_testbench.c` | Hold-pose deadband — settled servos no longer get redundant 50 Hz refreshes, killing static jitter. 28 new unit tests (TB-SMO01..SMO08). Total 138/138 PASS. See [`cpcu_v2/docs/JITTER_MITIGATION.md`](cpcu_v2/docs/JITTER_MITIGATION.md). |
@@ -168,6 +169,7 @@ once to explain that feature in full).
 | [`cpcu_v2/docs/JITTER_MITIGATION.md`](cpcu_v2/docs/JITTER_MITIGATION.md) | Why the static arm "buzzes", how the hold-pose deadband fixes it, what it doesn't fix | v2.3.2 |
 | [`cpcu_v2/docs/RUNTIME_CONFIG.md`](cpcu_v2/docs/RUNTIME_CONFIG.md) | Runtime/compile-time tunable split — `runtime.json` + `configure.sh` | v2.3.3 |
 | [`cpcu_v2/docs/EDIT_MODE.md`](cpcu_v2/docs/EDIT_MODE.md) | Press `e` on TUI page 7 → arm parks → editor unlocks. Cross-process handshake protocol | v2.3.4 |
+| [`cpcu_v2/docs/VELOCITY_MODE.md`](cpcu_v2/docs/VELOCITY_MODE.md) | Per-class per-servo velocity rates → stateful target integration with confidence scaling | v2.3.5 |
 
 ## Hardware
 
