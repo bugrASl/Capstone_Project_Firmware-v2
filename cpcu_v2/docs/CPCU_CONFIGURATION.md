@@ -1,4 +1,4 @@
-# CPCU Configuration Reference — v2.3
+# CPCU Configuration Reference — v2.3.1
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -48,10 +48,18 @@ your build keeps headers).
 | `SAFETY_RADIO_TIMEOUT_MS` | 750 | Silence (no packet) after which RUNNING → DEGRADED |
 | `SAFETY_RADIO_SAFE_MS` | 1500 | DEGRADED-state duration before SAFE (terminal until recovery) |
 | `RECOVERY_PKT_COUNT` | 10 | Consecutive good packets needed to leave RECOVERING |
+| `SAFETY_RADIO_BOOT_GRACE_MS` | 5000 | **(v2.3.1)** Cold-start grace before the radio timeout fires for the first time. Suppresses a spurious fault when CPCU starts before BSAU. Lifted by either (a) first received packet, or (b) elapsed grace. See [`BOOT_AND_SYNC.md`](BOOT_AND_SYNC.md). |
 
-Lower these for faster fault detection at the cost of false alarms during
-brief radio glitches. Don't drop `SAFETY_RADIO_TIMEOUT_MS` below ~150 ms
-or normal RF retries will trigger it.
+Lower the timeout values for faster fault detection at the cost of
+false alarms during brief radio glitches. Don't drop
+`SAFETY_RADIO_TIMEOUT_MS` below ~150 ms or normal RF retries will
+trigger it.
+
+**Tuning the boot grace.** 3-5 s is the sweet spot. Lower than 3 s
+risks tripping during BSAU's normal boot (~1 s of NRF init plus user
+power-on reaction time). Higher than ~10 s makes a genuinely-dead
+BSAU look healthy for too long. The default 5 s assumes typical user
+behaviour ("flip both switches within a few seconds of each other").
 
 ### Link quality classification
 

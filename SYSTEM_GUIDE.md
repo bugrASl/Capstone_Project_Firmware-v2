@@ -1,8 +1,8 @@
-# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3)
+# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.1)
 
 **Author:** bugrASl
 **Date:** April 2026
-**Status:** v2.3 (recoverable safety FSM + non-fatal NRF + 3-file TUI split + sudo-wrapped scripts)
+**Status:** v2.3.1 (boot grace period — eliminates BSAU/CPCU power-on coordination)
 
 ---
 
@@ -18,6 +18,13 @@ head instead of a recipe you can't modify.
 > **What changed since v2.1.** This document was extended several times
 > as the project matured. The biggest deltas:
 >
+> - **v2.3.1 (CPCU safety, boot grace)** — `SAFETY_RADIO_BOOT_GRACE_MS`
+>   (5 s) suppresses the radio fault on cold boot until either the
+>   first packet arrives or the grace expires. Eliminates the
+>   "hold BSAU reset while CPCU boots" dance — power on either side
+>   in any order with seconds of slack. Genuinely-dead BSAU still
+>   flagged within 6 seconds. See
+>   [`cpcu_v2/docs/BOOT_AND_SYNC.md`](cpcu_v2/docs/BOOT_AND_SYNC.md).
 > - **v2.4 (BSAU)** — `NRF_Init` failure at boot is no longer fatal.
 >   The board boots with `g_nrf_alive = false`, ADC + UART + DATASET
 >   CSV stream stay alive, and a periodic health check inside
@@ -43,7 +50,7 @@ head instead of a recipe you can't modify.
 >   `sudo apt` — which Linux requires for those specific operations.
 > - **safety_testbench** now exercises the full RUNNING → SAFE →
 >   RUNNING recovery path (extended from 5 to 7 sub-checks in TB-SAF02);
->   total automated tests: **105 PASS** across `test_codec`,
+>   total automated tests: **110 PASS** across `test_codec`,
 >   `safety_testbench`, and `test_dsp_pipeline.py`.
 
 If you are ever stuck on a step, check the corresponding **"What can go

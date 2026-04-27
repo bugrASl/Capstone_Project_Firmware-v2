@@ -1,8 +1,15 @@
 /**
  *  @file       cpcu_safety.c
- *  @brief      System-wide safety monitor implementation, v2.3.
+ *  @brief      System-wide safety monitor implementation, v2.3.1.
  *  @author     bugrASl
  *  @date       April 2026
+ *
+ *  v2.3.1 changes (2026-04):
+ *      - Cold-start radio grace. boot_us captured in SAFETY_Init;
+ *        first_packet_seen flips in SAFETY_FeedPacket. CheckTimeout
+ *        gates the fault on (first_packet_seen || grace expired).
+ *        See header for the field additions and BOOT_AND_SYNC.md
+ *        for the full rationale.
  *
  *  v2.3 changes (2026-04):
  *      - Ring-overflow fault is now recoverable. Previously the fault
@@ -58,8 +65,12 @@ static uint64_t safety_now_us(void)
 void SAFETY_Init(SAFETY_Context *ctx)
 {
     memset(ctx, 0, sizeof(*ctx));
-    ctx->state          =   RADIO_INIT;
-    ctx->last_fault     =   SAFETY_OK;
+    ctx->state              =   RADIO_INIT;
+    ctx->last_fault         =   SAFETY_OK;
+
+    /* v2.3.1: anchor the cold-start grace period.
+     * Note that memset above already cleared first_packet_seen to false. */
+    ctx->boot_us            =   safety_now_us();
 }
 
 /*============= SEQUENCE GAP ===============================================*/
@@ -125,6 +136,12 @@ static void link_feed(LINK_Stats *l, const WL_Packet *pkt, uint32_t gap,
 void SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
                        uint64_t now_us)
 {
+    /* v2.3.1: any successful FeedPacket call lifts the cold-start grace.
+     * We don't gate this on FIRST_PACKET — what matters is that we're
+     * receiving traffic, not whether the BSAU labelled this as its first.
+     * (FIRST_PACKET still controls expected_seq init, below.) */
+    ctx->first_packet_seen  =   true;
+
     if(pkt->flags & WL_FLAG_FIRST_PACKET)
     {
         ctx->expected_seq   =   pkt->seq;
@@ -193,6 +210,26 @@ void SAFETY_CheckTimeout(SAFETY_Context *ctx, uint64_t now_us)
 {
     if(ctx->state == RADIO_INIT) return;
     if(ctx->state == RADIO_SAFE) return;     /* recovery handled by UpdateState */
+
+    /* v2.3.1: cold-start grace.
+     *
+     * If we have never received a packet AND we are still inside the boot
+     * grace window, we are not in a fault — we are in initial sync. The
+     * BSAU may simply not have powered on yet, or may still be holding
+     * its NRF in reset. Returning early here keeps the FSM in
+     * RADIO_RUNNING (which is the post-Init default after the first
+     * UpdateState pass) and prevents a spurious SAFE on cold boot.
+     *
+     * Once first_packet_seen flips true (in SAFETY_FeedPacket), or
+     * SAFETY_RADIO_BOOT_GRACE_MS has elapsed, this guard is bypassed
+     * and the normal timeout logic resumes. So a genuinely-dead
+     * BSAU still trips a fault — just SAFETY_RADIO_BOOT_GRACE_MS
+     * later than a runtime drop would. */
+    if(!ctx->first_packet_seen &&
+       (now_us - ctx->boot_us) / 1000 < SAFETY_RADIO_BOOT_GRACE_MS)
+    {
+        return;
+    }
 
     uint64_t silence_ms = (now_us - ctx->last_pkt_rcv_us) / 1000;
 

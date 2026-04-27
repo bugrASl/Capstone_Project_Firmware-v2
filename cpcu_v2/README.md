@@ -6,7 +6,7 @@ pipeline, and commands up to 6 servo motors via a PCA9685 PWM driver.
 
 [![Platform: RPi5](https://img.shields.io/badge/Platform-Raspberry%20Pi%205-c51a4a.svg)](#hardware)
 [![Language: C11 / Python 3](https://img.shields.io/badge/Language-C11%20%7C%20Python%203-green.svg)](#software-architecture)
-[![Version: v2.3](https://img.shields.io/badge/Version-v2.3-brightgreen.svg)](#)
+[![Version: v2.3.1](https://img.shields.io/badge/Version-v2.3.1-brightgreen.svg)](#)
 
 > **First time with this repo?** Start from the root
 > [`../SYSTEM_GUIDE.md`](../SYSTEM_GUIDE.md) — it covers the whole system
@@ -161,7 +161,7 @@ cpcu_v2/
 │   ├── cpcu_pca9685.h             # Layer 1: PCA9685 I²C servo driver
 │   ├── cpcu_ipc.h                 # Layer 2: POSIX shared-memory IPC (SPSC + seqlock)
 │   ├── cpcu_smooth.h              # Layer 2: Servo slew-rate smoother
-│   ├── cpcu_safety.h              # Layer 3: System-wide safety monitor (v2.3)
+│   ├── cpcu_safety.h              # Layer 3: System-wide safety monitor (v2.3.1)
 │   ├── cpcu_log.h                 # Layer 3: Structured logging + CSV sinks
 │   ├── cpcu_tui.h                 # Layer 5: Shared TUI types + cross-file API (v3.4)
 │   └── demo_signals.h             # Shared 8-waveform generator (TUI + testbench)
@@ -172,7 +172,7 @@ cpcu_v2/
 │   ├── cpcu_pca9685.c             # PCA9685 register driver, 50 Hz PWM output
 │   ├── cpcu_ipc.c                 # mmap'd ring buffer + seqlock motor commands
 │   ├── cpcu_smooth.c              # Slew-rate limiter (2000 µs/s default)
-│   ├── cpcu_safety.c              # Radio FSM, battery, thermal, I²C, DSP, ring (v2.3)
+│   ├── cpcu_safety.c              # Radio FSM, battery, thermal, I²C, DSP, ring (v2.3.1)
 │   ├── cpcu_log.c                 # Log formatting backend
 │   ├── cpcu_io.c                  # Core 3: real-time I/O main loop (v2.3)
 │   ├── cpcu_kernel.c              # Core 0: process supervisor + watchdog
@@ -193,7 +193,7 @@ cpcu_v2/
 │   ├── test_dsp_pipeline.py       # Python: DSP filter + feature + model tests
 │   ├── pca_testbench.c            # Interactive PCA9685 servo calibration TUI
 │   ├── signal_testbench.c         # End-to-end signal integrity TUI
-│   └── safety_testbench.c         # Automated safety-FSM harness (33 checks, v2.3)
+│   └── safety_testbench.c         # Automated safety-FSM harness (38 checks, v2.3.1)
 │
 ├── datasets/                      # v2.1: collected EMG recordings ({label}_{N}.csv)
 ├── models/                        # emg_rf_model.pkl lives here (not in repo)
@@ -249,7 +249,7 @@ This produces seven binaries under `build/`:
 - `cpcu_kernel` — Core 0 supervisor + watchdog
 - `cpcu_tui` — ncurses dashboard (3-file v3.4)
 - `test_codec` — codec round-trip tests (7 PASS)
-- `safety_testbench` — safety-FSM tests (33 PASS, v2.3)
+- `safety_testbench` — safety-FSM tests (38 PASS, v2.3.1)
 - `pca_testbench` — interactive servo calibration TUI
 - `signal_testbench` — interactive signal integrity TUI
 
@@ -278,7 +278,7 @@ chmod +x run_tests.sh
 
 ./run_tests.sh 1            # Phase 1: software-only (any machine)
                             #   → test_codec       (7 PASS)
-                            #   → safety_testbench (33 PASS, v2.3)
+                            #   → safety_testbench (38 PASS, v2.3.1)
                             #   → test_dsp_pipeline.py (65 PASS, v2.3)
 ./run_tests.sh 1 2          # Phase 1 + IPC validation (needs kernel running)
 ./run_tests.sh              # All phases (Pi with all peripherals wired)
@@ -418,6 +418,7 @@ For BSAU-side tests (TB-100 through TB-309): [`../bsau_v2/docs/BSAU_TEST_GUIDE.m
 
 ## Further reading
 
+### Standing references
 - **[`../SYSTEM_GUIDE.md`](../SYSTEM_GUIDE.md)** — whole-system go-to
   guide (both BSAU and CPCU). Start here if you don't know the project.
 - **[`docs/CPCU_ARCHITECTURE.md`](docs/CPCU_ARCHITECTURE.md)** — every
@@ -433,6 +434,17 @@ For BSAU-side tests (TB-100 through TB-309): [`../bsau_v2/docs/BSAU_TEST_GUIDE.m
   test execution guide.
 - **[`docs/export/`](docs/export/)** — rendered block diagrams,
   flowcharts, subsystem sketches (PDF).
+
+### Topic deep-dives (one feature per doc)
+- **[`docs/GESTURE_MAPPING.md`](docs/GESTURE_MAPPING.md)** — first-
+  principles guide to `GESTURE_SERVO_MAP`: what a hobby servo is,
+  how pulse widths relate to angles, the physical-electrode contract,
+  the discovery workflow with `pca_testbench`.
+- **[`docs/BOOT_AND_SYNC.md`](docs/BOOT_AND_SYNC.md)** — *v2.3.1.*
+  Why you no longer need to coordinate BSAU/CPCU power-on order.
+  Cold-start grace period explained.
+
+### Cross-references
 - **[`../bsau_v2/README.md`](../bsau_v2/README.md)** — transmitter
   quick-start.
 

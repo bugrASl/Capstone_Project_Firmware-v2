@@ -1,8 +1,20 @@
 /**
  *  @file       cpcu_safety.h
- *  @brief      System-wide safety monitor — public interface, v2.3.
+ *  @brief      System-wide safety monitor — public interface, v2.3.1.
  *  @author     bugrASl
  *  @date       April 2026
+ *
+ *  v2.3.1 changes (2026-04):
+ *      - Cold-start radio grace period. SAFETY_CheckTimeout now
+ *        suppresses the radio fault until either (a) the first
+ *        valid packet has been received, or (b) SAFETY_RADIO_BOOT_
+ *        GRACE_MS (5 s default) has elapsed since SAFETY_Init.
+ *        Distinguishes "BSAU and CPCU were powered on independently
+ *        and we just haven't met yet" from "we used to be talking
+ *        and now we're not", which used to look identical to the
+ *        FSM. Two new fields in SAFETY_Context: boot_us,
+ *        first_packet_seen. Public API unchanged.
+ *      - See cpcu_v2/docs/BOOT_AND_SYNC.md for the full design.
  *
  *  v2.3 changes (2026-04):
  *      - RING_Health now tracks a baseline + last-growth timestamp so the
@@ -72,6 +84,16 @@ extern "C" {
 /* Radio Timing */
 #define SAFETY_RADIO_TIMEOUT_MS         750
 #define SAFETY_RADIO_SAFE_MS            1500
+#define SAFETY_RADIO_BOOT_GRACE_MS      5000        /* v2.3.1: cold-start
+                                                       grace before radio
+                                                       timeout fires. Distin-
+                                                       guishes "no packet ever
+                                                       received from this BSAU"
+                                                       (initial sync) from
+                                                       "packets stopped"
+                                                       (genuine fault). See
+                                                       docs/BOOT_AND_SYNC.md
+                                                       for the full rationale. */
 #define RECOVERY_PKT_COUNT              10
 
 /* Link Quality */
@@ -233,6 +255,15 @@ typedef struct
     uint32_t        recovery_cnt;
     uint8_t         expected_seq;
     bool            seq_init;
+
+    /* v2.3.1: cold-start grace tracking. boot_us is set by
+     * SAFETY_Init to the moment the safety subsystem started.
+     * first_packet_seen flips to true the first time
+     * SAFETY_FeedPacket is invoked. SAFETY_CheckTimeout suppresses
+     * the radio fault until either is true OR until the grace has
+     * elapsed. See docs/BOOT_AND_SYNC.md. */
+    uint64_t        boot_us;
+    bool            first_packet_seen;
 
     LINK_Stats      link;
     BATTERY_State   battery;

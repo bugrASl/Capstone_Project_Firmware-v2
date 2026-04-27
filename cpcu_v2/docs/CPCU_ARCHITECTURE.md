@@ -121,10 +121,11 @@ Core 0:   Linux Kernel Core (CFS scheduler)
 Core 1:   DSP / AI — SMP pair (isolated, tickless)
 Core 2:   DSP / AI — SMP pair (isolated, tickless)
           |- cpcu_dsp.py: Python SVM inference (12-feat, RBF kernel)
-          |- scipy bandpass (20-450 Hz) + notch (50 Hz)
-          |- Feature extraction: MAV, RMS, WL, ZC, SSC, VAR, LOG_DET
+          |- scipy bandpass (20-95 Hz at Fs=200) + 50 Hz notch
+          |- Feature extraction: 4 features × 3 channels = 12 floats
+            (RMS, VAR, WL, ENV_mean per s1/s2/s3 → matches team training)
           |- SCHED_FIFO priority 80, mlockall (via taskset)
-          \- Ring buffer consumer -> Motor command producer
+          \- Ring buffer consumer → Motor command producer
 
 Core 3:   Real-time I/O Controller (isolated, tickless)
           |- cpcu_io: C process, SCHED_FIFO priority 90
@@ -136,6 +137,89 @@ Core 3:   Real-time I/O Controller (isolated, tickless)
           |- SAFETY_* system-wide safety monitor (7 fault sources)
           \- Heartbeat to shared memory for watchdog
 ```
+
+### 3.1 Boot parameters that enforce the layout
+
+```
+isolcpus=1,2,3        Removes cores 1-3 from the CFS scheduler
+nohz_full=1,2,3       Suppresses periodic timer ticks on those cores
+rcu_nocbs=1,2,3       Offloads RCU callback work back to core 0
+```
+
+Set at `/boot/firmware/cmdline.txt` by `setup_pi.sh`. Without these the
+Linux scheduler will load-balance across all four cores and the RT
+guarantees collapse. Verify with `cat /sys/devices/system/cpu/isolated`
+(should print `1-3`).
+
+### 3.2 Process-to-core mapping
+
+```c
+// Excerpts from cpcu_kernel.c showing how the kernel pins each child:
+
+spawn_taskset("IO",   "/opt/cpcu/bin/cpcu_io",   "3",   SCHED_FIFO, 90);
+spawn_python ("DSP",  "cpcu_dsp.py",             "1,2", SCHED_FIFO, 80);
+//                                               ^      ^           ^
+//                                          taskset -c  policy      rt-priority
+```
+
+The kernel itself runs as PID 1's child on Core 0 (no explicit
+`taskset` because `isolcpus` already keeps CFS-scheduled processes
+off the isolated cores). `cpcu_tui`, when launched, also runs on
+Core 0 by the same default.
+
+### 3.3 Forward-looking — where upcoming features land
+
+The plan ahead (steps 1-7 of the v2.4 series) introduces several new
+behaviours but does **not** change the core allocation. Every new
+piece of code lands on an existing core, scheduled by the existing
+mechanism. The summary:
+
+| Feature (step) | Code lives in | Runs on | New process? |
+|---|---|---|---|
+| Boot grace (v2.3.1) | `cpcu_safety.c` linked into cpcu_io | Core 3 | No |
+| Hold-pose deadband (v2.3.2) | `cpcu_smooth.c` linked into cpcu_io | Core 3 | No |
+| JSON config parser (v2.3.3) | New code in `cpcu_kernel` | **Core 0** | No (kernel gains a SIGHUP handler) |
+| Runtime config IPC reads (v2.3.3) | `cpcu_io.c` + `cpcu_dsp.py` | Cores 3 + 1-2 | No |
+| Edit mode handshake (v2.3.4) | TUI / cpcu_dsp.py / cpcu_io / kernel | All four cores cooperating | No |
+| Velocity-mode gestures (v2.3.5) | `cpcu_dsp.py` (heavy), `cpcu_io.c` (light) | Cores 1-2 + Core 3 | No |
+| Soft-grip + stall watchdog (v2.3.6) | `cpcu_dsp.py` (logic), `cpcu_io.c` (watchdog) | Cores 1-2 + Core 3 | No |
+| WebSocket telemetry bridge (v2.4.0) | New `cpcu_telemetry_bridge.py` | **Core 0** | **Yes** — new long-running daemon, spawned by cpcu_kernel with `taskset -c 0`, `SCHED_OTHER` (not RT) |
+
+Three principles drive this:
+
+**JSON parsing belongs on Core 0.** Even the fastest JSON parser takes
+hundreds of microseconds — incompatible with cpcu_io's 2 µs poll
+budget. The config file is parsed exactly once per startup or SIGHUP,
+in cpcu_kernel, which then publishes the result to a small
+`IPC_RuntimeConfig` region. RT cores read structured fields from
+shared memory in tens of nanoseconds.
+
+**Network I/O belongs on Core 0.** Anything that listens on a socket,
+accepts connections, or serializes JSON over the wire is
+unbounded-latency work. The WebSocket bridge in v2.4.0 will run on
+Core 0 explicitly for this reason — never on the isolated cores.
+
+**The isolated cores stay narrowly focused.** Core 3 is exactly the RT
+loop and nothing else. Cores 1-2 are exactly the SVM inference and
+nothing else. Adding new features means extending what those
+processes do, not adding new processes alongside them.
+
+### 3.4 Why this scales
+
+Core 0 is doing more work than the other three combined: kernel,
+networking, all logging, the TUI, eventually the WebSocket bridge,
+several optional testbenches. That's intentional — Core 0 is the
+"unbounded work" core, where it's OK if a syscall takes 50 ms because
+nothing on Core 0 has hard deadlines. The Linux scheduler is good at
+sharing one core among many soft-real-time tasks; it's bad at sharing
+one core with a hard-real-time task.
+
+When (and if) Core 0 ever saturates — e.g. because we've added a fifth
+testbench and 10 simultaneous WebSocket clients during a demo — the
+right response is to move work *off* Core 0 to a different machine
+(SSH the TUI from a laptop, host the WebSocket dashboard on a
+laptop), not to take cores from the RT pool. Topic docs that
+introduce new Core-0 features will note their CPU budget.
 
 ---
 
@@ -246,7 +330,7 @@ Servo update (50 Hz):
            v
       [RADIO_INIT] ---first packet---> [RADIO_RUNNING]
                                             |
-                                       750ms silence
+                                       750ms silence (after grace)
                                             |
                                             v
       [RADIO_RUNNING] <--10 OK pkts-- [RADIO_RECOVERING] <--pkt-- [RADIO_DEGRADED]
@@ -255,14 +339,16 @@ Servo update (50 Hz):
                                                                        |
                                                                        v
                                                                  [RADIO_SAFE]
-                                                                 (terminal)
+                                                                 (terminal until recovery)
 ```
+
+**v2.3.1 boot grace.** SAFETY_CheckTimeout now suppresses the radio fault for the first `SAFETY_RADIO_BOOT_GRACE_MS = 5000 ms` after `SAFETY_Init`, *if* no packet has yet been received. The first received packet lifts the gate immediately. After the first packet OR after the grace expires, the normal 750 ms timeout applies. This eliminates the spurious cold-start radio fault that used to fire if CPCU was powered on more than ~1 s before BSAU. Genuinely-dead BSAU still flagged, just 5-6 s after boot. Full design in [`BOOT_AND_SYNC.md`](BOOT_AND_SYNC.md).
 
 ### 6.2 All Fault Sources
 
-| Source | Detection | Threshold | Action | Recovery (v2.3) |
+| Source | Detection | Threshold | Action | Recovery (v2.3+) |
 |---|---|---|---|---|
-| Radio link | No packet received | 750 ms silence | DEGRADED → SAFE | 10 consecutive OK packets |
+| Radio link | No packet received | 750 ms silence (after 5 s boot grace, v2.3.1) | DEGRADED → SAFE | 10 consecutive OK packets |
 | Battery | BSAU reports CRITICAL | V_batt ≤ 2.7 V | Immediate SAFE | V_batt > 3.0 V (hysteresis) |
 | DSP stall | No motor cmd from Python | 2000 ms | SMOOTH_Snap + neutral | First fresh motor cmd |
 | I²C bus | PCA9685 write failures | 5 consecutive | SMOOTH_Snap + neutral | First successful write |

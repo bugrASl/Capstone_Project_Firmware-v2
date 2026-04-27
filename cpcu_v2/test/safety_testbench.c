@@ -443,15 +443,125 @@ static void test_recovery(void)
           "expected=true");
 }
 
+/*============= TB-SAF09 : Boot-grace period (v2.3.1) ======================================*/
+/*
+ *  v2.3.1 introduced a cold-start grace period for the radio fault.
+ *  SAFETY_CheckTimeout suppresses the radio timeout until either
+ *      (a) the first valid packet has been received, OR
+ *      (b) SAFETY_RADIO_BOOT_GRACE_MS has elapsed since SAFETY_Init.
+ *
+ *  Verify all four sub-cases:
+ *      a. Inside grace, no packets ever  -> stays RUNNING (no spurious fault)
+ *      b. Grace elapsed, no packets ever -> faults to DEGRADED then SAFE
+ *      c. Packet received during grace   -> normal timeout semantics resume
+ *      d. Boot grace doesn't affect post-FeedPacket timeout behaviour
+ */
+static void test_boot_grace(void)
+{
+    /* Sub-test (a): inside grace, no packets — must stay RUNNING. */
+    {
+        SAFETY_Context ctx;
+        SAFETY_Init(&ctx);
+        /* Override boot_us to a synthetic epoch so we control the grace
+         * window precisely. SAFETY_Init captured real CLOCK_MONOTONIC,
+         * which is incompatible with the synthetic test timeline. */
+        uint64_t t0 = 1000000ULL;       /* 1 s arbitrary epoch */
+        ctx.boot_us             =   t0;
+        ctx.last_pkt_rcv_us     =   t0;     /* avoid wrap on silence calc */
+        /* INIT -> RUNNING transition would normally happen on first packet.
+         * For grace-tests we move it manually so CheckTimeout actually
+         * evaluates (it returns early in INIT). */
+        ctx.state               =   RADIO_RUNNING;
+
+        /* 2 s into a 5 s grace, no packets ever — should still be RUNNING
+         * even though "silence" is 2000 ms (well past the 750 ms timeout). */
+        SAFETY_CheckTimeout(&ctx, t0 + 2000000ULL);
+        CHECK("TB-SAF09a", "inside grace, no packets: stays RUNNING",
+              ctx.state == RADIO_RUNNING,
+              "state=%s  grace=%dms elapsed=2000ms",
+              SAFETY_RadioStr(ctx.state), SAFETY_RADIO_BOOT_GRACE_MS);
+    }
+
+    /* Sub-test (b): grace elapsed, still no packets — must fault. */
+    {
+        SAFETY_Context ctx;
+        SAFETY_Init(&ctx);
+        uint64_t t0 = 1000000ULL;
+        ctx.boot_us             =   t0;
+        ctx.last_pkt_rcv_us     =   t0;
+        ctx.state               =   RADIO_RUNNING;
+
+        /* Grace + 1 second past, no first packet yet -> should fault. */
+        uint64_t t = t0 + (SAFETY_RADIO_BOOT_GRACE_MS + 1000) * 1000ULL;
+        SAFETY_CheckTimeout(&ctx, t);
+        CHECK("TB-SAF09b", "grace elapsed, no packets: DEGRADED",
+              ctx.state == RADIO_DEGRADED,
+              "state=%s  grace=%dms elapsed=%dms",
+              SAFETY_RadioStr(ctx.state),
+              SAFETY_RADIO_BOOT_GRACE_MS,
+              SAFETY_RADIO_BOOT_GRACE_MS + 1000);
+    }
+
+    /* Sub-test (c): packet received during grace -> normal semantics
+     * resume immediately (grace gate is bypassed by first_packet_seen). */
+    {
+        SAFETY_Context ctx;
+        SAFETY_Init(&ctx);
+        uint64_t t0 = 1000000ULL;
+        ctx.boot_us             =   t0;
+
+        /* Receive one packet at t0 + 1 s (well inside grace). */
+        WL_Packet pkt;
+        build_healthy_packet(&pkt, 0, 2482);
+        pkt.flags |= WL_FLAG_FIRST_PACKET;
+        SAFETY_FeedPacket(&ctx, &pkt, t0 + 1000000ULL);
+
+        CHECK("TB-SAF09c1", "first packet sets first_packet_seen",
+              ctx.first_packet_seen,
+              "expected=true");
+
+        /* Now go silent for 800 ms past the packet (well past the 750ms
+         * timeout). With first_packet_seen=true, normal timeout applies. */
+        uint64_t t_silent = t0 + 1000000ULL + 800000ULL;
+        SAFETY_CheckTimeout(&ctx, t_silent);
+        CHECK("TB-SAF09c2", "after first packet: normal timeout resumes",
+              ctx.state == RADIO_DEGRADED,
+              "state=%s (silence>750ms after first_packet_seen)",
+              SAFETY_RadioStr(ctx.state));
+    }
+
+    /* Sub-test (d): defensive — boot grace doesn't somehow leak into
+     * established-RUNNING behaviour. After warm_up (which sets
+     * first_packet_seen via 20 packets), CheckTimeout must behave
+     * identically to pre-v2.3.1. This re-runs the TB-SAF01b/c flow. */
+    {
+        SAFETY_Context ctx;
+        SAFETY_Init(&ctx);
+        uint64_t t0 = warm_up(&ctx, 1000000);
+
+        /* 700 ms silence — RUNNING; 800 ms silence — DEGRADED. */
+        SAFETY_CheckTimeout(&ctx, t0 + 700000ULL);
+        bool ok_under = (ctx.state == RADIO_RUNNING);
+        SAFETY_CheckTimeout(&ctx, t0 + 800000ULL);
+        bool ok_over  = (ctx.state == RADIO_DEGRADED);
+
+        CHECK("TB-SAF09d", "post-warmup timeout semantics unchanged",
+              ok_under && ok_over,
+              "under_timeout_running=%d  over_timeout_degraded=%d",
+              ok_under, ok_over);
+    }
+}
+
 /*============= MAIN =======================================================================*/
 
 int main(void)
 {
     printf("=== CPCU SAFETY MODULE TESTBENCH ===\n");
-    printf("Target: cpcu_safety v2.0  thresholds: "
-           "RADIO_TIMEOUT=%dms  RADIO_SAFE=%dms  VBAT_CRIT=%.2fV  "
+    printf("Target: cpcu_safety v2.3.1  thresholds: "
+           "RADIO_TIMEOUT=%dms  RADIO_SAFE=%dms  BOOT_GRACE=%dms  VBAT_CRIT=%.2fV  "
            "I2C_MAX=%d  RING_MAX=%d\n\n",
            SAFETY_RADIO_TIMEOUT_MS, SAFETY_RADIO_SAFE_MS,
+           SAFETY_RADIO_BOOT_GRACE_MS,
            SAFETY_VBAT_CRITICAL_V,
            SAFETY_I2C_MAX_ERRORS, SAFETY_RING_OVERFLOW_LIMIT);
 
@@ -475,6 +585,9 @@ int main(void)
 
     printf("\n--- TB-SAF07: Recovery ---\n");
     test_recovery();
+
+    printf("\n--- TB-SAF09: Boot grace period (v2.3.1) ---\n");
+    test_boot_grace();
 
     printf("\n======================================\n");
     printf("RESULTS: %d PASS, %d FAIL\n", g_tests_pass, g_tests_fail);

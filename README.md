@@ -1,9 +1,9 @@
 # Prosthetic Hand Capstone — InfiniTech (BSAU + CPCU)
 
-[![Status: v2.3](https://img.shields.io/badge/Status-v2.3-brightgreen.svg)](#)
+[![Status: v2.3.1](https://img.shields.io/badge/Status-v2.3.1-brightgreen.svg)](#)
 [![BSAU: v2.4](https://img.shields.io/badge/BSAU-v2.4-blue.svg)](bsau_v2/README.md)
-[![CPCU: v2.3](https://img.shields.io/badge/CPCU-v2.3-blue.svg)](cpcu_v2/README.md)
-[![Tests: 105 PASS](https://img.shields.io/badge/Tests-105%20PASS-brightgreen.svg)](cpcu_v2/docs/CPCU_TEST_GUIDE.md)
+[![CPCU: v2.3.1](https://img.shields.io/badge/CPCU-v2.3.1-blue.svg)](cpcu_v2/README.md)
+[![Tests: 110 PASS](https://img.shields.io/badge/Tests-110%20PASS-brightgreen.svg)](cpcu_v2/docs/CPCU_TEST_GUIDE.md)
 
 **EE493/494 Capstone Design Project · METU, Spring 2026.**
 
@@ -42,7 +42,7 @@ cmake --install build               # No sudo: /opt/cpcu is owned by you
 cp /path/to/emg_rf_model.pkl /opt/cpcu/models/
 
 # 5. Run the test suite (no hardware needed for Phase 1)
-./run_tests.sh 1                    # → 7+33+65 = 105 PASS
+./run_tests.sh 1                    # → 7+38+65 = 110 PASS
 
 # 6. Launch the system
 ./scripts/launch.sh tui             # tmux: KERNEL window + TUI window
@@ -89,7 +89,7 @@ prosthetic_hand/
     ├── README.md        ← CPCU-specific quick reference
     ├── include/         ← 10 C headers (cpcu_safety.h v2.3, cpcu_tui.h v3.4, …)
     ├── src/             ← 12 C sources (cpcu_io.c v2.3, cpcu_tui*.{c} v3.4, …)
-    ├── test/            ← 4 testbenches + 2 Python tests (105 PASS total)
+    ├── test/            ← 4 testbenches + 2 Python tests (110 PASS total)
     ├── scripts/         ← Python DSP, IPC bridge, launch.sh v2.5
     ├── docs/            ← CPCU_ARCHITECTURE.md v3.4, CPCU_RUN_GUIDE.md, …
     │   └── export/      ← 9 PDF design diagrams
@@ -126,15 +126,20 @@ and there's no way around it.
 
 | Version | Date | Where | What |
 |---|---|---|---|
+| **v2.3.1 (CPCU safety)** | Apr 2026 | `cpcu_safety.{h,c}`, `safety_testbench.c` | Cold-start radio grace period (`SAFETY_RADIO_BOOT_GRACE_MS = 5 s`). Eliminates BSAU/CPCU power-on coordination. New TB-SAF09 (5 sub-checks). 110/110 PASS. See [`cpcu_v2/docs/BOOT_AND_SYNC.md`](cpcu_v2/docs/BOOT_AND_SYNC.md). |
 | **v2.4 (BSAU)** | Apr 2026 | `bsau_app.c` | NRF init no longer fatal. Bounded retry + periodic 500-packet health check. Profile-uniform across DATASET / RELEASE / DEBUG. |
 | **v2.3 (CPCU safety)** | Apr 2026 | `cpcu_safety.{h,c}` | Ring-overflow recoverable (delta + 5 s quiescence); `SAFETY_VBAT_DIVIDER` restored to 2.0 (was wrongly 1.0); `SAFETY_UpdateState()` now called from `cpcu_io.c` step 5. |
 | **v3.4 (CPCU TUI)** | Apr 2026 | `cpcu_tui*.{c,h}` | Split into 3 .c + 1 .h (was 2900-line monolith); CONFIG → page 7; live-data on keys 1-6; IO heartbeat thresholds expressed relative to 100 ms period. |
 | **v2.3 (build/scripts)** | Apr 2026 | `setup_pi.sh`, `run_tests.sh`, `launch.sh` | All scripts self-elevate via sudo internally. New `launch.sh install-service` and `launch.sh grant-caps` modes. |
-| **v2.3 (tests)** | Apr 2026 | `safety_testbench.c`, `test_dsp_pipeline.py` | TB-SAF02 extended to 7 sub-checks for SAFE-recovery path; DSP test rewritten against current `cpcu_dsp.py` API (was importing a long-removed `get_features` function). 105/105 PASS. |
+| **v2.3 (tests)** | Apr 2026 | `safety_testbench.c`, `test_dsp_pipeline.py` | TB-SAF02 extended to 7 sub-checks for SAFE-recovery path; DSP test rewritten against current `cpcu_dsp.py` API (was importing a long-removed `get_features` function). 105/105 PASS at the time; v2.3.1 adds 5 → **110/110 PASS** now. |
 
 ## Documentation map
 
-Nine documents, each at its own scope:
+The docs split into **standing references** (one per major area, kept up to
+date with every change) and **topic deep-dives** (one per feature, written
+once to explain that feature in full).
+
+### Standing references
 
 | Where | What |
 |---|---|
@@ -150,6 +155,13 @@ Nine documents, each at its own scope:
 | [`cpcu_v2/docs/CPCU_CONFIGURATION.md`](cpcu_v2/docs/CPCU_CONFIGURATION.md) | Tunable-constant reference |
 | [`cpcu_v2/docs/CPCU_RUN_GUIDE.md`](cpcu_v2/docs/CPCU_RUN_GUIDE.md) | Pi deployment walkthrough |
 | [`cpcu_v2/docs/CPCU_TEST_GUIDE.md`](cpcu_v2/docs/CPCU_TEST_GUIDE.md) | 5-phase test execution guide |
+
+### Topic deep-dives (one feature per doc)
+
+| Where | What | Introduced |
+|---|---|---|
+| [`cpcu_v2/docs/GESTURE_MAPPING.md`](cpcu_v2/docs/GESTURE_MAPPING.md) | First-principles guide to `GESTURE_SERVO_MAP`: hobby servos, pulse widths, the discovery workflow | v2.3 |
+| [`cpcu_v2/docs/BOOT_AND_SYNC.md`](cpcu_v2/docs/BOOT_AND_SYNC.md) | Cold-start choreography — why you no longer need to coordinate BSAU/CPCU power-on order | v2.3.1 |
 
 ## Hardware
 
