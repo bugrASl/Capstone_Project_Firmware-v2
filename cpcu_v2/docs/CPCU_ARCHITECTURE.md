@@ -182,7 +182,9 @@ mechanism. The summary:
 | Runtime config IPC reads (v2.3.3) | `cpcu_io.c` (cfg_cache, bias-then-clamp) | Core 3 | No | ✓ shipped (`servo_bias_us` is the first consumer) |
 | Edit mode handshake (v2.3.4) | TUI / cpcu_dsp.py / cpcu_io / kernel | All four cores cooperating | No | ✓ shipped (handshake mechanism; live numeric editor on top is incremental) |
 | Velocity-mode gestures (v2.3.5) | `cpcu_dsp.py` (heavy), `cpcu_io.c` (light) | Cores 1-2 + Core 3 | No | ✓ shipped (dsp owns the integrator; cpcu_io is unchanged — receives integrated targets via the existing motor_cmd channel) |
-| Soft-grip + stall watchdog (v2.3.6) | `cpcu_dsp.py` (logic), `cpcu_io.c` (watchdog) | Cores 1-2 + Core 3 | No | pending |
+| pca_testbench round-trip + live smoother tuning (v2.3.6) | `cpcu_config.{h,c}`, `pca_testbench.c`, `cpcu_io.c` | Bench tool + Core 3 | No | ✓ shipped (bench saves servo limits / bias / smoother knobs to runtime.json; cpcu_io re-applies on `config_seq` change) |
+| Soft-grip + stall watchdog (v2.3.7+) | `cpcu_dsp.py` (logic), `cpcu_io.c` (watchdog) | Cores 1-2 + Core 3 | No | pending |
+| TUI live editor on top of edit-mode (v2.3.7+) | `cpcu_tui.c`, `cpcu_tui_render.c` | Core 0 | No | pending (handshake from v2.3.4 ready; needs navigable list editor + Ctrl+S commit via existing `CFG_PatchFile`) |
 | WebSocket telemetry bridge (v2.4.0) | New `cpcu_telemetry_bridge.py` | **Core 0** | **Yes** — new long-running daemon, spawned by cpcu_kernel with `taskset -c 0`, `SCHED_OTHER` (not RT) | pending |
 
 Three principles drive this:

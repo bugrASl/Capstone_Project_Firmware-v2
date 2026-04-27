@@ -1,8 +1,8 @@
 # Prosthetic Hand Capstone — InfiniTech (BSAU + CPCU)
 
-[![Status: v2.3.5](https://img.shields.io/badge/Status-v2.3.5-brightgreen.svg)](#)
+[![Status: v2.3.6](https://img.shields.io/badge/Status-v2.3.6-brightgreen.svg)](#)
 [![BSAU: v2.4](https://img.shields.io/badge/BSAU-v2.4-blue.svg)](bsau_v2/README.md)
-[![CPCU: v2.3.5](https://img.shields.io/badge/CPCU-v2.3.5-blue.svg)](cpcu_v2/README.md)
+[![CPCU: v2.3.6](https://img.shields.io/badge/CPCU-v2.3.6-blue.svg)](cpcu_v2/README.md)
 [![Tests: 168 PASS](https://img.shields.io/badge/Tests-168%20PASS-brightgreen.svg)](cpcu_v2/docs/CPCU_TEST_GUIDE.md)
 
 **EE493/494 Capstone Design Project · METU, Spring 2026.**
@@ -126,6 +126,7 @@ and there's no way around it.
 
 | Version | Date | Where | What |
 |---|---|---|---|
+| **v2.3.6 (pca_testbench round-trip + live smoother tuning)** | Apr 2026 | `cpcu_config.{h,c}`, `pca_testbench.c`, `cpcu_io.c`, `config_testbench.c` | `CFG_PatchFile()` — surgical JSON edit. `pca_testbench` loads `runtime.json` on startup, gains `[`/`]`/`b`/`B`/`v`/`a`/`d`/`S`/`L` keys to tune servo limits, bias, and smoother (velocity/accel/deadband) at the bench and save back. cpcu_io re-applies smoother values on `config_seq` change (covers SIGHUP reload). Other JSON fields (gesture_velocity etc.) preserved byte-for-byte. 13 new tests (TB-CFG09/CFG10). 199/199 PASS. See [`cpcu_v2/docs/RUNTIME_CONFIG.md`](cpcu_v2/docs/RUNTIME_CONFIG.md) §10. |
 | **v2.3.5 (CPCU DSP, velocity gestures)** | Apr 2026 | `cpcu_dsp.py`, `runtime.json`, `test_dsp_pipeline.py` | Hybrid velocity-mode gestures. Per-class per-servo rates in JSON drive a stateful target integrator scaled by SVM confidence. Hold gesture longer = arm closes deeper. Backward-compatible: classes without velocity rows stay in fixed-pose mode. 18 new tests (TB-DSP11..TB-DSP16). 186/186 PASS. See [`cpcu_v2/docs/VELOCITY_MODE.md`](cpcu_v2/docs/VELOCITY_MODE.md). |
 | **v2.3.4 (CPCU TUI, edit-mode)** | Apr 2026 | `cpcu_ipc.{h}`, `cpcu_io.c`, `cpcu_tui.c`, `cpcu_tui_render.c`, `cpcu_dsp.py`, `cpcu_ipc_bridge.py` | Edit-mode handshake. Press `e` on CONFIG page → arm parks at neutral → editor unlocks. Safety FSM has priority. 3 new atomic bytes + timestamp in IPC_ControlBlock (no layout change, IPC_VERSION 0x0204). 168/168 PASS unchanged. See [`cpcu_v2/docs/EDIT_MODE.md`](cpcu_v2/docs/EDIT_MODE.md). |
 | **v2.3.3 (CPCU runtime config)** | Apr 2026 | `cpcu_config.{h,c}`, `cpcu_kernel.c`, `cpcu_io.c`, `cpcu_ipc.{h,c}`, `configure.sh`, `runtime.json`, `config_testbench.c` | JSON runtime config + `configure.sh` for compile-time `#define`s. Per-servo bias offsets are the first runtime consumer (cpcu_io applies before clamping). 30 new unit tests (TB-CFG01..CFG08). 168/168 PASS. See [`cpcu_v2/docs/RUNTIME_CONFIG.md`](cpcu_v2/docs/RUNTIME_CONFIG.md). |

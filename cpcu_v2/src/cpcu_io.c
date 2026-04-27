@@ -3,13 +3,24 @@
  *  @brief      Core 3 — Real-time I/O controller
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.3.4
+ *  @version    2.3.6
  *  @details    Deterministic loop:
  *                  1. Busy-poll NRF via spidev         -> read payload
  *                  2. WL_Unpack -> seq/safety/link     -> push to SPSC ring
  *                  3. Rate-limited (50 Hz) PCA servo update via I2C
  *                  4. Safety checks: radio, DSP, I2C, thermal, ring
  *                  5. Heartbeat to shared memory for watchdog
+ *
+ *              v2.3.6 changes:
+ *                  - Smoother per-channel velocity / accel / deadband
+ *                    are now consumed from IPC_RuntimeConfig at startup
+ *                    AND on every config_seq change (i.e. after the
+ *                    kernel reloads runtime.json on SIGHUP). The
+ *                    apply_runtime_smoother_cfg helper calls SMOOTH_Set*
+ *                    for each channel; zero values are skipped (mean
+ *                    "use compile-time default"). The seq-compare
+ *                    avoids redundant reapplies on the steady-state
+ *                    50 Hz tick. See cpcu_v2/docs/SMOOTHER_TUNING.md.
  *
  *              v2.3.4 changes:
  *                  - Edit-mode handshake responder. When the TUI sets
@@ -167,6 +178,34 @@ static void on_signal(int s)
     (void)s; g_run = 0;
 }
 
+/* v2.3.6: Apply per-channel smoother values from the runtime config.
+ * Zero values mean "use compile-time default" — we skip those, leaving
+ * whatever was set previously (typically the SMOOTH_DEFAULT_* values
+ * from SMOOTH_Init). Non-zero values override per-channel.
+ *
+ * Called at startup and whenever cfg.config_seq changes (i.e. on
+ * SIGHUP-driven kernel reloads). The setters are cheap — three
+ * memory writes per channel — so calling this on every reload is
+ * fine even though it's redundant when values haven't actually
+ * changed for this channel. */
+static void apply_runtime_smoother_cfg(SMOOTH_Context *smooth,
+                                       const IPC_RuntimeConfig *cfg)
+{
+    for(int s = 0; s < PCA_SERVO_COUNT; s++)
+    {
+        if(cfg->smooth_velocity_us_per_s[s] != 0)
+            SMOOTH_SetSpeed(smooth, s, cfg->smooth_velocity_us_per_s[s]);
+        if(cfg->smooth_accel_us_per_s2[s] != 0)
+            SMOOTH_SetAccel(smooth, s, cfg->smooth_accel_us_per_s2[s]);
+        /* Deadband: zero IS a valid value (means "no deadband, write
+         * every tick"), so we always apply rather than gate on != 0.
+         * But the JSON loader's range check ensures 0..50, and the
+         * default in CFG_Defaults is 10, so a fresh-loaded config
+         * always has sensible deadband values. */
+        SMOOTH_SetDeadband(smooth, s, cfg->smooth_deadband_us[s]);
+    }
+}
+
 /*============= MAIN =======================================================================*/
 
 int main(int argc, char *argv[])
@@ -320,6 +359,18 @@ int main(int argc, char *argv[])
         LOG_W("IO", "initial config read failed, using defaults");
     }
 
+    /* v2.3.6: Apply runtime smoother config from the loaded snapshot.
+     * Zero values mean "use compile-time default" — see cpcu_smooth.h
+     * for SMOOTH_DEFAULT_VELOCITY/_ACCEL/_DEADBAND. We only call the
+     * setters when the runtime value is non-zero, so a partly-filled
+     * runtime.json (some servos tuned, others left at zero) does the
+     * right thing without surprising the user.
+     *
+     * The seq counter we capture here lets us detect SIGHUP-driven
+     * reloads without re-applying every tick — see the loop body. */
+    uint32_t cfg_seq_seen = cfg_cache.config_seq;
+    apply_runtime_smoother_cfg(&smooth, &cfg_cache);
+
     /*---------------------------------------------------------------------------*/
 
     while(g_run)
@@ -471,6 +522,20 @@ int main(int argc, char *argv[])
                  * values within one servo tick. Failed reads (writer
                  * mid-update) leave cfg_cache untouched. */
                 IPC_ReadRuntimeConfig(&ipc, &cfg_cache);
+
+                /* v2.3.6: detect SIGHUP-driven config changes and
+                 * re-apply per-channel smoother values when seq has
+                 * advanced. The seq-compare avoids reapplying every
+                 * tick; on a typical session the apply runs once at
+                 * boot and once per kill -HUP. */
+                if(cfg_cache.config_seq != cfg_seq_seen)
+                {
+                    apply_runtime_smoother_cfg(&smooth, &cfg_cache);
+                    cfg_seq_seen = cfg_cache.config_seq;
+                    LOG_I("IO", "smoother config re-applied "
+                                "(seq %u -> %u)",
+                          (unsigned)cfg_seq_seen, (unsigned)cfg_cache.config_seq);
+                }
 
                 /* Write smoothed positions to servos (one I2C burst per
                  * channel). v2.3.2: gate each write on SMOOTH_ShouldWrite

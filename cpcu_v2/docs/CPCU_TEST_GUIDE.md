@@ -1,4 +1,4 @@
-# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4 / velocity v2.3.5
+# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4 / velocity v2.3.5 / patch v2.3.6
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -341,9 +341,17 @@ parse success, defaults, and every error code path.
 8.  **TB-CFG08 Optional fields default when absent** — minimal-only
     file parses cleanly and absent optionals fall back to their
     `CFG_Defaults()` values.
+9.  **TB-CFG09 (v2.3.6) `CFG_PatchFile` round-trip** — patches
+    `servo_min_us` / `servo_max_us` / `servo_bias_us` arrays into a
+    file containing a `gesture_velocity` nested object; reloads;
+    verifies every patched value is captured and the nested object
+    survived byte-for-byte.
+10. **TB-CFG10 (v2.3.6) `CFG_PatchFile` error paths** — missing key
+    returns `CFG_ERR_MISSING` with a message naming the key;
+    missing file returns `CFG_ERR_OPEN`.
 
-**Pass criteria:** stdout shows `[PASS]` for all 30 checks, exit code
-is 0.
+**Pass criteria:** stdout shows `[PASS]` for all 43 checks (was 30
+before v2.3.6), exit code is 0.
 
 This testbench exercises the parser only — the IPC seqlock side is
 tested implicitly by the live system (cpcu_io reads cfg_cache every

@@ -1,8 +1,8 @@
-# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.5)
+# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.6)
 
 **Author:** bugrASl
 **Date:** April 2026
-**Status:** v2.3.5 (velocity-mode gestures — graded control via stateful target integration)
+**Status:** v2.3.6 (pca_testbench round-trip + live smoother tuning — bench-discovered calibration persists to runtime.json)
 
 ---
 
@@ -18,6 +18,18 @@ head instead of a recipe you can't modify.
 > **What changed since v2.1.** This document was extended several times
 > as the project matured. The biggest deltas:
 >
+> - **v2.3.6 (pca_testbench round-trip + live smoother tuning)** — Adds
+>   `CFG_PatchFile()`, a surgical JSON edit that preserves fields
+>   it doesn't know about. `pca_testbench` loads `runtime.json` on
+>   startup, gains nine new keys (`[`/`]`/`b`/`B`/`v`/`a`/`d`/`S`/`L`)
+>   to tune servo limits, gravity-sag bias, and the smoother
+>   (velocity/accel/deadband) at the bench and save back. `cpcu_io`
+>   re-applies smoother values on `config_seq` change so a `kill -HUP`
+>   takes effect within ~20 ms. The workflow: stop the live system,
+>   tune at the bench, save, restart — and the values cpcu_io applies
+>   are exactly what you found by physically watching the arm. 13 new
+>   unit tests for the patcher. See
+>   [`cpcu_v2/docs/RUNTIME_CONFIG.md`](cpcu_v2/docs/RUNTIME_CONFIG.md) §10.
 > - **v2.3.5 (CPCU DSP, velocity-mode gestures)** — Per-class per-servo
 >   velocity rates in `runtime.json` drive a stateful target integrator
 >   in `cpcu_dsp.py`, scaled by SVM confidence. Holding a gesture

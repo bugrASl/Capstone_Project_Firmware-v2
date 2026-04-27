@@ -64,6 +64,37 @@ void        CFG_Defaults(IPC_RuntimeConfig *out);
 /*  Convert a CFG_Status to a static string (for logging). */
 const char *CFG_StatusStr(CFG_Status s);
 
+/*============= TARGETED PATCH WRITER (v2.3.6) =====================*/
+/*
+ *  Surgical JSON edit: rewrites only the listed keys and preserves
+ *  every other field (including gesture_velocity, which dsp owns and
+ *  the C parser ignores). Used by pca_testbench to persist the
+ *  servo_min_us / servo_max_us / servo_bias_us values the user
+ *  discovered by physically jogging the arm.
+ *
+ *  Atomic via tmpfile + rename(2). On failure, leaves the original
+ *  file untouched.
+ *
+ *  Limitations:
+ *    - Only patches int16 array fields (the ones pca_testbench cares
+ *      about). Scalar / string / object fields are not supported.
+ *    - The target key must already exist in the file as a flat array.
+ *      If absent, returns CFG_ERR_MISSING.
+ *    - Comment-keys ('// foo': '...') are preserved verbatim.
+ *
+ *  See cpcu_v2/docs/RUNTIME_CONFIG.md §10 for the round-trip workflow.
+ */
+
+typedef struct {
+    const char    *key;             /* JSON key, e.g. "servo_min_us" */
+    const int16_t *values;          /* signed for bias compatibility */
+    size_t         count;           /* number of array elements */
+} CFG_PatchEntry;
+
+CFG_Status  CFG_PatchFile(const char *path,
+                          const CFG_PatchEntry *entries, size_t n_entries,
+                          char *err_msg, size_t err_msg_sz);
+
 #ifdef __cplusplus
 }
 #endif

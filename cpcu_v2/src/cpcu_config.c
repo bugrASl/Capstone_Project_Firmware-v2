@@ -22,6 +22,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#include <unistd.h>          /* unlink, getpid, rename, ssize_t */
+#include <stdbool.h>
 
 /*============= COMPILE-TIME DEFAULTS ======================================*/
 /*
@@ -421,5 +423,270 @@ CFG_Status CFG_LoadFromFile(const char *path, IPC_RuntimeConfig *out,
     out->magic = IPC_CFG_VALID_MAGIC;
 
     free(buf);
+    return CFG_OK;
+}
+
+/*============= TARGETED PATCH WRITER (v2.3.6) =====================*/
+/*
+ *  Surgical text-level edit of a single JSON file. We load the whole
+ *  file, locate each target key's value array, and splice in new
+ *  contents. Other content (comments, ordering, whitespace, fields
+ *  we don't know about) is preserved.
+ *
+ *  The key location uses the same depth-aware walker as jc_find_key,
+ *  reused via a small wrapper. We work on a growing dynamic buffer
+ *  rather than a fixed array because each splice changes the length.
+ */
+
+/* Find the position of "<key>" at depth 1 in `src`, return the index
+ * of the colon following it, or (size_t)-1 if not found. Reuses the
+ * same logic as jc_find_key but doesn't depend on the JC parser
+ * state. */
+static size_t pf_find_key_colon(const char *src, size_t len, const char *key)
+{
+    size_t klen = strlen(key);
+    size_t i    = 0;
+    int    depth = 0;
+    bool   in_str = false;
+    while(i < len)
+    {
+        char c = src[i];
+        if(in_str)
+        {
+            if(c == '\\' && i + 1 < len) { i += 2; continue; }
+            if(c == '"') in_str = false;
+            i++;
+            continue;
+        }
+        if(c == '/' && i + 1 < len && src[i+1] == '/')
+        {
+            while(i < len && src[i] != '\n') i++;
+            continue;
+        }
+        if(c == '{' || c == '[') { depth++; i++; continue; }
+        if(c == '}' || c == ']') { depth--; i++; continue; }
+        if(c == '"')
+        {
+            size_t s = i + 1;
+            i++;
+            while(i < len && src[i] != '"')
+            {
+                if(src[i] == '\\' && i + 1 < len) i += 2;
+                else i++;
+            }
+            if(i >= len) return (size_t)-1;
+            size_t slen = i - s;
+            i++;        /* past closing quote */
+
+            /* Skip whitespace, then check for ':' */
+            size_t j = i;
+            while(j < len && (src[j]==' '||src[j]=='\t'||src[j]=='\n'||src[j]=='\r')) j++;
+            if(j < len && src[j] == ':')
+            {
+                if(depth == 1 && slen == klen &&
+                   memcmp(src + s, key, klen) == 0)
+                {
+                    return j;       /* index of the ':' */
+                }
+                i = j + 1;
+                continue;
+            }
+            continue;
+        }
+        i++;
+    }
+    return (size_t)-1;
+}
+
+/* Find the matching ']' for the '[' at position `open_pos`. Returns
+ * the index of the matching ']', or (size_t)-1 on imbalance. */
+static size_t pf_find_array_end(const char *src, size_t len, size_t open_pos)
+{
+    int depth = 0;
+    bool in_str = false;
+    for(size_t i = open_pos; i < len; i++)
+    {
+        char c = src[i];
+        if(in_str)
+        {
+            if(c == '\\' && i + 1 < len) { i++; continue; }
+            if(c == '"') in_str = false;
+            continue;
+        }
+        if(c == '"') { in_str = true; continue; }
+        if(c == '[') depth++;
+        else if(c == ']')
+        {
+            depth--;
+            if(depth == 0) return i;
+        }
+    }
+    return (size_t)-1;
+}
+
+/* Build the replacement array text "[ N, N, N, ... ]" into `out`,
+ * which must have enough room (caller sizes generously). */
+static void pf_format_array(char *out, size_t out_sz,
+                            const int16_t *vals, size_t n)
+{
+    size_t pos = 0;
+    int written = snprintf(out + pos, out_sz - pos, "[ ");
+    if(written > 0) pos += (size_t)written;
+    for(size_t i = 0; i < n && pos < out_sz; i++)
+    {
+        written = snprintf(out + pos, out_sz - pos,
+                           "%d%s", (int)vals[i], (i + 1 < n) ? ", " : " ");
+        if(written > 0) pos += (size_t)written;
+    }
+    if(pos < out_sz)
+    {
+        snprintf(out + pos, out_sz - pos, "]");
+    }
+}
+
+CFG_Status CFG_PatchFile(const char *path,
+                         const CFG_PatchEntry *entries, size_t n_entries,
+                         char *err_msg, size_t err_msg_sz)
+{
+    /* Load entire file into memory. */
+    FILE *f = fopen(path, "rb");
+    if(!f)
+    {
+        if(err_msg) snprintf(err_msg, err_msg_sz,
+                             "fopen(%s) failed: %s", path, strerror(errno));
+        return CFG_ERR_OPEN;
+    }
+    fseek(f, 0, SEEK_END);
+    long fsz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if(fsz < 0 || fsz > 65536)
+    {
+        fclose(f);
+        if(err_msg) snprintf(err_msg, err_msg_sz, "%s: bad size %ld", path, fsz);
+        return CFG_ERR_PARSE;
+    }
+
+    /* Allocate generously — every patch can grow the file by some
+     * margin. 4× plus 4 KB headroom is safely more than enough. */
+    size_t buf_cap = (size_t)fsz * 4 + 4096;
+    char *buf = malloc(buf_cap);
+    if(!buf) { fclose(f); return CFG_ERR_INTERNAL; }
+    size_t buf_len = (size_t)fsz;
+    if(fread(buf, 1, buf_len, f) != buf_len)
+    {
+        free(buf); fclose(f);
+        if(err_msg) snprintf(err_msg, err_msg_sz, "%s: short read", path);
+        return CFG_ERR_PARSE;
+    }
+    fclose(f);
+
+    /* Apply each patch in turn. We must re-locate the key after every
+     * splice because positions shift. */
+    for(size_t e = 0; e < n_entries; e++)
+    {
+        const CFG_PatchEntry *p = &entries[e];
+
+        /* Format the new array text. Worst case: 6 ints + brackets +
+         * commas + sign + 5-digit value each ~= 80 chars. Pad to 256. */
+        char new_arr[256];
+        pf_format_array(new_arr, sizeof(new_arr), p->values, p->count);
+        size_t new_arr_len = strlen(new_arr);
+
+        size_t colon = pf_find_key_colon(buf, buf_len, p->key);
+        if(colon == (size_t)-1)
+        {
+            if(err_msg) snprintf(err_msg, err_msg_sz,
+                                 "key '%s' not found in %s", p->key, path);
+            free(buf);
+            return CFG_ERR_MISSING;
+        }
+
+        /* Skip whitespace after ':' to find '[' */
+        size_t open_pos = colon + 1;
+        while(open_pos < buf_len &&
+              (buf[open_pos]==' '||buf[open_pos]=='\t'||
+               buf[open_pos]=='\n'||buf[open_pos]=='\r'))
+            open_pos++;
+        if(open_pos >= buf_len || buf[open_pos] != '[')
+        {
+            if(err_msg) snprintf(err_msg, err_msg_sz,
+                                 "key '%s' is not an array (got '%c')",
+                                 p->key,
+                                 open_pos < buf_len ? buf[open_pos] : '?');
+            free(buf);
+            return CFG_ERR_PARSE;
+        }
+        size_t close_pos = pf_find_array_end(buf, buf_len, open_pos);
+        if(close_pos == (size_t)-1)
+        {
+            if(err_msg) snprintf(err_msg, err_msg_sz,
+                                 "key '%s': unterminated array", p->key);
+            free(buf);
+            return CFG_ERR_PARSE;
+        }
+
+        /* Splice: replace buf[open_pos..close_pos] with new_arr. */
+        size_t old_len = close_pos - open_pos + 1;
+        ssize_t delta = (ssize_t)new_arr_len - (ssize_t)old_len;
+
+        if(buf_len + (size_t)((delta > 0) ? delta : 0) >= buf_cap)
+        {
+            /* Grow if necessary. */
+            size_t want = buf_len + (size_t)delta + 4096;
+            char *bigger = realloc(buf, want);
+            if(!bigger) { free(buf); return CFG_ERR_INTERNAL; }
+            buf = bigger;
+            buf_cap = want;
+        }
+
+        if(delta != 0)
+        {
+            memmove(buf + open_pos + new_arr_len,
+                    buf + close_pos + 1,
+                    buf_len - close_pos - 1);
+            buf_len += (size_t)delta;
+        }
+        memcpy(buf + open_pos, new_arr, new_arr_len);
+    }
+
+    /* Write to <path>.tmp atomically, then rename. */
+    char tmp_path[1024];
+    int tw = snprintf(tmp_path, sizeof(tmp_path), "%s.cfgtmp.%d",
+                      path, (int)getpid());
+    if(tw < 0 || tw >= (int)sizeof(tmp_path))
+    {
+        free(buf);
+        if(err_msg) snprintf(err_msg, err_msg_sz, "tmp path overflow");
+        return CFG_ERR_INTERNAL;
+    }
+
+    FILE *out = fopen(tmp_path, "wb");
+    if(!out)
+    {
+        if(err_msg) snprintf(err_msg, err_msg_sz,
+                             "fopen(%s) for write failed: %s",
+                             tmp_path, strerror(errno));
+        free(buf);
+        return CFG_ERR_OPEN;
+    }
+    size_t wrote = fwrite(buf, 1, buf_len, out);
+    int    fcr   = fclose(out);
+    free(buf);
+    if(wrote != buf_len || fcr != 0)
+    {
+        unlink(tmp_path);
+        if(err_msg) snprintf(err_msg, err_msg_sz,
+                             "write to %s failed", tmp_path);
+        return CFG_ERR_OPEN;
+    }
+
+    if(rename(tmp_path, path) != 0)
+    {
+        if(err_msg) snprintf(err_msg, err_msg_sz,
+                             "rename(%s -> %s) failed: %s",
+                             tmp_path, path, strerror(errno));
+        unlink(tmp_path);
+        return CFG_ERR_OPEN;
+    }
     return CFG_OK;
 }

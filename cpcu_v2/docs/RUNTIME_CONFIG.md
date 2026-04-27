@@ -3,7 +3,7 @@
 **Author:** bugrASl
 **Date:** April 2026
 **Version:** v2.3.3 (introduced)
-**Last updated:** v2.3.3
+**Last updated:** v2.3.6 (added §10 — pca_testbench round-trip)
 **Audience:** Anyone changing a value in this project, anyone debugging
 "why doesn't my edit take effect?", anyone wiring a new tunable.
 
@@ -424,3 +424,170 @@ cmake --build build
 - [`cpcu_v2/src/cpcu_config.c`](../src/cpcu_config.c) — JSON parser.
 - [`cpcu_v2/configure.sh`](../configure.sh) — compile-time editor script.
 - [`cpcu_v2/config/runtime.json`](../config/runtime.json) — the file itself.
+
+---
+
+## 10. Calibration round-trip via `pca_testbench` (v2.3.6)
+
+The honest workflow for finding good per-servo limits and bias values
+is to **physically jog each servo while watching the arm**. That's
+exactly what `pca_testbench` is for. Until v2.3.6 the values you
+discovered there died on exit. Now they round-trip through `runtime.json`.
+
+### Flow
+
+```bash
+# 1. Stop the live system so pca_testbench can own I2C exclusively.
+sudo systemctl stop cpcu
+
+# 2. Jog with arrow keys, mark calibration values:
+sudo ./pca_testbench --config config/runtime.json
+#   UP/DOWN          select servo
+#   LEFT/RIGHT       jog +/- 10 us
+#   PgUp/PgDn        jog +/- 50 us
+#   m / M            jog to current MIN / MAX
+#   [                set current jog AS MIN for selected servo
+#   ]                set current jog AS MAX for selected servo
+#   b                set current deviation from neutral AS BIAS
+#   B                clear bias for selected servo
+#   v                cycle smoother VELOCITY preset for selected servo
+#   a                cycle smoother ACCELERATION preset
+#   d                cycle smoother DEADBAND preset
+#   S                save min/max/bias/smoother values to runtime.json
+#   L                reload from disk (discards unsaved jogs)
+#   q                quit (warns if unsaved)
+
+# 3. The save patches only the three fields pca_testbench owns:
+#    servo_min_us, servo_max_us, servo_bias_us. Everything else
+#    (gesture_velocity, smoother params, grip levels, etc.) survives.
+
+# 4. Restart the live system to pick up the new values:
+sudo systemctl start cpcu
+
+# Or, if cpcu_kernel is already running and you want a hot reload:
+kill -HUP $(pgrep -f cpcu_kernel)
+```
+
+### What gets saved
+
+| Key in `runtime.json` | Source in pca_testbench | Set by keystroke |
+|---|---|---|
+| `servo_min_us[]` | `pca.servo_min[i]` | `[` |
+| `servo_max_us[]` | `pca.servo_max[i]` | `]` |
+| `servo_bias_us[]` | `servo_bias[i]` | `b` (set), `B` (clear) |
+| `smooth_velocity_us_per_s[]` | `smooth_vel[i]` | `v` (cycle preset) |
+| `smooth_accel_us_per_s2[]` | `smooth_acc[i]` | `a` (cycle preset) |
+| `smooth_deadband_us[]` | `smooth_dead[i]` | `d` (cycle preset) |
+
+The smoother keys cycle through presets (slow/normal/fast) rather
+than entering numeric values. Each press steps to the next preset
+for the *selected* servo and immediately applies it to the live
+smoother — you feel the change on the next jog. Save with `S` to
+commit; `L` to reload from disk and discard unsaved changes.
+
+The presets, ordered by cycle:
+
+| Knob | Default | Cycle (after default) | Units |
+|---|---|---|---|
+| velocity | 2000 | 500 / 1000 / 1500 / 3000 / 5000 | µs/s |
+| acceleration | 8000 | 2000 / 4000 / 6000 / 12000 / 20000 | µs/s² |
+| deadband | 10 | 0 / 5 / 15 / 25 / 50 | µs |
+
+Cycling wraps. If you load a JSON with a custom value (e.g.
+velocity = 1750) that isn't a preset, the next `v` press jumps to
+the first preset (2000). The cycle is for the bench session; the
+actual saved value is whatever was last selected.
+
+### Atomicity
+
+`CFG_PatchFile()` writes to `<path>.cfgtmp.<pid>` then `rename(2)`s
+into place. POSIX rename is atomic — readers see either the old file
+or the new, never a half-written one. If the write fails partway
+(disk full, permission revoked), the original is untouched.
+
+### Surgical edit, not regenerate
+
+The patcher locates each target key as text and splices in the new
+values. It does **not** serialize a full struct back to JSON. This
+means:
+
+- Fields the C parser ignores (notably `gesture_velocity`, owned by
+  cpcu_dsp.py) are preserved byte-for-byte.
+- Comments, indentation, ordering, and `// foo` comment-keys all
+  survive untouched.
+- Adding a new field to the schema doesn't require a save-path
+  update — pca_testbench only writes what it knows about.
+
+### Bias semantics
+
+When you press `b` with the selected servo jogged to position `X`,
+`servo_bias[i] = X - 1500`. The cpcu_io runtime then adds this to
+every smoothed pulse before clamping. So if the servo's natural
+"neutral-feeling" pose corresponds to a 1518 µs pulse, bias becomes
++18, and every motor command for that channel gets +18 added before
+PCA write — putting the visually-neutral pose at command-time-1500.
+
+Range is clamped to ±100 µs at the testbench (defensive — anything
+larger probably means the calibration is wrong, not that you need
+huge bias). The C parser enforces the same range on load.
+
+### Refusing to save
+
+If pca_testbench was launched without a `runtime.json` (no `--config`
+arg, no symlink, no in-repo file), the `S` key prints
+`SAVE FAILED: no config file was loaded`. Solutions:
+
+```bash
+# Re-launch with explicit path:
+sudo ./pca_testbench --config /absolute/path/to/runtime.json
+
+# Or create the symlink setup_pi.sh would have made:
+sudo ln -s "$(pwd)/cpcu_v2/config/runtime.json" /opt/cpcu/config.json
+```
+
+### Why this is bench-only
+
+`pca_testbench` writes I2C directly. If `cpcu_io` is also running,
+**both processes are writing PCA channels at 50 Hz over the same
+I2C bus** — the values fight and tear. Always stop the live system
+before running pca_testbench. The cfg-loaded path is convenience
+for a separately-controlled bench session, not a way to coexist.
+
+The TUI's edit-mode (see [`EDIT_MODE.md`](EDIT_MODE.md)) is the
+right tool when the system is up and you want to tweak runtime
+values without killing the arm. Different layer, different tool.
+
+### How `cpcu_io` picks up the saved values
+
+When `pca_testbench` saves and you restart (or `kill -HUP
+$(pgrep cpcu_kernel)`), cpcu_kernel re-parses runtime.json and
+republishes `IPC_RuntimeConfig` with a bumped `config_seq`. cpcu_io
+notices the seq change on its next servo tick (~20 ms latency) and
+calls `apply_runtime_smoother_cfg()`, which re-applies every per-
+channel value via `SMOOTH_SetSpeed` / `SMOOTH_SetAccel` /
+`SMOOTH_SetDeadband`. Servo bias is read from `cfg_cache` directly
+on every PCA write — no separate apply step.
+
+The seq-compare avoids reapplying every tick when nothing's changed.
+On a typical session the apply runs once at boot and once per
+`kill -HUP`. The cost when it does run is ~3 setter calls × 6
+channels = 18 cheap memory writes — negligible against the 50 Hz
+servo cadence.
+
+### Live editing from the TUI (deferred to v2.3.7)
+
+The TUI's edit-mode handshake (v2.3.4) parks the arm at neutral so
+runtime values can be edited safely, but the actual numeric editor
+on the CONFIG page is deferred. Today the banner says "EDITING —
+arm parked, Press 'e' to exit, Ctrl+S to save (planned)".
+
+Building the editor is a meaningful chunk of curses code (cursor
+navigation through editable fields, in-place numeric entry,
+validation, draft-vs-saved state, the Ctrl+S commit via
+`CFG_PatchFile`) and is the right v2.3.7 deliverable. The patcher
+infrastructure is ready — the Ctrl+S commit can use the same
+`CFG_PatchFile` API pca_testbench uses today.
+
+For now, the operator workflow when the live system is up is:
+edit `runtime.json` in another terminal, `kill -HUP cpcu_kernel`,
+the smoother re-applies within 20 ms.

@@ -246,6 +246,107 @@ static void test_optional_absent(void)
     unlink(path);
 }
 
+/*============= TB-CFG09 : CFG_PatchFile round-trip ========================*/
+
+static void test_patch_round_trip(void)
+{
+    /* A file with several fields including one we don't touch
+     * (gesture_velocity-like nested object). The patch must edit the
+     * targeted arrays and leave the nested object alone. */
+    const char *json =
+        "{\n"
+        "  \"schema_version\": 1,\n"
+        "  \"servo_min_us\": [498, 1074, 1074, 1001, 1001, 976],\n"
+        "  \"servo_max_us\": [2500, 1953, 1953, 2002, 2002, 1733],\n"
+        "  \"servo_bias_us\": [0, 0, 0, 0, 0, 0],\n"
+        "  \"gesture_velocity\": {\n"
+        "      \"biceps_flex\": [0, 200, 0, 0, 0, 0]\n"
+        "  }\n"
+        "}\n";
+    char *path = write_temp(json);
+
+    int16_t new_min[6]  = { 510, 1080, 1080, 1010, 1010,  990 };
+    int16_t new_max[6]  = {2490, 1940, 1940, 1990, 1990, 1720 };
+    int16_t new_bias[6] = {  -3,    5,    0,    2,    0,   -1 };
+    CFG_PatchEntry patches[] = {
+        { "servo_min_us",  new_min,  6 },
+        { "servo_max_us",  new_max,  6 },
+        { "servo_bias_us", new_bias, 6 },
+    };
+    char err[256] = {0};
+    CFG_Status st = CFG_PatchFile(path, patches, 3, err, sizeof(err));
+    CHECK("TB-CFG09a", "patch returns CFG_OK",
+          st == CFG_OK, "got %s (err=%s)", CFG_StatusStr(st), err);
+
+    /* Reload and verify each patched field. */
+    IPC_RuntimeConfig cfg;
+    st = CFG_LoadFromFile(path, &cfg, err, sizeof(err));
+    CHECK("TB-CFG09b", "patched file reloads",
+          st == CFG_OK, "got %s (err=%s)", CFG_StatusStr(st), err);
+    CHECK("TB-CFG09c", "servo_min_us[0] patched",
+          cfg.servo_min_us[0] == 510, "got %u", cfg.servo_min_us[0]);
+    CHECK("TB-CFG09d", "servo_min_us[5] patched",
+          cfg.servo_min_us[5] == 990, "got %u", cfg.servo_min_us[5]);
+    CHECK("TB-CFG09e", "servo_max_us[0] patched",
+          cfg.servo_max_us[0] == 2490, "got %u", cfg.servo_max_us[0]);
+    CHECK("TB-CFG09f", "servo_max_us[5] patched",
+          cfg.servo_max_us[5] == 1720, "got %u", cfg.servo_max_us[5]);
+    CHECK("TB-CFG09g", "servo_bias_us[0] patched (negative)",
+          cfg.servo_bias_us[0] == -3, "got %d", cfg.servo_bias_us[0]);
+    CHECK("TB-CFG09h", "servo_bias_us[1] patched",
+          cfg.servo_bias_us[1] == 5, "got %d", cfg.servo_bias_us[1]);
+
+    /* Verify gesture_velocity nested object survived untouched.
+     * The C parser doesn't expose it (dsp owns it), so we read the
+     * file as text and grep. */
+    FILE *f = fopen(path, "r");
+    CHECK("TB-CFG09i", "file still readable after patch", f != NULL, "");
+    if(f)
+    {
+        char raw[8192] = {0};
+        size_t n = fread(raw, 1, sizeof(raw)-1, f);
+        fclose(f);
+        raw[n] = '\0';
+        bool found = strstr(raw, "biceps_flex") != NULL &&
+                     strstr(raw, "[0, 200, 0, 0, 0, 0]") != NULL;
+        CHECK("TB-CFG09j", "gesture_velocity preserved",
+              found, "biceps_flex row missing after patch");
+    }
+    unlink(path);
+}
+
+/*============= TB-CFG10 : CFG_PatchFile error paths =======================*/
+
+static void test_patch_errors(void)
+{
+    /* Missing key returns CFG_ERR_MISSING. */
+    const char *json =
+        "{\n"
+        "  \"schema_version\": 1,\n"
+        "  \"servo_min_us\": [498, 1074, 1074, 1001, 1001, 976],\n"
+        "  \"servo_max_us\": [2500, 1953, 1953, 2002, 2002, 1733]\n"
+        "}\n";
+    char *path = write_temp(json);
+    int16_t vals[6] = {0};
+    CFG_PatchEntry patches[] = {
+        { "no_such_key_anywhere", vals, 6 },
+    };
+    char err[256] = {0};
+    CFG_Status st = CFG_PatchFile(path, patches, 1, err, sizeof(err));
+    CHECK("TB-CFG10a", "missing key -> CFG_ERR_MISSING",
+          st == CFG_ERR_MISSING, "got %s", CFG_StatusStr(st));
+    CHECK("TB-CFG10b", "err mentions key",
+          strstr(err, "no_such_key_anywhere") != NULL,
+          "err='%s'", err);
+
+    /* Missing file returns CFG_ERR_OPEN. */
+    st = CFG_PatchFile("/tmp/nonexistent_xyzzy_pca.json",
+                       patches, 1, err, sizeof(err));
+    CHECK("TB-CFG10c", "missing file -> CFG_ERR_OPEN",
+          st == CFG_ERR_OPEN, "got %s", CFG_StatusStr(st));
+    unlink(path);
+}
+
 /*============= MAIN =======================================================*/
 
 int main(void)
@@ -270,6 +371,10 @@ int main(void)
     test_optional_present();
     printf("\n--- TB-CFG08: Optional fields default when absent ---\n");
     test_optional_absent();
+    printf("\n--- TB-CFG09: CFG_PatchFile round-trip (v2.3.6) ---\n");
+    test_patch_round_trip();
+    printf("\n--- TB-CFG10: CFG_PatchFile error paths (v2.3.6) ---\n");
+    test_patch_errors();
 
     printf("\n======================================\n");
     printf("RESULTS: %d PASS, %d FAIL\n", g_pass, g_fail);

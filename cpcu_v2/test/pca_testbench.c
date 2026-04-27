@@ -49,6 +49,7 @@
 
 #include "cpcu_pca9685.h"
 #include "cpcu_smooth.h"
+#include "cpcu_config.h"        /* v2.3.6: load/save calibration */
 
 /*============= COLOR PAIRS ================================================================*/
 
@@ -126,6 +127,52 @@ static bool             show_regs   =   false;
 static uint8_t          reg_mode1   =   0;
 static uint8_t          reg_mode2   =   0;
 static uint8_t          reg_presc   =   0;
+
+/* v2.3.6: calibration state. servo_bias[] is loaded from runtime.json
+ * on startup and saved back on 'S'. cal_dirty tracks whether the
+ * in-memory state has diverged from disk so we can warn before quit
+ * and indicate to the user that there are unsaved changes. */
+static int16_t          servo_bias[PCA_SERVO_COUNT] = {0};
+static char             cfg_path_used[256]          = {0};
+static bool             cal_dirty                   = false;
+static char             status_line[256]            = {0};
+static time_t           status_until                = 0;
+
+/* v2.3.6: per-channel smoother state, mirrored to runtime.json on
+ * save. Stored as int16 for symmetry with servo_bias / the patcher
+ * API; values fit comfortably (max 10000 us/s velocity, 50000 us/s^2
+ * accel — both within int16 if we use int16 for vel and uint16 for
+ * accel and just clamp carefully).
+ *
+ * v/a/d keystrokes cycle through preset values rather than entering
+ * numbers — single keypress, no modal numeric entry, immediately
+ * felt in motion. The presets are the values experienced builders
+ * tend to want: 'slow / normal / fast' for each axis. */
+static uint16_t         smooth_vel[PCA_SERVO_COUNT];      /* us/s */
+static uint16_t         smooth_acc[PCA_SERVO_COUNT];      /* us/s^2 */
+static uint16_t         smooth_dead[PCA_SERVO_COUNT];     /* us */
+
+/* Presets cycled by v/a/d. First entry is the default (the value
+ * SMOOTH_Init applies). Cycling wraps. Chosen to span the useful
+ * tuning range for typical hobby servos: very slow for delicate
+ * manipulation, very fast for "is this the smoother that's slow or
+ * the SVM that's slow?" diagnosis. */
+static const uint16_t   VEL_PRESETS[]  = { 2000, 500, 1000, 1500, 3000, 5000 };
+static const uint16_t   ACC_PRESETS[]  = { 8000, 2000, 4000, 6000, 12000, 20000 };
+static const uint16_t   DEAD_PRESETS[] = { 10, 0, 5, 15, 25, 50 };
+#define VEL_PRESET_COUNT  (int)(sizeof(VEL_PRESETS)  / sizeof(VEL_PRESETS[0]))
+#define ACC_PRESET_COUNT  (int)(sizeof(ACC_PRESETS)  / sizeof(ACC_PRESETS[0]))
+#define DEAD_PRESET_COUNT (int)(sizeof(DEAD_PRESETS) / sizeof(DEAD_PRESETS[0]))
+
+/* Find current preset index (or -1 if the value isn't a preset).
+ * On cycle, we step from this index to the next, or to index 0 if
+ * not on a preset (so a custom value loaded from JSON jumps to the
+ * first preset on the first press). */
+static int find_preset_idx(uint16_t value, const uint16_t *list, int n)
+{
+    for(int i = 0; i < n; i++) if(list[i] == value) return i;
+    return -1;
+}
 
 /*============= HELPERS ====================================================================*/
 
@@ -367,8 +414,28 @@ static void draw_screen(void)
     attron(COLOR_PAIR(CP_MAGENTA) | A_BOLD);
     printw("~%.1f deg", angle_est);
     attroff(COLOR_PAIR(CP_MAGENTA) | A_BOLD);
-    mvprintw(r, 38, "(linear estimate)");
-    r += 2;
+    /* v2.3.6: bias display in the same row */
+    mvprintw(r, 38, "Bias: ");
+    if(servo_bias[selected] != 0)
+    {
+        attron(COLOR_PAIR(CP_WARN) | A_BOLD);
+        printw("%+d us", (int)servo_bias[selected]);
+        attroff(COLOR_PAIR(CP_WARN) | A_BOLD);
+    }
+    else
+    {
+        attron(COLOR_PAIR(CP_DIM));
+        printw("none");
+        attroff(COLOR_PAIR(CP_DIM));
+    }
+    r++;
+    /* v2.3.6: smoother knobs for the selected servo */
+    mvprintw(r, 3, "Smooth:  ");
+    attron(COLOR_PAIR(CP_CYAN));
+    printw("vel %5u us/s    acc %5u us/s^2    dead %2u us",
+           smooth_vel[selected], smooth_acc[selected], smooth_dead[selected]);
+    attroff(COLOR_PAIR(CP_CYAN));
+    r++;
 
     /* Live register read-back */
     if(show_regs && hw_connected)
@@ -398,18 +465,42 @@ static void draw_screen(void)
     attron(COLOR_PAIR(CP_DIM));
     mvprintw(r, 1,     "UP/DOWN   select servo       LEFT/RIGHT  +/- %d us", STEP_FINE);
     mvprintw(r + 1, 1, "PgUp/PgDn +/- %d us          n  neutral (1500)", STEP_COARSE);
-    mvprintw(r + 2, 1, "m  set MIN    M  set MAX      N  all neutral   A  write all at once");
-    mvprintw(r + 3, 1, "r  refresh registers          s  toggle smoother (now: %s)",
+    mvprintw(r + 2, 1, "m  jog to MIN  M  jog to MAX  N  all neutral   A  write all at once");
+    mvprintw(r + 3, 1, "[  set MIN     ]  set MAX     b  set BIAS  B  clear BIAS");
+    mvprintw(r + 4, 1, "v  cycle VEL   a  cycle ACC   d  cycle DEAD     S  save  L  reload");
+    mvprintw(r + 5, 1, "r  refresh registers          s  toggle smoother (now: %s)",
              smooth_enabled ? "ON" : "OFF");
-    mvprintw(r + 4, 1, "0  all OFF (disable PWM)      q  quit");
+    mvprintw(r + 6, 1, "0  all OFF (disable PWM)      q  quit");
     attroff(COLOR_PAIR(CP_DIM));
-    r += 5;
+    r += 7;
+
+    /* v2.3.6: status line for save/load/calibration feedback. Shown
+     * for ~3-5 seconds (set per action). The dirty marker shows
+     * persistently whenever there are unsaved changes. */
+    if(status_until > 0 && time(NULL) <= status_until)
+    {
+        attron(COLOR_PAIR(CP_GOOD) | A_BOLD);
+        mvprintw(r, 1, "%-*s", g_tui_w - 2, status_line);
+        attroff(COLOR_PAIR(CP_GOOD) | A_BOLD);
+        r++;
+    }
+    else if(cal_dirty)
+    {
+        attron(COLOR_PAIR(CP_WARN));
+        mvprintw(r, 1, "* unsaved calibration changes — press 'S' to save *");
+        attroff(COLOR_PAIR(CP_WARN));
+        r++;
+    }
 
     /* FOOTER */
     draw_hline(r, 0, g_tui_w);
     r++;
     attron(COLOR_PAIR(CP_DIM) | A_DIM);
-    mvprintw(r, 1, "20 Hz refresh  |  direct I2C (no IPC/kernel needed)");
+    if(cfg_path_used[0])
+        mvprintw(r, 1, "20 Hz refresh  |  direct I2C (no IPC/kernel)  |  cfg: %s",
+                 cfg_path_used);
+    else
+        mvprintw(r, 1, "20 Hz refresh  |  direct I2C (no IPC/kernel)  |  cfg: <none>");
     attroff(COLOR_PAIR(CP_DIM) | A_DIM);
 
     refresh();
@@ -427,9 +518,20 @@ static void print_usage(const char *prog)
         "  --min A,B,C,D,E,F   override per-servo MIN pulse widths (us)\n"
         "  --max A,B,C,D,E,F   override per-servo MAX pulse widths (us)\n"
         "  --smooth            use the slew-rate limiter (same as cpcu_io)\n"
+        "  --config <path>     runtime.json to load + save into\n"
+        "                      (default: /opt/cpcu/config.json then config/runtime.json)\n"
         "  --help              this message\n"
-        "Example:\n"
-        "  sudo %s --min 600,1100,1100,1000,1000,950 --max 2400,1900,1900,2000,2000,1700\n",
+        "Calibration keys (v2.3.6):\n"
+        "  [          set the current jog as MIN for the selected servo\n"
+        "  ]          set the current jog as MAX for the selected servo\n"
+        "  b          set the current deviation from neutral as BIAS\n"
+        "  B          clear BIAS for the selected servo\n"
+        "  S          save min/max/bias to the loaded runtime.json\n"
+        "  L          reload from disk (discards unsaved jogs)\n"
+        "Example workflow:\n"
+        "  sudo %s --config config/runtime.json\n"
+        "  # jog with arrows, press [ at the mechanical min, ] at the max,\n"
+        "  # then S to save. Then on the live system: kill -HUP $(pgrep cpcu_kernel)\n",
         prog, prog);
 }
 
@@ -438,6 +540,7 @@ int main(int argc, char *argv[])
     uint16_t override_min[PCA_SERVO_COUNT] = {0};
     uint16_t override_max[PCA_SERVO_COUNT] = {0};
     bool     have_min = false, have_max = false;
+    const char *cli_config_path = NULL;             /* v2.3.6 */
 
     for(int i = 1; i < argc; i++)
     {
@@ -471,6 +574,10 @@ int main(int argc, char *argv[])
         else if(strcmp(argv[i], "--smooth") == 0)
         {
             smooth_enabled = true;
+        }
+        else if(strcmp(argv[i], "--config") == 0 && i + 1 < argc)
+        {
+            cli_config_path = argv[++i];
         }
         else if(argv[i][0] != '-')
         {
@@ -514,6 +621,71 @@ int main(int argc, char *argv[])
         fprintf(stderr, "[TESTBENCH] MAX overridden from CLI.\n");
     }
 
+    /* v2.3.6: Load runtime.json so the testbench starts with whatever
+     * the user has previously calibrated. Two-tier path search matches
+     * cpcu_kernel: prefer the system symlink, fall back to the in-repo
+     * file. CLI overrides above already won; this fills in everything
+     * else (and per-servo bias). On any failure, keep the compile-time
+     * defaults — pca_testbench is a bench tool, refusing to start would
+     * be hostile to the workflow.
+     */
+    {
+        const char *paths[] = {
+            cli_config_path ? cli_config_path : "/opt/cpcu/config.json",
+            "config/runtime.json",
+            NULL
+        };
+        IPC_RuntimeConfig cfg;
+        char err[256] = {0};
+        bool cfg_loaded = false;
+        for(int p = 0; paths[p]; p++)
+        {
+            if(!paths[p]) continue;
+            CFG_Status st_cfg = CFG_LoadFromFile(paths[p], &cfg, err, sizeof(err));
+            if(st_cfg == CFG_OK)
+            {
+                if(!have_min)
+                    for(int i = 0; i < PCA_SERVO_COUNT; i++)
+                        pca.servo_min[i] = cfg.servo_min_us[i];
+                if(!have_max)
+                    for(int i = 0; i < PCA_SERVO_COUNT; i++)
+                        pca.servo_max[i] = cfg.servo_max_us[i];
+                for(int i = 0; i < PCA_SERVO_COUNT; i++)
+                {
+                    servo_bias[i] = cfg.servo_bias_us[i];
+                    /* v2.3.6: smoother values. Zero means "use default";
+                     * we substitute the SMOOTH_DEFAULT_* values so the
+                     * UI shows a real number rather than 0. */
+                    smooth_vel[i]  = cfg.smooth_velocity_us_per_s[i]
+                                     ? cfg.smooth_velocity_us_per_s[i]
+                                     : VEL_PRESETS[0];
+                    smooth_acc[i]  = cfg.smooth_accel_us_per_s2[i]
+                                     ? cfg.smooth_accel_us_per_s2[i]
+                                     : ACC_PRESETS[0];
+                    smooth_dead[i] = cfg.smooth_deadband_us[i];
+                }
+                strncpy(cfg_path_used, paths[p], sizeof(cfg_path_used) - 1);
+                cfg_loaded = true;
+                fprintf(stderr,
+                        "[TESTBENCH] Loaded calibration from %s\n", paths[p]);
+                break;
+            }
+        }
+        if(!cfg_loaded)
+        {
+            fprintf(stderr, "[TESTBENCH] No usable runtime.json found "
+                            "(last err: %s) - using compile-time defaults\n",
+                    err[0] ? err : "no candidates tried");
+            /* Defaults so the UI shows real numbers either way. */
+            for(int i = 0; i < PCA_SERVO_COUNT; i++)
+            {
+                smooth_vel[i]  = VEL_PRESETS[0];
+                smooth_acc[i]  = ACC_PRESETS[0];
+                smooth_dead[i] = DEAD_PRESETS[0];
+            }
+        }
+    }
+
     /* Start all servos at neutral */
     for(int i = 0; i < PCA_SERVO_COUNT; i++)
     {
@@ -523,8 +695,15 @@ int main(int argc, char *argv[])
 
     /* Init smoother (used only if --smooth) */
     SMOOTH_Init(&smooth, PCA_SERVO_NEUTRAL);
-    /* Gripper: conservative rate, matches cpcu_io default */
-    SMOOTH_SetSpeed(&smooth, 5, 1200);
+    /* v2.3.6: apply per-channel smoother values loaded from
+     * runtime.json (or the defaults if no JSON was loaded). The
+     * 'v'/'a'/'d' keys cycle these at runtime; 'S' saves them back. */
+    for(int i = 0; i < PCA_SERVO_COUNT; i++)
+    {
+        SMOOTH_SetSpeed(&smooth, i, smooth_vel[i]);
+        SMOOTH_SetAccel(&smooth, i, smooth_acc[i]);
+        SMOOTH_SetDeadband(&smooth, i, smooth_dead[i]);
+    }
 
     if(hw_connected)
     {
@@ -647,6 +826,218 @@ int main(int argc, char *argv[])
             case 'A':
                 write_all_servos();     /* exercises PCA_SetAllServos */
                 break;
+
+            /* v2.3.6: calibration keys --------------------------------*/
+            /* The user has jogged to a position they like — these keys
+             * commit that position as a calibration value. Nothing
+             * persists to disk until 'S'. */
+            case '[':
+                /* Capture current jog as new MIN for this servo. */
+                pca.servo_min[selected] = servo_us[selected];
+                cal_dirty = true;
+                snprintf(status_line, sizeof(status_line),
+                         "Servo %d MIN = %u us (unsaved)",
+                         selected, servo_us[selected]);
+                status_until = time(NULL) + 3;
+                break;
+            case ']':
+                /* Capture current jog as new MAX. */
+                pca.servo_max[selected] = servo_us[selected];
+                cal_dirty = true;
+                snprintf(status_line, sizeof(status_line),
+                         "Servo %d MAX = %u us (unsaved)",
+                         selected, servo_us[selected]);
+                status_until = time(NULL) + 3;
+                break;
+            case 'b':
+                /* Capture deviation from neutral as this servo's bias.
+                 * If the user jogged to 1518 us as the visually-neutral
+                 * resting pose, bias becomes +18 us. cpcu_io will add
+                 * this to whatever target the smoother computes. */
+                {
+                    int delta = (int)servo_us[selected] - (int)PCA_SERVO_NEUTRAL;
+                    if(delta < -100) delta = -100;
+                    if(delta >  100) delta =  100;
+                    servo_bias[selected] = (int16_t)delta;
+                    cal_dirty = true;
+                    snprintf(status_line, sizeof(status_line),
+                             "Servo %d BIAS = %+d us (unsaved)",
+                             selected, delta);
+                    status_until = time(NULL) + 3;
+                }
+                break;
+            case 'B':
+                /* Clear bias for this servo. */
+                servo_bias[selected] = 0;
+                cal_dirty = true;
+                snprintf(status_line, sizeof(status_line),
+                         "Servo %d BIAS cleared (unsaved)", selected);
+                status_until = time(NULL) + 3;
+                break;
+
+            /* v2.3.6: smoother per-channel cycling. Each press steps
+             * to the next preset for the SELECTED servo. The change
+             * is applied immediately to the smoother so the next
+             * jog uses the new values — you can feel the difference
+             * within ~50 ms. Save with 'S' to persist to JSON. */
+            case 'v':
+                {
+                    int idx = find_preset_idx(smooth_vel[selected],
+                                              VEL_PRESETS, VEL_PRESET_COUNT);
+                    int next = (idx < 0) ? 0 : ((idx + 1) % VEL_PRESET_COUNT);
+                    smooth_vel[selected] = VEL_PRESETS[next];
+                    SMOOTH_SetSpeed(&smooth, selected, smooth_vel[selected]);
+                    cal_dirty = true;
+                    snprintf(status_line, sizeof(status_line),
+                             "Servo %d VEL = %u us/s (unsaved)",
+                             selected, smooth_vel[selected]);
+                    status_until = time(NULL) + 3;
+                }
+                break;
+            case 'a':
+                {
+                    int idx = find_preset_idx(smooth_acc[selected],
+                                              ACC_PRESETS, ACC_PRESET_COUNT);
+                    int next = (idx < 0) ? 0 : ((idx + 1) % ACC_PRESET_COUNT);
+                    smooth_acc[selected] = ACC_PRESETS[next];
+                    SMOOTH_SetAccel(&smooth, selected, smooth_acc[selected]);
+                    cal_dirty = true;
+                    snprintf(status_line, sizeof(status_line),
+                             "Servo %d ACC = %u us/s^2 (unsaved)",
+                             selected, smooth_acc[selected]);
+                    status_until = time(NULL) + 3;
+                }
+                break;
+            case 'd':
+                {
+                    int idx = find_preset_idx(smooth_dead[selected],
+                                              DEAD_PRESETS, DEAD_PRESET_COUNT);
+                    int next = (idx < 0) ? 0 : ((idx + 1) % DEAD_PRESET_COUNT);
+                    smooth_dead[selected] = DEAD_PRESETS[next];
+                    SMOOTH_SetDeadband(&smooth, selected, smooth_dead[selected]);
+                    cal_dirty = true;
+                    snprintf(status_line, sizeof(status_line),
+                             "Servo %d DEAD = %u us (unsaved)",
+                             selected, smooth_dead[selected]);
+                    status_until = time(NULL) + 3;
+                }
+                break;
+
+            case 'S':
+                /* Save calibration to runtime.json (or wherever
+                 * cfg_path_used pointed). Patch only the three fields
+                 * we own — gesture_velocity etc. survive untouched
+                 * thanks to CFG_PatchFile's surgical edit semantics. */
+                if(cfg_path_used[0] == '\0')
+                {
+                    snprintf(status_line, sizeof(status_line),
+                             "SAVE FAILED: no config file was loaded "
+                             "(retry with --config <path>)");
+                    status_until = time(NULL) + 5;
+                }
+                else
+                {
+                    /* uint16 -> int16 for the patch API. Both arrays
+                     * are well within int16 range (positive servo
+                     * pulses are ~500-2500). */
+                    int16_t mins_i16[PCA_SERVO_COUNT];
+                    int16_t maxs_i16[PCA_SERVO_COUNT];
+                    int16_t vel_i16[PCA_SERVO_COUNT];
+                    int16_t acc_i16[PCA_SERVO_COUNT];
+                    int16_t dead_i16[PCA_SERVO_COUNT];
+                    for(int i = 0; i < PCA_SERVO_COUNT; i++)
+                    {
+                        mins_i16[i] = (int16_t)pca.servo_min[i];
+                        maxs_i16[i] = (int16_t)pca.servo_max[i];
+                        /* v2.3.6: smoother values. uint16 -> int16
+                         * conversion is safe for vel (max preset 5000)
+                         * and dead (max 50). For accel, max preset is
+                         * 20000 which fits in int16's 32767. */
+                        vel_i16[i]  = (int16_t)smooth_vel[i];
+                        acc_i16[i]  = (int16_t)smooth_acc[i];
+                        dead_i16[i] = (int16_t)smooth_dead[i];
+                    }
+                    CFG_PatchEntry patches[] = {
+                        { "servo_min_us",             mins_i16,    PCA_SERVO_COUNT },
+                        { "servo_max_us",             maxs_i16,    PCA_SERVO_COUNT },
+                        { "servo_bias_us",            servo_bias,  PCA_SERVO_COUNT },
+                        { "smooth_velocity_us_per_s", vel_i16,     PCA_SERVO_COUNT },
+                        { "smooth_accel_us_per_s2",   acc_i16,     PCA_SERVO_COUNT },
+                        { "smooth_deadband_us",       dead_i16,    PCA_SERVO_COUNT },
+                    };
+                    char err[256] = {0};
+                    CFG_Status sst = CFG_PatchFile(cfg_path_used, patches,
+                                                   sizeof(patches)/sizeof(patches[0]),
+                                                   err, sizeof(err));
+                    if(sst == CFG_OK)
+                    {
+                        cal_dirty = false;
+                        snprintf(status_line, sizeof(status_line),
+                                 "SAVED to %s — kill -HUP cpcu_kernel "
+                                 "to reload live", cfg_path_used);
+                        status_until = time(NULL) + 5;
+                    }
+                    else
+                    {
+                        snprintf(status_line, sizeof(status_line),
+                                 "SAVE FAILED: %s (%s)",
+                                 CFG_StatusStr(sst), err);
+                        status_until = time(NULL) + 5;
+                    }
+                }
+                break;
+            case 'L':
+                /* Reload from disk — discards unsaved jogs. */
+                if(cfg_path_used[0] == '\0')
+                {
+                    snprintf(status_line, sizeof(status_line),
+                             "RELOAD: no config file in use");
+                    status_until = time(NULL) + 3;
+                }
+                else
+                {
+                    IPC_RuntimeConfig cfg;
+                    char err[256] = {0};
+                    CFG_Status sst = CFG_LoadFromFile(cfg_path_used, &cfg,
+                                                     err, sizeof(err));
+                    if(sst == CFG_OK)
+                    {
+                        for(int i = 0; i < PCA_SERVO_COUNT; i++)
+                        {
+                            pca.servo_min[i] = cfg.servo_min_us[i];
+                            pca.servo_max[i] = cfg.servo_max_us[i];
+                            servo_bias[i]    = cfg.servo_bias_us[i];
+                            /* v2.3.6: smoother values too. Apply them
+                             * back to the live smoother so the next
+                             * jog feels different (or the same — the
+                             * user can compare against unsaved). */
+                            smooth_vel[i]  = cfg.smooth_velocity_us_per_s[i]
+                                             ? cfg.smooth_velocity_us_per_s[i]
+                                             : VEL_PRESETS[0];
+                            smooth_acc[i]  = cfg.smooth_accel_us_per_s2[i]
+                                             ? cfg.smooth_accel_us_per_s2[i]
+                                             : ACC_PRESETS[0];
+                            smooth_dead[i] = cfg.smooth_deadband_us[i];
+                            SMOOTH_SetSpeed(&smooth, i, smooth_vel[i]);
+                            SMOOTH_SetAccel(&smooth, i, smooth_acc[i]);
+                            SMOOTH_SetDeadband(&smooth, i, smooth_dead[i]);
+                        }
+                        cal_dirty = false;
+                        snprintf(status_line, sizeof(status_line),
+                                 "Reloaded calibration from %s",
+                                 cfg_path_used);
+                        status_until = time(NULL) + 3;
+                    }
+                    else
+                    {
+                        snprintf(status_line, sizeof(status_line),
+                                 "RELOAD FAILED: %s (%s)",
+                                 CFG_StatusStr(sst), err);
+                        status_until = time(NULL) + 5;
+                    }
+                }
+                break;
+
             case 's':
                 smooth_enabled = !smooth_enabled;
                 if(smooth_enabled && hw_connected)

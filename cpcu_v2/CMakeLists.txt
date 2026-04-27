@@ -159,7 +159,7 @@ if(CURSES_FOUND)
         src/cpcu_pca9685.c
         src/cpcu_smooth.c
     )
-    target_link_libraries(pca_testbench PRIVATE ${CURSES_LIBRARIES} rt m)
+    target_link_libraries(pca_testbench PRIVATE cpcu_config cpcu_ipc ${CURSES_LIBRARIES} rt m)
     target_include_directories(pca_testbench PRIVATE ${CURSES_INCLUDE_DIRS})
     message(STATUS "ncurses found — pca_testbench will be built")
 
