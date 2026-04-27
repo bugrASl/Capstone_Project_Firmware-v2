@@ -54,6 +54,10 @@ target_link_libraries(cpcu_ipc PUBLIC rt)
 ## Log: structured colored logging + optional per-module CSV file sinks
 add_library(cpcu_log STATIC src/cpcu_log.c)
 
+## Config (v2.3.3): runtime.json loader -> IPC_RuntimeConfig
+add_library(cpcu_config STATIC src/cpcu_config.c)
+target_link_libraries(cpcu_config PUBLIC cpcu_ipc)
+
 ##============= EXECUTABLES ================================================================
 
 ## Core 3: Real-time I/O (NRF + PCA9685 + Safety + Servo Smoother)
@@ -64,11 +68,11 @@ add_executable(cpcu_io
     src/cpcu_safety.c
     src/cpcu_smooth.c
 )
-target_link_libraries(cpcu_io PRIVATE cpcu_codec cpcu_ipc cpcu_log rt m)
+target_link_libraries(cpcu_io PRIVATE cpcu_codec cpcu_ipc cpcu_log cpcu_config rt m)
 
-## Core 0: Supervisor (spawns cpcu_io + cpcu_dsp.py)
+## Core 0: Supervisor (spawns cpcu_io + cpcu_dsp.py). Owns runtime config.
 add_executable(cpcu_kernel src/cpcu_kernel.c)
-target_link_libraries(cpcu_kernel PRIVATE cpcu_ipc cpcu_log rt)
+target_link_libraries(cpcu_kernel PRIVATE cpcu_config cpcu_ipc cpcu_log rt)
 
 ## TUI: ncurses live dashboard (optional, needs ncurses)
 ##
@@ -140,6 +144,13 @@ add_executable(smooth_testbench
 )
 target_link_libraries(smooth_testbench PRIVATE m)
 
+## Config-loader testbench (v2.3.3) — exercises the JSON parser and
+## validation rules without touching shared memory. See RUNTIME_CONFIG.md.
+add_executable(config_testbench
+    test/config_testbench.c
+)
+target_link_libraries(config_testbench PRIVATE cpcu_config cpcu_ipc m)
+
 ## PCA9685 servo testbench (interactive TUI, needs ncurses + I2C hardware)
 ## v2.2: now depends on cpcu_smooth.c (slew/smoother feature exposed via 's' / --smooth)
 if(CURSES_FOUND)
@@ -164,6 +175,7 @@ enable_testing()
 add_test(NAME codec_roundtrip COMMAND test_codec)
 add_test(NAME safety_fsm      COMMAND safety_testbench)
 add_test(NAME smoother_unit   COMMAND smooth_testbench)
+add_test(NAME config_loader   COMMAND config_testbench)
 
 ##============= INSTALL ====================================================================
 

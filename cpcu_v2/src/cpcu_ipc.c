@@ -2,8 +2,14 @@
  *  @file       cpcu_ipc.c
  *  @brief      POSIX shared memory IPC — lock-free SPSC + SeqLock
  *  @author     bugrASl
- *  @date       12.04.2026
- *  @version    2.1
+ *  @date       April 2026
+ *  @version    2.3.3
+ *
+ *  v2.3.3 changes:
+ *      - IPC_RuntimeConfig region added (last in layout). Mapped in
+ *        ipc_map_ptrs after IPC_DSPExport.
+ *      - IPC_WriteRuntimeConfig / IPC_ReadRuntimeConfig / IPC_RuntimeConfigSeq.
+ *      - Bumped IPC_VERSION to 0x0203.
  */
 
 #include "cpcu_ipc.h"
@@ -31,6 +37,8 @@ static inline void ipc_map_ptrs(IPC_Context *ctx)
     ctx->diag       =   (IPC_Diagnostics *)(b + off);
     off            +=   sizeof(IPC_Diagnostics);
     ctx->dsp_export =   (IPC_DSPExport *)(b + off);
+    off            +=   sizeof(IPC_DSPExport);
+    ctx->config     =   (IPC_RuntimeConfig *)(b + off);     /* v2.3.3 */
 }
 
 /*============= IPC_Create =========================================================================*/
@@ -285,6 +293,58 @@ bool IPC_ReadMotorCmd(IPC_Context *ctx, uint16_t servo_us[IPC_NUM_SERVOS],
     }
 
     return false;   /* Failed after 4 attempts */
+}
+
+/*============= Runtime Config (SeqLock, v2.3.3) ===================================================*/
+/**
+ *  Writer (cpcu_kernel only) populates the entire IPC_RuntimeConfig
+ *  in one go. The seqlock pattern is identical to MotorCmd but the
+ *  payload is bigger (~512 bytes), so reads are slightly more
+ *  expensive — fine because configuration is consulted once per
+ *  loop iteration, not in tight inner loops.
+ */
+
+void IPC_WriteRuntimeConfig(IPC_Context *ctx, const IPC_RuntimeConfig *src)
+{
+    /* Step 1: seq -> odd */
+    atomic_fetch_add_explicit(&ctx->config->config_seq, 1, memory_order_release);
+
+    /* Step 2: copy payload (skip the seqlock header so we don't
+     * clobber config_seq itself) */
+    uint8_t *dst_bytes = (uint8_t *)ctx->config + sizeof(uint32_t);
+    const uint8_t *src_bytes = (const uint8_t *)src + sizeof(uint32_t);
+    memcpy(dst_bytes, src_bytes, sizeof(IPC_RuntimeConfig) - sizeof(uint32_t));
+
+    /* Step 3: seq -> even */
+    atomic_fetch_add_explicit(&ctx->config->config_seq, 1, memory_order_release);
+}
+
+bool IPC_ReadRuntimeConfig(IPC_Context *ctx, IPC_RuntimeConfig *dst)
+{
+    for(int attempt = 0; attempt < 4; attempt++)
+    {
+        uint32_t s1 = atomic_load_explicit(&ctx->config->config_seq,
+                                           memory_order_acquire);
+        if(s1 & 1) continue;                /* writer mid-update */
+
+        memcpy(dst, ctx->config, sizeof(IPC_RuntimeConfig));
+
+        uint32_t s2 = atomic_load_explicit(&ctx->config->config_seq,
+                                           memory_order_acquire);
+        if(s1 == s2)
+        {
+            /* Snapshot consistent. Surface the seq we read into the
+             * destination so the caller can compare across reads. */
+            dst->config_seq = s2;
+            return dst->magic == IPC_CFG_VALID_MAGIC;
+        }
+    }
+    return false;
+}
+
+uint32_t IPC_RuntimeConfigSeq(IPC_Context *ctx)
+{
+    return atomic_load_explicit(&ctx->config->config_seq, memory_order_acquire);
 }
 
 /*==================================================================================================*/

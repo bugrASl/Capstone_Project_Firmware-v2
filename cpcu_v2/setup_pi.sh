@@ -79,6 +79,37 @@ mkdir -p /var/log/cpcu
 # `cmake --install` and tail logs without sudo.
 chown -R "${REAL_USER}:${REAL_USER}" /opt/cpcu /var/log/cpcu
 
+##============= RUNTIME CONFIG SYMLINK (v2.3.3) ============================================
+##
+## cpcu_kernel reads /opt/cpcu/config.json on startup and on SIGHUP. We
+## want the file to live in the repo (so it's git-versioned) but be
+## accessible at a stable system path. Symlink does both:
+##
+##     /opt/cpcu/config.json -> <REPO>/cpcu_v2/config/runtime.json
+##
+## REAL_USER edits the file in the repo via configure.sh or directly,
+## and the daemon picks it up on next SIGHUP.
+##
+## We resolve the repo location by looking up where this setup_pi.sh
+## actually lives — that's the most robust regardless of how the user
+## cloned or moved the tree.
+
+REPO_RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config/runtime.json"
+SYS_CONFIG="/opt/cpcu/config.json"
+
+if [ -f "${REPO_RUNTIME}" ]; then
+    if [ -L "${SYS_CONFIG}" ] && [ "$(readlink "${SYS_CONFIG}")" = "${REPO_RUNTIME}" ]; then
+        echo "  config.json symlink already correct"
+    else
+        ln -sfn "${REPO_RUNTIME}" "${SYS_CONFIG}"
+        echo "  Linked ${SYS_CONFIG} -> ${REPO_RUNTIME}"
+    fi
+else
+    echo "  WARNING: ${REPO_RUNTIME} not found — runtime config not linked."
+    echo "           cpcu_kernel will refuse to start until you create one."
+    echo "           Run: ./configure.sh --reset --runtime"
+fi
+
 ##============= KERNEL CONFIG CHECK ========================================================
 
 echo "[4/6] Checking kernel configuration..."

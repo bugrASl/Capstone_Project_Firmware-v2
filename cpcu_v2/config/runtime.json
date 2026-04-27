@@ -1,0 +1,42 @@
+{
+    "// schema_version": "REQUIRED. Bump when removing/renaming fields. Forward-compatible additions don't bump.",
+    "schema_version": 1,
+
+    "// servo_min_us": "REQUIRED. Per-servo minimum pulse width (mechanical limit). Order: S0=Base, S1=Upper, S2=Last, S3=Joint1, S4=Joint2, S5=Gripper.",
+    "servo_min_us": [ 498, 1074, 1074, 1001, 1001,  976 ],
+
+    "// servo_max_us": "REQUIRED. Per-servo maximum pulse width (mechanical limit). Same channel order.",
+    "servo_max_us": [ 2500, 1953, 1953, 2002, 2002, 1733 ],
+
+    "// servo_bias_us": "OPTIONAL. Per-servo gravity-sag compensation, signed us. Added to the smoothed pulse width before clamping. Default 0. Range +/- 100 us.",
+    "servo_bias_us": [ 0, 0, 0, 0, 0, 0 ],
+
+    "// smooth_velocity_us_per_s": "OPTIONAL. Per-servo trapezoidal max velocity. Default 2000 us/s.",
+    "smooth_velocity_us_per_s": [ 2000, 2000, 2000, 2000, 2000, 2000 ],
+
+    "// smooth_accel_us_per_s2": "OPTIONAL. Per-servo trapezoidal max acceleration. Default 8000 us/s^2.",
+    "smooth_accel_us_per_s2": [ 8000, 8000, 8000, 8000, 8000, 8000 ],
+
+    "// smooth_deadband_us": "OPTIONAL. Per-servo hold-pose deadband. 0 = disabled. Default 10 us. See JITTER_MITIGATION.md.",
+    "smooth_deadband_us": [ 10, 10, 10, 10, 10, 10 ],
+
+    "// interp_conf_floor_pct": "OPTIONAL. SVM probability below which 'rest' weight is 1.0. Default 40.",
+    "interp_conf_floor_pct": 40,
+
+    "// interp_conf_ceil_pct": "OPTIONAL. SVM probability above which gesture weight is 1.0. Default 85.",
+    "interp_conf_ceil_pct": 85,
+
+    "// hysteresis_votes": "OPTIONAL. Number of consecutive identical predictions required to commit a gesture transition. Default 3.",
+    "hysteresis_votes": 3,
+
+    "// grip_open_us":   "OPTIONAL. Gripper pulse width for open jaws. Default 1700.",
+    "grip_open_us":   1700,
+    "// grip_touch_us": "OPTIONAL. Gripper pulse width for jaws just touching object. Default 1200.",
+    "grip_touch_us":  1200,
+    "// grip_firm_us":  "OPTIONAL. Gripper pulse width for firm hold (deepest safe close, NEVER past mechanical min). Default 1100.",
+    "grip_firm_us":   1100,
+    "// grip_stall_recover_ms": "OPTIONAL. Time to wait before backing off gripper if commanded position has been at servo_min for this duration. Default 2000.",
+    "grip_stall_recover_ms": 2000,
+
+    "// notes": "Lines starting with // are JSON-illegal but tolerated by cpcu_config.c's lenient parser. Strict parsers will reject them — use configure.sh to regenerate or strip them before piping through jq."
+}

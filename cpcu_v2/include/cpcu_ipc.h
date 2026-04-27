@@ -36,7 +36,7 @@ extern "C" {
 #define IPC_SHM_NAME            "/cpcu_ipc"
 #define IPC_SHM_PERMS           0644            /* Owner RW, Group/Others R */
 #define IPC_MAGIC               0x494E4654UL    /* "INFT" - Infinitech */
-#define IPC_VERSION             0x0201          /* v2.1 */
+#define IPC_VERSION             0x0203          /* v2.3.3 — added IPC_RuntimeConfig */
 
 #define IPC_SENSOR_RING_SIZE    1024
 #define IPC_SENSOR_RING_MASK    (IPC_SENSOR_RING_SIZE - 1)
@@ -158,6 +158,70 @@ typedef struct __attribute__((aligned(64)))
 
 _Static_assert( sizeof(IPC_DSPExport) == 256, "IPC_DSPExport must be 256 bytes (4 cache lines)" );
 
+/*============= RUNTIME CONFIG (v2.3.3) ================================================*/
+/*
+ *  cpcu_kernel reads cpcu_v2/config/runtime.json at startup and on
+ *  SIGHUP, populating this region. Other processes (cpcu_io, cpcu_dsp.py
+ *  via Python's mmap) read it directly. Writes are seqlock-style: kernel
+ *  bumps config_seq, writes, bumps again. Readers retry on torn reads.
+ *
+ *  All fields are EXPLICITLY-sized so the Python side can mmap & unpack
+ *  with `struct` predictably. Pad to a fixed total to keep the IPC
+ *  layout deterministic across schema additions within v2.3.x.
+ *
+ *  See cpcu_v2/docs/RUNTIME_CONFIG.md for the full schema and the
+ *  consumer wiring.
+ */
+
+#define IPC_CFG_NUM_SERVOS          6
+#define IPC_CFG_VALID_MAGIC         0x43464702      /* "CFG\x02" */
+
+typedef struct __attribute__((aligned(64)))
+{
+    /* Header */
+    _Atomic uint32_t    config_seq;                         /* seqlock: odd = mid-write */
+    uint32_t            magic;                              /* IPC_CFG_VALID_MAGIC when populated */
+    uint32_t            schema_version;                     /* must match expected */
+    uint32_t            _pad_hdr;
+
+    /* Servo limits (mirror of compile-time PCA_SERVO_MIN/MAX_US arrays).
+     * These ARE runtime-tunable for calibration, but cpcu_io still
+     * clamps to compile-time hardware limits as a final safety. */
+    uint16_t            servo_min_us[IPC_CFG_NUM_SERVOS];
+    uint16_t            servo_max_us[IPC_CFG_NUM_SERVOS];
+
+    /* Per-servo gravity-sag bias offsets (signed us, applied AFTER
+     * smoothing, BEFORE clamping). v2.3.3 first consumer of the
+     * runtime-config infrastructure. See JITTER_MITIGATION.md §6. */
+    int16_t             servo_bias_us[IPC_CFG_NUM_SERVOS];
+
+    /* Smoother per-servo overrides (zero = use compile-time default). */
+    uint16_t            smooth_velocity_us_per_s[IPC_CFG_NUM_SERVOS];
+    uint16_t            smooth_accel_us_per_s2[IPC_CFG_NUM_SERVOS];
+    uint16_t            smooth_deadband_us[IPC_CFG_NUM_SERVOS];
+
+    /* Gesture velocities (us/s, signed) — v2.3.5 consumer.
+     * Indexed by [class_id][servo_id]. class_id 0 == rest. */
+    int16_t             gesture_velocity[IPC_MAX_CLASSES][IPC_CFG_NUM_SERVOS];
+
+    /* DSP/AI thresholds — v2.3.5/v2.3.6 consumers. */
+    uint8_t             interp_conf_floor_pct;              /* 0-100, default 40 */
+    uint8_t             interp_conf_ceil_pct;               /* 0-100, default 85 */
+    uint8_t             hysteresis_votes;                   /* default 3 */
+    uint8_t             _pad_dsp;
+    uint16_t            grip_open_us;                       /* default 1700 */
+    uint16_t            grip_touch_us;                      /* default 1200 */
+    uint16_t            grip_firm_us;                       /* default 1100 */
+    uint16_t            grip_stall_recover_ms;              /* default 2000 */
+
+    /* Pad to a fixed size so future v2.3.x additions don't change the
+     * IPC layout binary-incompatibly. Reserve generously. */
+    uint8_t             _reserved[256];
+} IPC_RuntimeConfig;
+
+_Static_assert(sizeof(IPC_RuntimeConfig) >= 512,
+               "IPC_RuntimeConfig must be >= 512 bytes (8 cache lines minimum)");
+
 /*============= TOTAL SHM SIZE =========================================================*/
 
 #define IPC_SHM_SIZE    (\
@@ -165,7 +229,8 @@ _Static_assert( sizeof(IPC_DSPExport) == 256, "IPC_DSPExport must be 256 bytes (
         sizeof(IPC_SensorEntry) *   IPC_SENSOR_RING_SIZE    +\
         sizeof(IPC_MotorCommand)                            +\
         sizeof(IPC_Diagnostics)                             +\
-        sizeof(IPC_DSPExport)                                \
+        sizeof(IPC_DSPExport)                               +\
+        sizeof(IPC_RuntimeConfig)                            \
         )
 
 /*============= CONTEXT HANDLE =========================================================*/
@@ -178,6 +243,7 @@ typedef struct
     IPC_MotorCommand    *motor;
     IPC_Diagnostics     *diag;
     IPC_DSPExport       *dsp_export;
+    IPC_RuntimeConfig   *config;            /* v2.3.3 */
     int                 shm_fd;
 } IPC_Context;
 
@@ -198,6 +264,16 @@ void        IPC_WriteMotorCmd(IPC_Context *ctx, const uint16_t servo_us[IPC_NUM_
                               uint8_t gesture_id, uint8_t confidence, uint64_t timestamp_us);
 bool        IPC_ReadMotorCmd(IPC_Context *ctx, uint16_t servo_us[IPC_NUM_SERVOS],
                              uint8_t *gesture_id, uint8_t *confidence, uint32_t *last_ack);
+
+/* Runtime Config (SeqLock, v2.3.3).
+ * Writers (cpcu_kernel only) call IPC_WriteRuntimeConfig. Readers
+ * (cpcu_io, cpcu_dsp.py) call IPC_ReadRuntimeConfig — it copies the
+ * full struct out under a torn-read-retry loop. The copy is cheap
+ * (~512 bytes); readers should call this once per loop iteration
+ * rather than holding pointers into shared memory across barriers. */
+void        IPC_WriteRuntimeConfig(IPC_Context *ctx, const IPC_RuntimeConfig *src);
+bool        IPC_ReadRuntimeConfig (IPC_Context *ctx, IPC_RuntimeConfig *dst);
+uint32_t    IPC_RuntimeConfigSeq  (IPC_Context *ctx);    /* cheap polling check */
 
 #ifdef __cplusplus
 }

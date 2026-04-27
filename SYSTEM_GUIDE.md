@@ -1,8 +1,8 @@
-# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.2)
+# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.3)
 
 **Author:** bugrASl
 **Date:** April 2026
-**Status:** v2.3.2 (boot grace period — eliminates BSAU/CPCU power-on coordination)
+**Status:** v2.3.3 (boot grace period — eliminates BSAU/CPCU power-on coordination)
 
 ---
 
@@ -18,6 +18,15 @@ head instead of a recipe you can't modify.
 > **What changed since v2.1.** This document was extended several times
 > as the project matured. The biggest deltas:
 >
+> - **v2.3.3 (CPCU runtime config)** — JSON-backed runtime tunables
+>   (`cpcu_v2/config/runtime.json`) mirrored to a shared-memory IPC
+>   region, parsed once on startup and on `SIGHUP`. Per-servo bias
+>   offsets are the first runtime consumer (cpcu_io applies before
+>   clamping to compile-time hardware limits). Compile-time safety
+>   thresholds get a dedicated editor: `./configure.sh` interactive
+>   or flag-driven, with rebuild reminders. New `config_testbench`
+>   adds 30 unit tests for the JSON loader. See
+>   [`cpcu_v2/docs/RUNTIME_CONFIG.md`](cpcu_v2/docs/RUNTIME_CONFIG.md).
 > - **v2.3.2 (CPCU smoother, hold-pose deadband)** — Settled servos no
 >   longer get redundant PWM refreshes, killing the host-induced
 >   static jitter that made the arm "buzz". Per-servo deadband
@@ -56,7 +65,7 @@ head instead of a recipe you can't modify.
 >   `sudo apt` — which Linux requires for those specific operations.
 > - **safety_testbench** now exercises the full RUNNING → SAFE →
 >   RUNNING recovery path (extended from 5 to 7 sub-checks in TB-SAF02);
->   total automated tests: **138 PASS** across `test_codec`,
+>   total automated tests: **168 PASS** across `test_codec`,
 >   `safety_testbench`, and `test_dsp_pipeline.py`.
 
 If you are ever stuck on a step, check the corresponding **"What can go

@@ -3,13 +3,31 @@
  *  @brief      Core 3 — Real-time I/O controller
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.3.2
+ *  @version    2.3.3
  *  @details    Deterministic loop:
  *                  1. Busy-poll NRF via spidev         -> read payload
  *                  2. WL_Unpack -> seq/safety/link     -> push to SPSC ring
  *                  3. Rate-limited (50 Hz) PCA servo update via I2C
  *                  4. Safety checks: radio, DSP, I2C, thermal, ring
  *                  5. Heartbeat to shared memory for watchdog
+ *
+ *              v2.3.3 changes:
+ *                  - Reads IPC_RuntimeConfig once per servo tick
+ *                    (cfg_cache local). Per-servo bias offsets
+ *                    (cfg_cache.servo_bias_us[]) are added to the
+ *                    smoothed pulse-width before clamping to
+ *                    compile-time hardware limits and writing the PCA.
+ *                    Bias is signed (typically +/- 20 us) and is
+ *                    intended for static gravity-sag compensation;
+ *                    runtime tunable from JSON, picked up on next
+ *                    SIGHUP-driven kernel reload. The bias-then-clamp
+ *                    order means the runtime config can never escape
+ *                    the compile-time safety envelope. See
+ *                    cpcu_v2/docs/RUNTIME_CONFIG.md.
+ *                  - SMOOTH_MarkWritten now records the BIASED pulse
+ *                    width that actually went to the PCA, so the
+ *                    deadband logic stays coherent against the true
+ *                    hardware state.
  *
  *              v2.3.2 changes:
  *                  - Per-servo PCA writes are now gated on
@@ -74,6 +92,7 @@
 #include "cpcu_safety.h"
 #include "cpcu_smooth.h"
 #include "cpcu_log.h"
+#include "cpcu_config.h"
 
 /*============= CONFIG =====================================================================*/
 
@@ -269,6 +288,24 @@ int main(int argc, char *argv[])
     uint64_t    t_reinit    =   0;
     uint32_t    i2c_err_streak  =   0;
 
+    /* v2.3.3: runtime config snapshot. We read the IPC region into this
+     * local copy at the top of every servo-tick (50 Hz), so updates from
+     * cpcu_kernel's SIGHUP reload show up within ~20 ms and there's no
+     * risk of a torn read mid-write. The seqlock retry logic is in
+     * IPC_ReadRuntimeConfig itself.
+     *
+     * If the read fails (writer is mid-update or magic invalid), the
+     * cache keeps its previous values — better to use slightly stale
+     * config than zero-filled garbage. */
+    IPC_RuntimeConfig cfg_cache;
+    if(!IPC_ReadRuntimeConfig(&ipc, &cfg_cache))
+    {
+        /* Initial read failed — fall back to compile-time defaults so
+         * we have *something* sane while the kernel re-tries. */
+        CFG_Defaults(&cfg_cache);
+        LOG_W("IO", "initial config read failed, using defaults");
+    }
+
     /*---------------------------------------------------------------------------*/
 
     while(g_run)
@@ -374,12 +411,20 @@ int main(int argc, char *argv[])
                 /* Advance smoother toward targets */
                 SMOOTH_Update(&smooth, servo_dt);
 
+                /* v2.3.3: refresh runtime config snapshot. If the kernel
+                 * just reloaded JSON (SIGHUP), this picks up the new
+                 * values within one servo tick. Failed reads (writer
+                 * mid-update) leave cfg_cache untouched. */
+                IPC_ReadRuntimeConfig(&ipc, &cfg_cache);
+
                 /* Write smoothed positions to servos (one I2C burst per
                  * channel). v2.3.2: gate each write on SMOOTH_ShouldWrite
                  * to suppress redundant refreshes of settled servos —
-                 * see docs/JITTER_MITIGATION.md. Servos still in motion,
-                 * or sitting outside the deadband from their last latched
-                 * value, write every tick as before. */
+                 * see docs/JITTER_MITIGATION.md. v2.3.3: apply per-servo
+                 * bias offset (gravity-sag compensation) to the smoothed
+                 * value before clamping & write — see RUNTIME_CONFIG.md.
+                 * Servos still in motion, or sitting outside the deadband
+                 * from their last latched value, write every tick as before. */
                 PCA_Status pca_ret  =   PCA_OK;
                 bool       any_io   =   false;
                 for(int s = 0; s < PCA_SERVO_COUNT; s++)
@@ -387,10 +432,19 @@ int main(int argc, char *argv[])
                     if(!SMOOTH_ShouldWrite(&smooth, s))
                         continue;       /* deadband — let the servo coast */
 
-                    PCA_Status r    =   PCA_SetServo(&pca, (uint8_t)s, smooth.current[s]);
+                    /* v2.3.3: bias is signed (typ. +/- 20 us). Clamp the
+                     * BIASED value to compile-time hardware limits — the
+                     * runtime config can't escape the safety envelope. */
+                    int32_t biased = (int32_t)smooth.current[s] +
+                                     (int32_t)cfg_cache.servo_bias_us[s];
+                    if(biased < (int32_t)pca.servo_min[s]) biased = pca.servo_min[s];
+                    if(biased > (int32_t)pca.servo_max[s]) biased = pca.servo_max[s];
+                    uint16_t pulse_us = (uint16_t)biased;
+
+                    PCA_Status r    =   PCA_SetServo(&pca, (uint8_t)s, pulse_us);
                     if(r == PCA_OK)
                     {
-                        SMOOTH_MarkWritten(&smooth, s, smooth.current[s]);
+                        SMOOTH_MarkWritten(&smooth, s, pulse_us);
                     }
                     else
                     {

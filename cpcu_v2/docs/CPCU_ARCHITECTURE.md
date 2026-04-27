@@ -174,16 +174,16 @@ behaviours but does **not** change the core allocation. Every new
 piece of code lands on an existing core, scheduled by the existing
 mechanism. The summary:
 
-| Feature (step) | Code lives in | Runs on | New process? |
-|---|---|---|---|
-| Boot grace (v2.3.1) | `cpcu_safety.c` linked into cpcu_io | Core 3 | No |
-| Hold-pose deadband (v2.3.2) | `cpcu_smooth.c` linked into cpcu_io | Core 3 | No |
-| JSON config parser (v2.3.3) | New code in `cpcu_kernel` | **Core 0** | No (kernel gains a SIGHUP handler) |
-| Runtime config IPC reads (v2.3.3) | `cpcu_io.c` + `cpcu_dsp.py` | Cores 3 + 1-2 | No |
-| Edit mode handshake (v2.3.4) | TUI / cpcu_dsp.py / cpcu_io / kernel | All four cores cooperating | No |
-| Velocity-mode gestures (v2.3.5) | `cpcu_dsp.py` (heavy), `cpcu_io.c` (light) | Cores 1-2 + Core 3 | No |
-| Soft-grip + stall watchdog (v2.3.6) | `cpcu_dsp.py` (logic), `cpcu_io.c` (watchdog) | Cores 1-2 + Core 3 | No |
-| WebSocket telemetry bridge (v2.4.0) | New `cpcu_telemetry_bridge.py` | **Core 0** | **Yes** — new long-running daemon, spawned by cpcu_kernel with `taskset -c 0`, `SCHED_OTHER` (not RT) |
+| Feature (step) | Code lives in | Runs on | New process? | Status |
+|---|---|---|---|---|
+| Boot grace (v2.3.1) | `cpcu_safety.c` linked into cpcu_io | Core 3 | No | ✓ shipped |
+| Hold-pose deadband (v2.3.2) | `cpcu_smooth.c` linked into cpcu_io | Core 3 | No | ✓ shipped |
+| JSON config parser (v2.3.3) | `cpcu_config.{h,c}` linked into cpcu_kernel | **Core 0** | No (kernel gained SIGHUP handler + `--config` CLI) | ✓ shipped |
+| Runtime config IPC reads (v2.3.3) | `cpcu_io.c` (cfg_cache, bias-then-clamp) | Core 3 | No | ✓ shipped (`servo_bias_us` is the first consumer) |
+| Edit mode handshake (v2.3.4) | TUI / cpcu_dsp.py / cpcu_io / kernel | All four cores cooperating | No | pending |
+| Velocity-mode gestures (v2.3.5) | `cpcu_dsp.py` (heavy), `cpcu_io.c` (light) | Cores 1-2 + Core 3 | No | pending |
+| Soft-grip + stall watchdog (v2.3.6) | `cpcu_dsp.py` (logic), `cpcu_io.c` (watchdog) | Cores 1-2 + Core 3 | No | pending |
+| WebSocket telemetry bridge (v2.4.0) | New `cpcu_telemetry_bridge.py` | **Core 0** | **Yes** — new long-running daemon, spawned by cpcu_kernel with `taskset -c 0`, `SCHED_OTHER` (not RT) | pending |
 
 Three principles drive this:
 

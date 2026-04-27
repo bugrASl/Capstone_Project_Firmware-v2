@@ -3,14 +3,26 @@
  *  @brief      Core 0 — Supervisor process
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.2
+ *  @version    2.3.3
  *  @details    Responsibilities:
  *                  1. Create shared memory
- *                  2. fork+exec cpcu_io on Core 3 (SCHED_FIFO 90)
- *                  3. fork+exec cpcu_dsp.py on Cores 1-2 (SCHED_FIFO 80)
- *                  4. Monitor heartbeats, restart dead processes
- *                  5. Pet /dev/watchdog
- *                  6. Periodic telemetry
+ *                  2. Load runtime config (JSON) into IPC_RuntimeConfig
+ *                  3. fork+exec cpcu_io on Core 3 (SCHED_FIFO 90)
+ *                  4. fork+exec cpcu_dsp.py on Cores 1-2 (SCHED_FIFO 80)
+ *                  5. Monitor heartbeats, restart dead processes
+ *                  6. Pet /dev/watchdog
+ *                  7. Periodic telemetry
+ *                  8. Reload config on SIGHUP and republish to IPC
+ *
+ *              v2.3.3 changes:
+ *                  - Loads cpcu_v2/config/runtime.json on startup, populates
+ *                    IPC_RuntimeConfig in shared memory. Refuse to start on
+ *                    schema mismatch / parse error / missing file (no
+ *                    silent fallback to defaults — user must explicitly
+ *                    run scripts/configure.sh --reset to regenerate).
+ *                  - SIGHUP triggers a re-parse + IPC re-publish without
+ *                    restarting any child processes.
+ *                  - See cpcu_v2/docs/RUNTIME_CONFIG.md.
  *
  *              v2.2 changes:
  *                  - Uses cpcu_log LOG_* macros everywhere
@@ -33,6 +45,26 @@
 
 #include "cpcu_ipc.h"
 #include "cpcu_log.h"
+#include "cpcu_config.h"
+
+/*============= CONFIGURATION ==============================================================*/
+
+#define HB_TIMEOUT_MS           2000            /* Heartbeat stale -> kill + respawn */
+#define WDG_PET_S               5               /* Pet /dev/watchdog every N seconds */
+#define LOG_S                   5               /* Telemetry print every N seconds */
+#define READY_TIMEOUT_S         10              /* Max wait for child ready flag */
+
+/* Paths */
+#define CPCU_IO_BIN             "./cpcu_io"
+#define CPCU_DSP_SCRIPT         "/opt/cpcu/scripts/cpcu_dsp.py"
+#define CPCU_DSP_SCRIPT_ALT     "./cpcu_dsp.py"
+#define PYTHON3_BIN             "/usr/bin/python3"
+
+/* v2.3.3: runtime config path. The default points to the symlinked
+ * system path that setup_pi.sh creates (-> repo's cpcu_v2/config/runtime.json).
+ * Override with --config <path> for testing. */
+#define CONFIG_PATH_DEFAULT     "/opt/cpcu/config.json"
+#define CONFIG_PATH_FALLBACK    "config/runtime.json"
 
 /*============= CONFIGURATION ==============================================================*/
 
@@ -49,11 +81,37 @@
 
 /*============= TIMING =====================================================================*/
 
-static volatile sig_atomic_t g_run  =   1;
+static volatile sig_atomic_t g_run          =   1;
+static volatile sig_atomic_t g_reload_cfg   =   0;      /* v2.3.3 */
 
 static void on_sig(int s)
 {
     (void)s; g_run = 0;
+}
+
+static void on_sighup(int s)
+{
+    (void)s; g_reload_cfg = 1;
+}
+
+/* v2.3.3: Load runtime.json and publish to IPC.
+ * Returns 0 on success, non-zero on parse failure (caller decides
+ * whether to abort startup or keep the previous config). */
+static int kern_load_config(IPC_Context *ipc, const char *path)
+{
+    IPC_RuntimeConfig cfg;
+    char err[256] = {0};
+    CFG_Status st = CFG_LoadFromFile(path, &cfg, err, sizeof(err));
+    if(st != CFG_OK)
+    {
+        LOG_E("KERN", "config load failed: %s (%s) — %s",
+              CFG_StatusStr(st), path, err);
+        return -1;
+    }
+    IPC_WriteRuntimeConfig(ipc, &cfg);
+    LOG_I("KERN", "runtime config loaded from %s (schema=%u, seq=%u)",
+          path, cfg.schema_version, IPC_RuntimeConfigSeq(ipc));
+    return 0;
 }
 
 static uint64_t now_us(void)
@@ -170,6 +228,8 @@ int main(int argc, char *argv[])
 {
     Log_Init("KERN", LOG_INFO);
 
+    const char *config_path = CONFIG_PATH_DEFAULT;
+
     /* Parse CLI */
     for(int i = 1; i < argc; i++)
     {
@@ -181,6 +241,10 @@ int main(int argc, char *argv[])
         {
             Log_SetLevel(LOG_DEBUG);
         }
+        else if(strcmp(argv[i], "--config") == 0 && i + 1 < argc)
+        {
+            config_path = argv[++i];
+        }
     }
     if(g_forward_log_flag)
     {
@@ -188,15 +252,40 @@ int main(int argc, char *argv[])
         LOG_I("KERN", "file logging enabled -> %s/log_*.csv", LOG_DIR_DEFAULT);
     }
 
-    LOG_I("KERN", "=== CPCU Kernel Supervisor (Core 0) v2.2 ===");
+    LOG_I("KERN", "=== CPCU Kernel Supervisor (Core 0) v2.3.3 ===");
     signal(SIGINT,  on_sig);
     signal(SIGTERM, on_sig);
+    signal(SIGHUP,  on_sighup);                 /* v2.3.3 */
 
     /* Create shared memory */
     IPC_Context ipc;
     if(IPC_Create(&ipc) != 0)
     {
         LOG_F("KERN", "IPC_Create failed");
+        Log_CloseFiles();
+        return 1;
+    }
+
+    /* v2.3.3: load runtime config BEFORE spawning children, so they
+     * see a populated config region from their first IPC read. Try
+     * the user-supplied path first; if that fails AND it was the
+     * default symlink, try the in-repo path as a graceful fallback
+     * for development workflows where setup_pi.sh hasn't run. If
+     * BOTH fail we refuse to start — no silent defaults. */
+    int cfg_ret = kern_load_config(&ipc, config_path);
+    if(cfg_ret != 0 &&
+       strcmp(config_path, CONFIG_PATH_DEFAULT) == 0)
+    {
+        LOG_W("KERN", "default config path failed, trying %s",
+              CONFIG_PATH_FALLBACK);
+        cfg_ret = kern_load_config(&ipc, CONFIG_PATH_FALLBACK);
+    }
+    if(cfg_ret != 0)
+    {
+        LOG_F("KERN", "no usable runtime config — refusing to start. "
+                      "Run scripts/configure.sh --reset to regenerate, or "
+                      "pass --config <path> to override. "
+                      "See cpcu_v2/docs/RUNTIME_CONFIG.md.");
         Log_CloseFiles();
         return 1;
     }
@@ -257,6 +346,22 @@ int main(int argc, char *argv[])
     {
         sleep(1);
         time_t now                  =   time(NULL);
+
+        /* v2.3.3: SIGHUP reload. Re-parse the same path, republish to
+         * IPC. On parse failure, KEEP the previous config (writers
+         * already populated IPC at startup) and log loudly. We don't
+         * want a typo in runtime.json to take down a running session. */
+        if(g_reload_cfg)
+        {
+            g_reload_cfg            =   0;
+            LOG_I("KERN", "SIGHUP — reloading runtime config from %s",
+                  config_path);
+            int rr                  =   kern_load_config(&ipc, config_path);
+            if(rr != 0)
+            {
+                LOG_E("KERN", "SIGHUP reload failed — keeping previous config");
+            }
+        }
 
         /* Check if children died */
         int st;

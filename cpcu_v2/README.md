@@ -6,7 +6,7 @@ pipeline, and commands up to 6 servo motors via a PCA9685 PWM driver.
 
 [![Platform: RPi5](https://img.shields.io/badge/Platform-Raspberry%20Pi%205-c51a4a.svg)](#hardware)
 [![Language: C11 / Python 3](https://img.shields.io/badge/Language-C11%20%7C%20Python%203-green.svg)](#software-architecture)
-[![Version: v2.3.2](https://img.shields.io/badge/Version-v2.3.2-brightgreen.svg)](#)
+[![Version: v2.3.3](https://img.shields.io/badge/Version-v2.3.3-brightgreen.svg)](#)
 
 > **First time with this repo?** Start from the root
 > [`../SYSTEM_GUIDE.md`](../SYSTEM_GUIDE.md) — it covers the whole system
@@ -449,6 +449,10 @@ For BSAU-side tests (TB-100 through TB-309): [`../bsau_v2/docs/BSAU_TEST_GUIDE.m
   *v2.3.2.* Why the static arm "buzzes", why hobby servos do that,
   and how the hold-pose deadband suppresses it. Per-servo deadband
   tuning, what it doesn't fix.
+- **[`docs/RUNTIME_CONFIG.md`](docs/RUNTIME_CONFIG.md)** — *v2.3.3.*
+  Runtime-tunable knobs (`runtime.json`) vs compile-time safety
+  thresholds (`configure.sh`). The split, the loader, the seqlock
+  pattern, the bias-then-clamp invariant.
 
 ### Cross-references
 - **[`../bsau_v2/README.md`](../bsau_v2/README.md)** — transmitter

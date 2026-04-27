@@ -278,6 +278,27 @@ if echo "$PHASES" | grep -q "1"; then
         echo -e "${YELLOW}[SKIP]${RESET} smooth_testbench not built"
     fi
 
+    ## Find or build config_testbench (v2.3.3 — JSON loader unit tests)
+    CFG_BIN=""
+    if [ -f ./config_testbench ]; then
+        CFG_BIN="./config_testbench"
+    elif [ -f build/config_testbench ]; then
+        CFG_BIN="build/config_testbench"
+    else
+        echo "[BUILD] Compiling config_testbench..."
+        if [ -d build ]; then
+            cd build && make config_testbench && cd ..
+            CFG_BIN="build/config_testbench"
+        fi
+    fi
+
+    if [ -n "${CFG_BIN}" ]; then
+        run_test "TB-CFG01..CFG08: Runtime Config Loader" \
+            "${CFG_BIN}"
+    else
+        echo -e "${YELLOW}[SKIP]${RESET} config_testbench not built"
+    fi
+
     run_test "TB-DSP: DSP Pipeline Validation" \
         "python3 test/test_dsp_pipeline.py"
 fi

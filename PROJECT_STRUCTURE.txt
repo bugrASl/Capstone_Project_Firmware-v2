@@ -1,5 +1,5 @@
 #
-#   Prosthetic Hand Capstone — Project Directory Structure (v2.3.2)
+#   Prosthetic Hand Capstone — Project Directory Structure (v2.3.3)
 #   Author: bugrASl
 #   Date:   April 2026
 #
@@ -12,7 +12,57 @@
 #   touched by that change are listed in the "v2.1 DATASET mode" section
 #   below.
 #
-#   v2.3.2 (April 2026, latest):
+#   v2.3.3 (April 2026, latest):
+#     - cpcu_v2/include/cpcu_ipc.h                v2.3.3 — IPC_VERSION 0x0203,
+#                                                       IPC_RuntimeConfig region
+#                                                       (>= 512 B), config ptr
+#                                                       in IPC_Context, three
+#                                                       new API decls
+#     - cpcu_v2/src/cpcu_ipc.c                    v2.3.3 — region mapped, seq-
+#                                                       lock writers/readers
+#     - cpcu_v2/include/cpcu_config.h             new  — runtime-config loader
+#                                                       API (CFG_LoadFromFile,
+#                                                       CFG_Defaults,
+#                                                       CFG_StatusStr)
+#     - cpcu_v2/src/cpcu_config.c                 new  — hand-rolled JSON
+#                                                       parser, no third-party
+#                                                       deps; validates schema
+#                                                       version, ranges, sanity
+#     - cpcu_v2/config/runtime.json               new  — git-versioned default
+#                                                       config + // comment-
+#                                                       keys for human authors
+#     - cpcu_v2/src/cpcu_kernel.c                 v2.3.3 — --config CLI, SIGHUP
+#                                                       reload, refuse-to-start
+#                                                       on parse fail, two-tier
+#                                                       path fallback
+#     - cpcu_v2/src/cpcu_io.c                     v2.3.3 — IPC_RuntimeConfig
+#                                                       cache per tick, per-
+#                                                       servo bias-then-clamp
+#                                                       before PCA write
+#     - cpcu_v2/configure.sh                      new  — interactive + flag-
+#                                                       driven editor for
+#                                                       compile-time #defines
+#                                                       (--show / --diff /
+#                                                       --reset / --<name>
+#                                                       <value>)
+#     - cpcu_v2/setup_pi.sh                              — adds /opt/cpcu/
+#                                                       config.json symlink to
+#                                                       cpcu_v2/config/
+#                                                       runtime.json
+#     - cpcu_v2/test/config_testbench.c           new  — 30 unit tests for
+#                                                       JSON loader (TB-CFG01..
+#                                                       CFG08); 168 PASS total
+#     - cpcu_v2/CMakeLists.txt                          — cpcu_config library,
+#                                                       kernel + io link, ctest
+#     - cpcu_v2/run_tests.sh                            — runs config_testbench
+#                                                       in Phase 1
+#     - cpcu_v2/docs/RUNTIME_CONFIG.md            new  — full topic doc
+#                                                       (runtime/compile-time
+#                                                       split, schema, seqlock,
+#                                                       bias-then-clamp,
+#                                                       operating procedure)
+#
+#   v2.3.2 (April 2026):
 #     - cpcu_v2/include/cpcu_smooth.h             v2.1   — hold_deadband_us +
 #                                                       last_written_us shadow,
 #                                                       SMOOTH_ShouldWrite +
@@ -77,8 +127,8 @@
 #     - All docs refreshed for v3.4 page reorder, v2.3 ring recovery,
 #       v2.4 NRF non-fatal, no-sudo policy.
 #
-#   Total automated tests: 7 (codec) + 38 (safety FSM, +5 in v2.3.1) + 28 (smoother, new in v2.3.2) + 65 (DSP pipeline)
-#                        = 138 PASS in Phase 1.
+#   Total automated tests: 7 (codec) + 38 (safety FSM, +5 in v2.3.1) + 28 (smoother, new in v2.3.2) + 30 (config, new in v2.3.3) + 65 (DSP pipeline)
+#                        = 168 PASS in Phase 1.
 #
 
 # =============================================================================

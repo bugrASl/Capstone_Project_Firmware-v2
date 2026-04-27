@@ -1,4 +1,4 @@
-# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2
+# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -292,7 +292,56 @@ the deadband on real hardware, see [`JITTER_MITIGATION.md`](JITTER_MITIGATION.md
 §2 (the "with vs without deadband" comparison) and use
 `pca_testbench` to inspect a servo at rest.
 
-### 3.5 TUI demo validation (visual, no hardware)
+### 3.5 TB-CONFIG — runtime config loader (automated, no hardware)
+
+```bash
+./config_testbench
+# or:
+ctest -R config_loader --output-on-failure
+```
+
+Self-contained unit harness for `cpcu_config.c`. Drives the JSON
+loader through synthetic input files written to `/tmp/`, verifies
+parse success, defaults, and every error code path.
+
+**Eight test groups, 30 individual checks, all must PASS:**
+
+1.  **TB-CFG01 Valid full file** — every field in the schema parses
+    correctly into `IPC_RuntimeConfig`. Magic byte set,
+    `schema_version` captured, `servo_min_us` / `servo_max_us` /
+    `servo_bias_us` / `smooth_deadband_us` / `interp_conf_ceil_pct`
+    / `grip_firm_us` populated.
+2.  **TB-CFG02 Defaults** — `CFG_Defaults()` produces a sane
+    factory-reset state. Magic set, schema=1, sane servo limits,
+    floor < ceil, grip_firm < grip_touch < grip_open.
+3.  **TB-CFG03 Missing file** — non-existent path returns
+    `CFG_ERR_OPEN` with a populated error message; parser doesn't
+    crash.
+4.  **TB-CFG04 Wrong schema_version** — `schema_version = 99`
+    returns `CFG_ERR_SCHEMA`; error message mentions `schema_version`.
+5.  **TB-CFG05 Out-of-range value** — `servo_max_us[5] = 9999`
+    (over the 2600 µs hard cap) returns `CFG_ERR_RANGE`.
+6.  **TB-CFG06 min >= max sanity** — `servo_min_us[0] = 1500,
+    servo_max_us[0] = 1499` returns `CFG_ERR_RANGE`; error mentions
+    the offending channel.
+7.  **TB-CFG07 Optional fields honoured** — minimal-required-only
+    file plus three optionals (`hysteresis_votes`, `grip_firm_us`,
+    `servo_bias_us`) parses cleanly and the optionals' values are
+    captured.
+8.  **TB-CFG08 Optional fields default when absent** — minimal-only
+    file parses cleanly and absent optionals fall back to their
+    `CFG_Defaults()` values.
+
+**Pass criteria:** stdout shows `[PASS]` for all 30 checks, exit code
+is 0.
+
+This testbench exercises the parser only — the IPC seqlock side is
+tested implicitly by the live system (cpcu_io reads cfg_cache every
+tick during normal operation). The pattern matches the established
+motor-cmd seqlock and is documented in
+[`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) §5.
+
+### 3.6 TUI demo validation (visual, no hardware)
 
 ```bash
 ./cpcu_tui --demo
@@ -376,7 +425,7 @@ terminal**: you're running an older build that hardcoded `g_mini_h=4`.
 Rebuild with the current `signal_testbench.c` — layout now scales
 vertically with `g_term_h`.
 
-### 3.6 Note on `signal_testbench` (what it is, what it isn't)
+### 3.7 Note on `signal_testbench` (what it is, what it isn't)
 
 `signal_testbench` plots the **raw ADC stream** straight off the IPC ring.
 It is a physical-layer test: function-gen → BSAU ADC → NRF TX → NRF RX →

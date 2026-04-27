@@ -1,4 +1,4 @@
-# CPCU Configuration Reference — v2.3.2
+# CPCU Configuration Reference — v2.3.3
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -11,27 +11,44 @@ does, and how to change it.
 
 ## 0. How configuration is layered
 
-Configuration lives in five places, in order of how invasive a change is:
+Configuration lives in **six** places, in order of how invasive a
+change is. As of v2.3.3 there's an explicit split between the
+**runtime** layer (live-tunable, no rebuild) and the **compile-time**
+layers (safety thresholds, must rebuild). See
+[`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) for the full split rationale.
 
 1. **Compile-time C constants** in headers (`cpcu_safety.h`,
    `cpcu_smooth.h`, `cpcu_pca9685.h`, `bsau_config.h`). Editing requires
    `cmake --build` and (for BSAU) re-flash. These are the things that
    define the *physics* of the system — sample rate, voltages, mechanical
-   limits.
+   limits, safety envelope. **Use [`../configure.sh`](../configure.sh)
+   to edit safely** (sed wrapper with range validation + rebuild
+   reminder; see §1 and `RUNTIME_CONFIG.md` §3).
 
-2. **Compile-time Python constants** at the top of `cpcu_dsp.py`. Editing
+2. **Runtime JSON config** — `cpcu_v2/config/runtime.json`. v2.3.3.
+   Live-tunable from disk: edit JSON, send `SIGHUP` to cpcu_kernel,
+   the new values reach all consumers via shared memory within ~20 ms.
+   Carries servo limits (calibration), gesture velocities, smoother
+   tuning, grip levels, per-servo bias offsets. **Bias-then-clamp:**
+   no runtime value can escape the compile-time hardware envelope.
+   Full schema in [`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) §2.
+
+3. **Compile-time Python constants** at the top of `cpcu_dsp.py`. Editing
    requires `sudo cp` to `/opt/cpcu/scripts/` and a kernel restart.
-   Active channels, ML thresholds, gesture mappings.
+   Active channels, ML thresholds, gesture mappings. (v2.3.5 will
+   migrate the tunable subset of these into `runtime.json`.)
 
-3. **Runtime defines via `cpcu_io.c`** — set during `main()` after
+4. **Runtime defines via `cpcu_io.c`** — set during `main()` after
    `SMOOTH_Init`. Per-servo enable, accel, velocity. Editing requires
-   recompile of cpcu_io specifically.
+   recompile of cpcu_io specifically. (Migrating to `runtime.json` in
+   future v2.3.x — see RUNTIME_CONFIG.md §2 forward-looking table.)
 
-4. **Operator commands via the TUI** — runtime, no recompile. Kill,
+5. **Operator commands via the TUI** — runtime, no recompile. Kill,
    resume, clear-counters. Set by writing bits to
-   `ipc.ctrl->operator_cmd`.
+   `ipc.ctrl->operator_cmd`. v2.3.4 adds an edit-mode for editing
+   the runtime JSON live from page 7.
 
-5. **System-level** — kernel cmdline, raspi-config, systemd unit. Once
+6. **System-level** — kernel cmdline, raspi-config, systemd unit. Once
    set, persists across reboots.
 
 ---
