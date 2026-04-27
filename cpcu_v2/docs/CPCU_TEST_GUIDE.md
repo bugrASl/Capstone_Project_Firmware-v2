@@ -1,4 +1,4 @@
-# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3
+# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -385,7 +385,14 @@ live.
 -   Page 7 (CONFIG) renders four static spec sections (BSAU/CPCU,
     wireless/IPC, motor/DSP, build info) — nothing changes over time
     because this is a compile-time reference page. *(v3.4: this page
-    moved from key 5 to key 7.)*
+    moved from key 5 to key 7.)* **v2.3.4:** the page now starts with
+    a one-row edit-mode banner. In demo mode it should read
+    `Edit mode: [LOCKED]` (dim). Pressing `e` while on this page
+    flips the banner to `[PARKING ARM...]` (yellow), then to
+    `[EDITING - arm parked]` (green) once the demo's smoother
+    settles. Pressing `e` again returns to `[LOCKED]`. Pressing `e`
+    on any OTHER page must do nothing — it's page-7-local. See
+    [`EDIT_MODE.md`](EDIT_MODE.md) for the full handshake protocol.
 -   Resizing the terminal window reflows the layout on the next frame.
 -   Pressing `F` (inject radio freeze) causes the Health banner on
     Page 1 to turn yellow then red, verdict goes `WARNING` → `DEGRADED`,

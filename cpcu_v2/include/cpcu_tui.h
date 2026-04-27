@@ -203,7 +203,7 @@ void          draw_page_waves         (int r, IPC_Context *ipc);
 void          draw_page_health        (int r, IPC_Context *ipc,
                                        uint32_t pkt_rate, float loss_rate);
 void          draw_page_dataset       (int r, IPC_Context *ipc);
-void          draw_page_config        (int r);
+void          draw_page_config        (int r, IPC_Context *ipc);
 
 void          draw_waveform           (int row, int col, int width, int height,
                                        int ch_idx, int color_pair);

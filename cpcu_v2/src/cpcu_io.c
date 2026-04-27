@@ -3,13 +3,27 @@
  *  @brief      Core 3 — Real-time I/O controller
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.3.3
+ *  @version    2.3.4
  *  @details    Deterministic loop:
  *                  1. Busy-poll NRF via spidev         -> read payload
  *                  2. WL_Unpack -> seq/safety/link     -> push to SPSC ring
  *                  3. Rate-limited (50 Hz) PCA servo update via I2C
  *                  4. Safety checks: radio, DSP, I2C, thermal, ring
  *                  5. Heartbeat to shared memory for watchdog
+ *
+ *              v2.3.4 changes:
+ *                  - Edit-mode handshake responder. When the TUI sets
+ *                    ipc.ctrl->edit_mode_request = 1, cpcu_io overrides
+ *                    incoming motor commands, parks the smoother at
+ *                    neutral, and once SMOOTH_AllSettled() goes true
+ *                    flips ipc.ctrl->edit_mode_active = 1 to tell the
+ *                    TUI it's safe to edit. While active is 1, motor
+ *                    commands from cpcu_dsp.py are silently ignored
+ *                    (sticky-park). On request -> 0, active drops and
+ *                    normal motor-cmd processing resumes. Safety FSM
+ *                    has priority — any SAFE transition forces
+ *                    edit_mode_active back to 0 unconditionally. Full
+ *                    protocol in cpcu_v2/docs/EDIT_MODE.md.
  *
  *              v2.3.3 changes:
  *                  - Reads IPC_RuntimeConfig once per servo tick
@@ -398,14 +412,55 @@ int main(int argc, char *argv[])
 
             if(SAFETY_CheckSystem(&safety) && pca_ok)
             {
-                if(IPC_ReadMotorCmd(&ipc, servo_us, &gesture_id, &confidence, &mcmd_ack))
-                {
-                    /* Notify safety: DSP is alive */
-                    SAFETY_FeedMotorCMD(&safety, t);
+                /* v2.3.4: Edit-mode handshake.
+                 * If the TUI has requested edit mode, override any incoming
+                 * motor command with neutral. Once the smoother has walked
+                 * to neutral and settled, set edit_mode_active = 1 to tell
+                 * the TUI it's safe to edit. While active, motor commands
+                 * stay ignored (sticky-park). On exit, drop active and
+                 * resume normal motor cmd processing. Safety FSM has
+                 * priority — a fault forces edit mode off.
+                 *
+                 * This sits inside the safety-OK + pca-OK branch so faults
+                 * naturally drop edit mode (the SAFE branch below will
+                 * snap to neutral and clear active). */
+                uint8_t edit_req = atomic_load_explicit(
+                    &ipc.ctrl->edit_mode_request, memory_order_acquire);
 
-                    /* Clamp targets to safe range, feed to smoother */
-                    PCA_SafetyClamp(&pca, servo_us);
-                    SMOOTH_SetAllTargets(&smooth, servo_us);
+                if(edit_req)
+                {
+                    /* Park at neutral. Don't touch IPC motor_cmd —
+                     * cpcu_dsp.py is still publishing but we ignore it. */
+                    uint16_t neutral_targets[PCA_SERVO_COUNT];
+                    for(int s = 0; s < PCA_SERVO_COUNT; s++)
+                        neutral_targets[s] = PCA_SERVO_NEUTRAL;
+                    SMOOTH_SetAllTargets(&smooth, neutral_targets);
+
+                    /* Once we've walked there, signal active. The TUI
+                     * can then enable its editor and start writing
+                     * runtime.json. We keep republishing this every
+                     * tick (idempotent atomic store) so a TUI that
+                     * connects late still sees the right state. */
+                    uint8_t active_now = SMOOTH_AllSettled(&smooth) ? 1 : 0;
+                    atomic_store_explicit(&ipc.ctrl->edit_mode_active,
+                                          active_now, memory_order_release);
+                }
+                else
+                {
+                    /* Not in edit mode: clear active (idempotent),
+                     * normal motor-cmd path. */
+                    atomic_store_explicit(&ipc.ctrl->edit_mode_active,
+                                          0, memory_order_release);
+
+                    if(IPC_ReadMotorCmd(&ipc, servo_us, &gesture_id, &confidence, &mcmd_ack))
+                    {
+                        /* Notify safety: DSP is alive */
+                        SAFETY_FeedMotorCMD(&safety, t);
+
+                        /* Clamp targets to safe range, feed to smoother */
+                        PCA_SafetyClamp(&pca, servo_us);
+                        SMOOTH_SetAllTargets(&smooth, servo_us);
+                    }
                 }
 
                 /* Advance smoother toward targets */
@@ -500,6 +555,12 @@ int main(int argc, char *argv[])
                  * neutral on the very next tick. */
                 for(int s = 0; s < PCA_SERVO_COUNT; s++)
                     SMOOTH_MarkWritten(&smooth, s, PCA_SERVO_NEUTRAL);
+
+                /* v2.3.4: edit mode loses to safety. Clear active so the
+                 * TUI's banner reverts to LOCKED on next render. The TUI
+                 * must re-request after the system recovers. */
+                atomic_store_explicit(&ipc.ctrl->edit_mode_active,
+                                      0, memory_order_release);
             }
         }
 

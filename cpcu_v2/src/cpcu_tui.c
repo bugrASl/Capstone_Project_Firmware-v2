@@ -296,7 +296,7 @@ int main(int argc, char *argv[])
             case PAGE_WAVES:    draw_page_waves(r, &ipc);                       break;
             case PAGE_HEALTH:   draw_page_health(r, &ipc, pkt_rate, loss_rate); break;
             case PAGE_DATASET:  draw_page_dataset(r, &ipc);                     break;
-            case PAGE_CONFIG:   draw_page_config(r);                            break;
+            case PAGE_CONFIG:   draw_page_config(r, &ipc);                      break;
             default: break;
         }
 
@@ -402,6 +402,36 @@ int main(int argc, char *argv[])
                 {
                     demo_freq_hz *= 2.0f;
                     if(demo_freq_hz > 1000.0f) demo_freq_hz = 1000.0f;
+                }
+                break;
+
+            /*-- Page 7 (Config) edit-mode toggle (v2.3.4) ----------------*/
+            /*  Pressing 'e' on the CONFIG page raises (or lowers) the
+             *  edit_mode_request flag in IPC. cpcu_io watches that flag,
+             *  parks the smoother at neutral, and once SMOOTH_AllSettled
+             *  flips edit_mode_active to 1 — which the CONFIG renderer
+             *  surfaces as a banner. The handshake protocol is fully
+             *  documented in cpcu_v2/docs/EDIT_MODE.md.
+             *
+             *  Page-local: pressing 'e' from any other page does nothing
+             *  (no global edit-mode action). The TUI's general principle
+             *  is that destructive operations are scoped to the page
+             *  that owns them. */
+            case 'e': case 'E':
+                if(current_page == PAGE_CONFIG)
+                {
+                    uint8_t cur = atomic_load_explicit(
+                        &ipc.ctrl->edit_mode_request, memory_order_acquire);
+                    uint8_t next = cur ? 0 : 1;
+                    if(next)
+                    {
+                        atomic_store_explicit(
+                            &ipc.ctrl->edit_mode_request_us,
+                            now_ms_wall() * 1000ULL, memory_order_release);
+                    }
+                    atomic_store_explicit(
+                        &ipc.ctrl->edit_mode_request, next,
+                        memory_order_release);
                 }
                 break;
 

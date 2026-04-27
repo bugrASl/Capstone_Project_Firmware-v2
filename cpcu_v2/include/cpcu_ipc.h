@@ -36,7 +36,7 @@ extern "C" {
 #define IPC_SHM_NAME            "/cpcu_ipc"
 #define IPC_SHM_PERMS           0644            /* Owner RW, Group/Others R */
 #define IPC_MAGIC               0x494E4654UL    /* "INFT" - Infinitech */
-#define IPC_VERSION             0x0203          /* v2.3.3 — added IPC_RuntimeConfig */
+#define IPC_VERSION             0x0204          /* v2.3.4 — added edit_mode_* control bytes */
 
 #define IPC_SENSOR_RING_SIZE    1024
 #define IPC_SENSOR_RING_MASK    (IPC_SENSOR_RING_SIZE - 1)
@@ -59,7 +59,25 @@ typedef struct __attribute__((aligned(64)))
     uint8_t             _pad0[3];
     _Atomic uint64_t    io_heartbeat_us;
     _Atomic uint32_t    motor_cmd_ack;
-    uint8_t             _reserved0[36];
+
+    /* v2.3.4: Edit-mode handshake.
+     *   request:  TUI -> world. 1 = "I want edit mode", 0 = "I want to exit".
+     *   active:   io+dsp -> TUI. 1 = "we're parked, you may edit",
+     *             0 = "we're not in edit mode" (either not requested, or
+     *             still walking to neutral, or fault forced exit).
+     *   request_us: when the request was raised, for TUI's 500 ms timeout.
+     * 3 atomic bytes + 5 pad + 8 timestamp = 16 bytes, fits in the 36 B
+     * reserve below. The TUI is the sole writer of request/request_us;
+     * cpcu_io is the sole writer of active. cpcu_dsp.py reads request,
+     * never writes.
+     * See cpcu_v2/docs/EDIT_MODE.md for the full handshake protocol. */
+    _Atomic uint8_t     edit_mode_request;
+    _Atomic uint8_t     edit_mode_active;
+    _Atomic uint8_t     edit_mode_dsp_ack;          /* dsp acks it saw the request */
+    uint8_t             _pad_edit[5];
+    _Atomic uint64_t    edit_mode_request_us;
+
+    uint8_t             _reserved0[12];
 
     /* Cache line 1:    Producer Index (Core 3 writes, Cores 1-2 read) */
     _Atomic uint32_t    sensor_head __attribute__((aligned(64)));

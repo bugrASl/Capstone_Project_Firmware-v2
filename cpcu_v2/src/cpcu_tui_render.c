@@ -1667,8 +1667,65 @@ void draw_page_dataset(int r, IPC_Context *ipc)
  *  runtime — it's a "spec sheet" so new readers understand the system
  *  they're looking at without digging through source/docs.
  */
-void draw_page_config(int r)
+void draw_page_config(int r, IPC_Context *ipc)
 {
+    /*==================== EDIT-MODE BANNER (v2.3.4) ====================*/
+    /*  Shows the current handshake state. The banner consumes one row
+     *  at the very top of the CONFIG page so it's always visible while
+     *  editing.
+     *
+     *  States:
+     *    LOCKED      — edit_mode_request == 0. Read-only. Press 'e' to enter.
+     *    PARKING     — request is set, smoother walking to neutral, not yet
+     *                  settled (active still 0). Editing not yet allowed.
+     *    EDITING     — both request and active are 1. Arm parked at neutral.
+     *                  Edits permitted (and persisted on Ctrl+S).
+     *    DSP UNRESP  — request raised but dsp_ack hasn't flipped within
+     *                  500 ms. Possible cpcu_dsp.py crash. Editing held.
+     */
+    uint8_t  edit_req      = atomic_load(&ipc->ctrl->edit_mode_request);
+    uint8_t  edit_active   = atomic_load(&ipc->ctrl->edit_mode_active);
+    uint8_t  edit_dsp_ack  = atomic_load(&ipc->ctrl->edit_mode_dsp_ack);
+    uint64_t edit_req_us   = atomic_load(&ipc->ctrl->edit_mode_request_us);
+    uint64_t now_us        = now_ms_wall() * 1000ULL;
+
+    const char *banner_text;
+    int banner_color;
+    if(!edit_req)
+    {
+        banner_text  = "Edit mode: [LOCKED]      Press 'e' on this page to enter edit mode";
+        banner_color = CP_DIM;
+    }
+    else if(edit_active)
+    {
+        banner_text  = "Edit mode: [EDITING - arm parked]   Press 'e' to exit, "
+                       "Ctrl+S to save (planned)";
+        banner_color = CP_GOOD;
+    }
+    else
+    {
+        /* Request is up but cpcu_io hasn't confirmed settled.
+         * Distinguish "still walking" from "DSP unresponsive". */
+        uint64_t elapsed_ms = (edit_req_us > 0 && now_us > edit_req_us)
+                              ? (now_us - edit_req_us) / 1000 : 0;
+        if(elapsed_ms > 500 && !edit_dsp_ack)
+        {
+            banner_text  = "Edit mode: [DSP UNRESPONSIVE]   handshake timed out, "
+                           "check cpcu_dsp.py";
+            banner_color = CP_BAD;
+        }
+        else
+        {
+            banner_text  = "Edit mode: [PARKING ARM...]   waiting for SMOOTH_AllSettled, "
+                           "press 'e' again to abort";
+            banner_color = CP_WARN;
+        }
+    }
+    attron(COLOR_PAIR(banner_color) | A_BOLD);
+    mvprintw(r, 1, "%-*s", g_tui_w - 2, banner_text);
+    attroff(COLOR_PAIR(banner_color) | A_BOLD);
+    r += 2;
+
     /*==================== BSAU SIDE ====================*/
     draw_section(r, 1,       "BSAU (BIOSIGNAL ACQUISITION UNIT)");
     draw_section(r, g_col_r, "CPCU (CENTRAL PROCESSING & CONTROL UNIT)");

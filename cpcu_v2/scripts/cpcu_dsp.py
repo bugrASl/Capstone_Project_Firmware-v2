@@ -383,6 +383,9 @@ def run_inference(verbose=False):
     consecutive_count   =   0
     last_active_class   =   0
 
+    # v2.3.4 — edit-mode handshake state
+    edit_mode_seen      =   False
+
     # Periodic-report state
     last_report_t       =   time.monotonic()
     inferences_done     =   0
@@ -468,12 +471,43 @@ def run_inference(verbose=False):
                 inference_time_us       =   inference_us,
             )
 
-            # Drive servos from the gesture map (or neutral if unmapped)
-            servo_us    =   GESTURE_SERVO_MAP.get(
-                                current_state,
-                                [SERVO_NEUTRAL_US] * NUM_SERVOS
-                            )
-            ipc.write_motor_cmd(servo_us, last_active_class, conf_pct)
+            # v2.3.4: Edit-mode handshake.
+            # If the TUI has requested edit mode, stop publishing motor
+            # commands. cpcu_io ignores them anyway (sticky-park) but
+            # not flooding IPC keeps the diagnostic tracelog clean.
+            # We also commit the inference state to "rest" so any later
+            # edit-mode-exit doesn't carry stale gesture history.
+            # The dsp_ack byte tells the TUI we've seen the request.
+            edit_req = ipc.read_edit_request()
+            if edit_req:
+                if not edit_mode_seen:
+                    # First tick we noticed it — commit to rest, stop
+                    # publishing, ack.
+                    current_state    =   "rest"
+                    consecutive_count =  0
+                    last_active_class =  CLASS_REST
+                    ipc.write_edit_dsp_ack(1)
+                    edit_mode_seen   =   True
+                    if verbose:
+                        print("[DSP] edit-mode requested -> sticky-rest, "
+                              "motor cmds suspended", flush=True)
+                # Don't publish motor_cmd. cpcu_io is parking at neutral
+                # via its own handshake responder.
+            else:
+                if edit_mode_seen:
+                    # Just exited edit mode. Clear ack so TUI sees us
+                    # back on the bus. Resume normal motor publishing.
+                    ipc.write_edit_dsp_ack(0)
+                    edit_mode_seen   =   False
+                    if verbose:
+                        print("[DSP] edit-mode exited -> resuming", flush=True)
+
+                # Drive servos from the gesture map (or neutral if unmapped)
+                servo_us    =   GESTURE_SERVO_MAP.get(
+                                    current_state,
+                                    [SERVO_NEUTRAL_US] * NUM_SERVOS
+                                )
+                ipc.write_motor_cmd(servo_us, last_active_class, conf_pct)
 
             ipc.inc_dsp_inferences()
             inferences_done    +=   1

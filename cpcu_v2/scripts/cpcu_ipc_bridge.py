@@ -72,6 +72,13 @@ CTRL_DSP_READY          =   7
 CTRL_STATE              =   8
 CTRL_HEARTBEAT          =   12          # uint64
 CTRL_MOTOR_ACK          =   20          # uint32
+
+# v2.3.4: edit-mode handshake bytes (live in the cache-line 0 reserve region)
+CTRL_EDIT_REQUEST       =   24          # uint8 — TUI -> world
+CTRL_EDIT_ACTIVE        =   25          # uint8 — io  -> TUI
+CTRL_EDIT_DSP_ACK       =   26          # uint8 — dsp -> TUI (ack flag)
+CTRL_EDIT_REQUEST_US    =   32          # uint64 (5B pad at 27..31 for align)
+
 CTRL_HEAD               =   64          # cache line 1
 CTRL_TAIL               =   128         # cache line 2
 
@@ -198,6 +205,25 @@ class IPCBridge:
     def read_dsp_ready(self):       return self._r8(OFF_CTRL + CTRL_DSP_READY)
     def set_dsp_ready(self):        self._w8(OFF_CTRL + CTRL_DSP_READY, 1)
     def read_heartbeat(self):       return self._r64(OFF_CTRL + CTRL_HEARTBEAT)
+
+    # v2.3.4: Edit-mode handshake helpers.
+    def read_edit_request(self):    return self._r8(OFF_CTRL + CTRL_EDIT_REQUEST)
+    def read_edit_active(self):     return self._r8(OFF_CTRL + CTRL_EDIT_ACTIVE)
+    def write_edit_request(self, v):
+        # TUI is the sole writer of request + request_us.
+        self._w8(OFF_CTRL + CTRL_EDIT_REQUEST, v)
+        # Stamp request time so the TUI can implement its 500 ms timeout.
+        if v:
+            import time as _t
+            self._w64(OFF_CTRL + CTRL_EDIT_REQUEST_US,
+                      int(_t.monotonic_ns() // 1000))
+    def read_edit_dsp_ack(self):    return self._r8(OFF_CTRL + CTRL_EDIT_DSP_ACK)
+    def write_edit_dsp_ack(self, v):
+        # cpcu_dsp.py acknowledges that it has seen the request and stopped
+        # publishing motor commands. The TUI doesn't gate edit-active on
+        # this — cpcu_io's SMOOTH_AllSettled is the authoritative gate —
+        # but the ack is exposed in the diagnostic banner.
+        self._w8(OFF_CTRL + CTRL_EDIT_DSP_ACK, v)
 
     def _read_head(self):           return self._r32(OFF_CTRL + CTRL_HEAD)
     def _read_tail(self):           return self._r32(OFF_CTRL + CTRL_TAIL)

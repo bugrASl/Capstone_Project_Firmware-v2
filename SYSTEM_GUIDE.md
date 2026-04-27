@@ -1,8 +1,8 @@
-# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.3)
+# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.4)
 
 **Author:** bugrASl
 **Date:** April 2026
-**Status:** v2.3.3 (boot grace period — eliminates BSAU/CPCU power-on coordination)
+**Status:** v2.3.4 (TUI edit-mode handshake — safe live calibration without killing the arm)
 
 ---
 
@@ -18,6 +18,16 @@ head instead of a recipe you can't modify.
 > **What changed since v2.1.** This document was extended several times
 > as the project matured. The biggest deltas:
 >
+> - **v2.3.4 (CPCU TUI, edit-mode handshake)** — Pressing `e` on the
+>   CONFIG page (page 7) raises an IPC flag; cpcu_io parks the
+>   smoother at neutral and acks once `SMOOTH_AllSettled()`; cpcu_dsp.py
+>   commits to "rest" and stops publishing motor commands. The TUI
+>   banner walks LOCKED → PARKING → EDITING (or → DSP UNRESPONSIVE
+>   on a 500 ms ack timeout). Safety FSM has priority — any fault
+>   forces edit mode off. Three new atomic bytes + timestamp added
+>   to `IPC_ControlBlock`'s reserve region (no layout change;
+>   `IPC_VERSION` 0x0203 → 0x0204). See
+>   [`cpcu_v2/docs/EDIT_MODE.md`](cpcu_v2/docs/EDIT_MODE.md).
 > - **v2.3.3 (CPCU runtime config)** — JSON-backed runtime tunables
 >   (`cpcu_v2/config/runtime.json`) mirrored to a shared-memory IPC
 >   region, parsed once on startup and on `SIGHUP`. Per-servo bias
