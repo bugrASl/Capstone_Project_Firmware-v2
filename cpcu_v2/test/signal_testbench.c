@@ -53,6 +53,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+#include <stdatomic.h>      /* v2.4.1 — IPC_ToolPresence publish */
 
 #include "cpcu_ipc.h"
 #include "demo_signals.h"
@@ -137,6 +138,56 @@ typedef struct
 
 static volatile sig_atomic_t g_run = 1;
 static void on_sig(int s) { (void)s; g_run = 0; }
+
+/* v2.4.1: publish to IPC_ToolPresence slot 1 (signal_testbench).
+ * The web bridge reads this and surfaces it on the dashboard's Tools
+ * tab. Cheap — called once per main-loop iteration (~20 Hz). Empty
+ * payload regions are zeroed so a partial write doesn't leak old
+ * bytes. The companion call sigtb_tool_presence_clear() goes in
+ * cleanup so the dashboard sees us go away when we exit cleanly. */
+static void sigtb_tool_presence_publish(IPC_Context *ipc,
+                                        int sel_ch,
+                                        float rms,
+                                        uint32_t drops)
+{
+    if(!ipc || !ipc->tool_presence) return;
+    IPC_ToolSlot *t = &ipc->tool_presence->slot[IPC_TOOL_SLOT_SIGNAL];
+
+    /* Name (16 B fixed). Written once is enough but it's cheap. */
+    memset(t->tool_name, 0, IPC_TOOL_NAME_MAX);
+    memcpy(t->tool_name, "signal_testbench",
+           sizeof("signal_testbench") - 1 < IPC_TOOL_NAME_MAX
+               ? sizeof("signal_testbench") - 1
+               : IPC_TOOL_NAME_MAX);
+
+    /* Payload (32 B). Layout per the bridge's decoder:
+     *   [0]   selected channel (uint8)
+     *   [1..4] RMS (float bits as uint32 LE)
+     *   [5..8] drop counter (uint32 LE)
+     *   [9..31] reserved, zeroed.
+     */
+    memset(t->payload, 0, IPC_TOOL_PAYLOAD_BYTES);
+    t->payload[0] = (uint8_t)sel_ch;
+    memcpy(&t->payload[1], &rms, 4);
+    memcpy(&t->payload[5], &drops, 4);
+
+    /* Heartbeat, then alive=1 last (release ordering so a reader that
+     * sees alive=1 also sees the fresh name+payload+heartbeat). */
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t now_us = (uint64_t)ts.tv_sec * 1000000ULL +
+                      (uint64_t)ts.tv_nsec / 1000ULL;
+    atomic_store_explicit(&t->last_heartbeat_us, now_us,
+                          memory_order_relaxed);
+    atomic_store_explicit(&t->alive, 1, memory_order_release);
+}
+
+static void sigtb_tool_presence_clear(IPC_Context *ipc)
+{
+    if(!ipc || !ipc->tool_presence) return;
+    IPC_ToolSlot *t = &ipc->tool_presence->slot[IPC_TOOL_SLOT_SIGNAL];
+    atomic_store_explicit(&t->alive, 0, memory_order_release);
+}
 
 static ChannelState channels[WL_NUM_CHANNELS];
 static int  selected_ch     = 0;    /* Currently displayed channel */
@@ -765,6 +816,18 @@ int main(int argc, char *argv[])
         else
             draw_screen(&ipc, demo_mode);
 
+        /* v2.4.1: publish to IPC_ToolPresence so the web dashboard's
+         * Tools tab can show that we're running. Skip in demo mode
+         * (no live IPC). The amplitude_vpp value comes from the
+         * channel's existing peak-to-peak voltage measurement. */
+        if(!demo_mode)
+        {
+            uint32_t drops_now = atomic_load(&ipc.diag->io_pkts_dropped);
+            sigtb_tool_presence_publish(&ipc, selected_ch,
+                                        channels[selected_ch].vpp_v,
+                                        drops_now);
+        }
+
         /* 5. Handle input */
         int key = getch();
         switch(key)
@@ -805,6 +868,11 @@ int main(int argc, char *argv[])
     }
 
     /* Cleanup */
+    /* v2.4.1: clear our IPC_ToolPresence slot so the dashboard's
+     * Tools tab notices us going away immediately, rather than
+     * waiting for the 2-second heartbeat-stale timeout. */
+    if(!demo_mode) sigtb_tool_presence_clear(&ipc);
+
     endwin();
     if(!demo_mode) IPC_Close(&ipc);
 
