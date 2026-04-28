@@ -24,7 +24,7 @@ import numpy as np
 
 IPC_SHM_PATH            =   "/dev/shm/cpcu_ipc"
 IPC_MAGIC               =   0x494E4654
-IPC_VERSION             =   0x0201
+IPC_VERSION             =   0x0206          # v2.4.0 — IPC_ToolPresence + IPC_DspFiltered
 
 RING_SIZE               =   1024
 RING_MASK               =   RING_SIZE - 1
@@ -44,6 +44,9 @@ SZ_MOTOR                =   128         # 2 cache lines
 SZ_DIAG                 =   128         # 2 cache lines
 SZ_EXPORT               =   256         # 4 cache lines
 SZ_RING                 =   SZ_ENTRY * RING_SIZE    # 65536
+SZ_CONFIG               =   512         # IPC_RuntimeConfig (v2.3.3)
+SZ_TOOL_PRESENCE        =   512         # 8 slots × 64 B (v2.4.0)
+SZ_DSP_FILTERED         =   6432        # 32 B header + 8 ch × 200 samples × 4 B (v2.4.0)
 
 # ══════════════════════════════════════════════════════════════════════
 #  SECTION OFFSETS — sequential in shared memory
@@ -54,7 +57,10 @@ OFF_RING                =   OFF_CTRL + SZ_CTRL                  # 192
 OFF_MOTOR               =   OFF_RING + SZ_RING                  # 65728
 OFF_DIAG                =   OFF_MOTOR + SZ_MOTOR                # 65856
 OFF_EXPORT              =   OFF_DIAG + SZ_DIAG                  # 65984
-SHM_TOTAL               =   OFF_EXPORT + SZ_EXPORT              # 66240
+OFF_CONFIG              =   OFF_EXPORT + SZ_EXPORT              # 66240 (v2.3.3)
+OFF_TOOL_PRESENCE       =   OFF_CONFIG + SZ_CONFIG              # 66752 (v2.4.0)
+OFF_DSP_FILTERED        =   OFF_TOOL_PRESENCE + SZ_TOOL_PRESENCE # 67264 (v2.4.0)
+SHM_TOTAL               =   OFF_DSP_FILTERED + SZ_DSP_FILTERED   # 73696 (v2.4.0)
 
 # ══════════════════════════════════════════════════════════════════════
 #  FIELD OFFSETS within IPC_ControlBlock (192 bytes)
@@ -140,6 +146,35 @@ EXPORT_NUM_CLASSES      =   88
 EXPORT_ACTIVE_CLASS     =   89
 EXPORT_INF_TIME         =   92          # uint32
 EXPORT_UPDATE_SEQ       =   96          # uint32
+
+# ══════════════════════════════════════════════════════════════════════
+#  FIELD OFFSETS within IPC_DspFiltered (v2.4.0)
+# ══════════════════════════════════════════════════════════════════════
+#  Layout (matches cpcu_ipc.h):
+#    seq(4) + sample_rate_hz(4) + update_us(8) + _pad0(16) = 32 B header
+#    channel[8][200] of float32 = 6400 B payload
+#  Total: 6432 B.
+
+DSPFILT_SEQ             =   0           # uint32, odd = writer in progress
+DSPFILT_SAMPLE_RATE     =   4           # uint32 (Hz, e.g. 200)
+DSPFILT_UPDATE_US       =   8           # uint64 (monotonic time)
+DSPFILT_HEADER_BYTES    =   32          # data starts here
+DSPFILT_NUM_CHANNELS    =   8
+DSPFILT_NUM_SAMPLES     =   200         # 1 s of envelope @ 200 Hz
+DSPFILT_BYTES_PER_CH    =   DSPFILT_NUM_SAMPLES * 4
+
+# ══════════════════════════════════════════════════════════════════════
+#  FIELD OFFSETS within IPC_ToolPresence slot (v2.4.0)
+# ══════════════════════════════════════════════════════════════════════
+#  Slot layout (64 B):
+#    alive(1) + _pad0(7) + last_heartbeat_us(8) + tool_name[16]
+#    + payload[32]
+
+TOOL_SLOT_BYTES         =   64
+TOOL_SLOT_ALIVE         =   0
+TOOL_SLOT_HEARTBEAT_US  =   8
+TOOL_SLOT_NAME          =   16          # 16 bytes
+TOOL_SLOT_PAYLOAD       =   32          # 32 bytes
 
 # ══════════════════════════════════════════════════════════════════════
 #  IPC STATE CONSTANTS
@@ -411,6 +446,74 @@ class IPCBridge:
         # Bump update sequence
         seq                 =   self._r32(b + EXPORT_UPDATE_SEQ)
         self._w32(b + EXPORT_UPDATE_SEQ, seq + 1)
+
+    # ══════════════════════════════════════════════════════════════════
+    #  DSP FILTERED BUFFER  ── post-bandpass+notch+envelope (v2.4.0)
+    # ══════════════════════════════════════════════════════════════════
+
+    def write_dsp_filtered_window(self, ch_idx, samples_lo, sample_rate_hz=200):
+        """
+        Append a freshly-computed window's envelope into channel ch_idx's
+        rolling buffer in IPC_DspFiltered. The buffer holds 200 samples
+        (1 s of envelope at 200 Hz). New samples shift older ones left.
+
+        ch_idx:           0..7  (channel index)
+        samples_lo:       numpy array, post-decimation/filter envelope.
+                          Typically 40 samples (one window) but any length
+                          <= 200 works.
+        sample_rate_hz:   200 (TARGET_FS_HZ); sets the meta field on first call.
+
+        seqlock-style write: bump seq to odd (writer in progress), write
+        payload, bump again to even. Bridge readers tolerate one tear by
+        re-reading. Each channel is written independently — channels can
+        tear relative to each other but for visualization that's fine.
+
+        This method is called from cpcu_dsp.py's per-window loop. Cost
+        is dominated by the np.copy + struct.pack_into for ~40 floats =
+        a few microseconds, negligible relative to the 50 ms stride.
+        """
+        import numpy as _np
+        import struct as _struct
+
+        if ch_idx < 0 or ch_idx >= DSPFILT_NUM_CHANNELS:
+            return
+
+        n_new                       =   min(len(samples_lo), DSPFILT_NUM_SAMPLES)
+        if n_new <= 0: return
+
+        # Channel base address
+        ch_base                     =   (OFF_DSP_FILTERED + DSPFILT_HEADER_BYTES
+                                          + ch_idx * DSPFILT_BYTES_PER_CH)
+
+        # Read existing 200 samples (bytes), shift left by n_new, write
+        # the new tail. We avoid a full numpy round-trip — just bytewise
+        # memmove via a temporary buffer. For 200 floats this is 800 B
+        # which is tiny.
+        old_bytes                   =   bytes(self.mm[ch_base : ch_base + DSPFILT_BYTES_PER_CH])
+        # New layout: drop n_new samples from the front, append n_new from samples_lo
+        kept                        =   old_bytes[n_new * 4:]
+        new_tail                    =   _np.asarray(samples_lo[-n_new:], dtype='<f4').tobytes()
+        merged                      =   kept + new_tail
+        # Length sanity (must equal DSPFILT_BYTES_PER_CH)
+        if len(merged) != DSPFILT_BYTES_PER_CH:
+            # Should never happen but defensively pad/truncate
+            if len(merged) < DSPFILT_BYTES_PER_CH:
+                merged             +=   b'\x00' * (DSPFILT_BYTES_PER_CH - len(merged))
+            else:
+                merged              =   merged[:DSPFILT_BYTES_PER_CH]
+
+        # seqlock: bump to odd, write, bump to even
+        seq                         =   self._r32(OFF_DSP_FILTERED + DSPFILT_SEQ)
+        self._w32(OFF_DSP_FILTERED + DSPFILT_SEQ, seq | 1)        # odd
+        self.mm[ch_base : ch_base + DSPFILT_BYTES_PER_CH] = merged
+        # Channel-0 writer also stamps the meta fields. Other channels
+        # share them — they're identical for all channels in our setup.
+        if ch_idx == 0:
+            self._w32(OFF_DSP_FILTERED + DSPFILT_SAMPLE_RATE, int(sample_rate_hz))
+            import time as _t
+            self._w64(OFF_DSP_FILTERED + DSPFILT_UPDATE_US,
+                      int(_t.monotonic_ns() // 1000))
+        self._w32(OFF_DSP_FILTERED + DSPFILT_SEQ, (seq | 1) + 1)  # even
 
     # ══════════════════════════════════════════════════════════════════
     #  CLEANUP

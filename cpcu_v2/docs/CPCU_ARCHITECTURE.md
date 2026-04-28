@@ -111,6 +111,7 @@ Neutral position for all servos: 1500 us.
 Core 0:   Linux Kernel Core (CFS scheduler)
           |- cpcu_kernel: process supervisor, watchdog, telemetry
           |- cpcu_tui: multi-page ncurses dashboard (via SSH)
+          |- cpcu_ws: web bridge (v2.4.0) — read-only WS at :8765
           |- pca_testbench: interactive servo calibration tool
           |- signal_testbench: end-to-end signal integrity tester
           |- safety_testbench: automated safety FSM harness (Phase 1)
@@ -185,7 +186,7 @@ mechanism. The summary:
 | pca_testbench round-trip + live smoother tuning (v2.3.6) | `cpcu_config.{h,c}`, `pca_testbench.c`, `cpcu_io.c` | Bench tool + Core 3 | No | ✓ shipped (bench saves servo limits / bias / smoother knobs to runtime.json; cpcu_io re-applies on `config_seq` change) |
 | Soft-grip + stall watchdog (v2.3.7) | `cpcu_dsp.py` (soft clamp), `cpcu_io.c` (watchdog) | Cores 1-2 + Core 3 | No | ✓ shipped (dsp prevents integrator from closing past `grip_firm_us`; io retreats to `grip_touch_us` after `grip_stall_recover_ms` pinned at floor; new io_gripper_stalls counter in diag) |
 | TUI live editor on top of edit-mode (v2.3.8) | `cpcu_tui_editor.{h,c}`, `cpcu_tui.c`, `cpcu_tui_render.c`, `cpcu_kernel.c`, `cpcu_ipc.h` | Core 0 | No | ✓ shipped (spreadsheet UI for 13 runtime fields; Ctrl+S → `CFG_PatchFile` + SIGHUP via new `kernel_pid` IPC field; IPC_VERSION 0x0204 → 0x0205) |
-| WebSocket telemetry bridge (v2.4.0) | New `cpcu_telemetry_bridge.py` | **Core 0** | **Yes** — new long-running daemon, spawned by cpcu_kernel with `taskset -c 0`, `SCHED_OTHER` (not RT) | pending |
+| CPCU Dashboard — read-only web bridge (v2.4.0) | `src/cpcu_ws.c`, `include/cpcu_json.h`, `src/cpcu_json.c`, `web/static/index.html`, `cpcu_ipc.h`, `cpcu_dsp.py`, `cpcu_ipc_bridge.py` | Core 0 (separate process, CFS-scheduled, no RT prio) | No | ✓ shipped Overview + Waves tabs (Spectrum + Tools deferred to v2.4.1); new `IPC_ToolPresence` + `IPC_DspFiltered` regions; IPC_VERSION 0x0205 → 0x0206; Mongoose-based; multi-viewer; default bind 0.0.0.0:8765 with loud LAN warning |
 
 Three principles drive this:
 

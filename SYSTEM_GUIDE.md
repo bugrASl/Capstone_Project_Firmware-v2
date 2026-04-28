@@ -1,8 +1,8 @@
-# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.3.8)
+# SYSTEM GUIDE — Prosthetic Hand Capstone (BSAU v2.4 + CPCU v2.4.1)
 
 **Author:** bugrASl
 **Date:** April 2026
-**Status:** v2.3.8 (TUI live editor — runtime values tunable in-system without restart)
+**Status:** v2.4.1 (CPCU Dashboard — Spectrum + Tools + mDNS)
 
 ---
 
@@ -18,6 +18,29 @@ head instead of a recipe you can't modify.
 > **What changed since v2.1.** This document was extended several times
 > as the project matured. The biggest deltas:
 >
+> - **v2.4.1 (Dashboard: Spectrum + Tools + mDNS)** — Spectrum tab with
+>   per-channel selector, browser-side 256-point Cooley-Tukey FFT, and
+>   side-by-side static spectrum + 30-second waterfall. Tools tab reads
+>   the new `IPC_ToolPresence` registry and surfaces alive tools.
+>   `signal_testbench` publishes its state to slot 1 each main-loop
+>   iteration. New `raw_full` field in wave frames carries 256 raw
+>   12-bit samples per channel at 2 kHz so the browser can FFT them.
+>   `cpcu.local:8765` works via the Pi's built-in Avahi after
+>   `sudo hostnamectl set-hostname cpcu`. See
+>   [`cpcu_v2/docs/WEB_DASHBOARD.md`](cpcu_v2/docs/WEB_DASHBOARD.md).
+> - **v2.4.0 (CPCU Dashboard)** — Read-only multi-viewer web bridge.
+>   `cpcu_ws` runs alongside `cpcu_kernel`, listens on `:8765`, and
+>   serves a single-page browser dashboard with Overview and Waves
+>   tabs. Friends and advisors on the same LAN can each open the URL
+>   in their own browser; the bridge broadcasts the same JSON frames
+>   to every connected client. Read-only by design — no command
+>   channel back to the running system. New `IPC_ToolPresence` (8
+>   slots, declared but populated by tools in v2.4.1) and
+>   `IPC_DspFiltered` (per-channel post-filter envelope, populated
+>   by `cpcu_dsp.py`). IPC_VERSION 0x0205 → 0x0206. Mongoose vendored
+>   on demand via `web/vendor/fetch.sh`; build is graceful when
+>   it's not present (stub binary). See
+>   [`cpcu_v2/docs/WEB_DASHBOARD.md`](cpcu_v2/docs/WEB_DASHBOARD.md).
 > - **v2.3.8 (TUI live editor)** — Press `e` on the TUI's CONFIG page
 >   → arm parks via the v2.3.4 handshake → the spec-sheet view
 >   transforms into a navigable spreadsheet editor. Arrows move

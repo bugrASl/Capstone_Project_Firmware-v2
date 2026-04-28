@@ -6,7 +6,7 @@ pipeline, and commands up to 6 servo motors via a PCA9685 PWM driver.
 
 [![Platform: RPi5](https://img.shields.io/badge/Platform-Raspberry%20Pi%205-c51a4a.svg)](#hardware)
 [![Language: C11 / Python 3](https://img.shields.io/badge/Language-C11%20%7C%20Python%203-green.svg)](#software-architecture)
-[![Version: v2.3.8](https://img.shields.io/badge/Version-v2.3.8-brightgreen.svg)](#)
+[![Version: v2.4.1](https://img.shields.io/badge/Version-v2.4.1-brightgreen.svg)](#)
 
 > **First time with this repo?** Start from the root
 > [`../SYSTEM_GUIDE.md`](../SYSTEM_GUIDE.md) — it covers the whole system
@@ -476,6 +476,15 @@ For BSAU-side tests (TB-100 through TB-309): [`../bsau_v2/docs/BSAU_TEST_GUIDE.m
   Arrows navigate, Enter+digits edit, Esc cancels, `r` reverts,
   Ctrl+S commits via `CFG_PatchFile` and SIGHUPs cpcu_kernel for
   live reload.
+- **[`docs/WEB_DASHBOARD.md`](docs/WEB_DASHBOARD.md)** — *v2.4.0/.1.*
+  Read-only web bridge `cpcu_ws` alongside `cpcu_kernel`, serving
+  the CPCU Dashboard at `:8765`. Mongoose-based HTTP+WebSocket;
+  single-page client with Overview, Waves, Spectrum (browser FFT
+  + waterfall, per-channel), and Tools (live `IPC_ToolPresence`
+  registry) tabs. Friends on the same LAN open the URL in their
+  own browser; broadcasts at 10 Hz state and 20 Hz waves. Default
+  bind `0.0.0.0` for sharing (loud startup banner). Use Pi's built-in
+  Avahi for `cpcu.local:8765` resolution.
 
 ### Cross-references
 - **[`../bsau_v2/README.md`](../bsau_v2/README.md)** — transmitter

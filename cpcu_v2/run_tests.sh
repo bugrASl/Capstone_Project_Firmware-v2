@@ -320,6 +320,27 @@ if echo "$PHASES" | grep -q "1"; then
         echo -e "${YELLOW}[SKIP]${RESET} editor_testbench not built (likely missing ncurses)"
     fi
 
+    ## Find or build json_testbench (v2.4.0 — JSON serializer for web bridge)
+    JS_BIN=""
+    if [ -f ./json_testbench ]; then
+        JS_BIN="./json_testbench"
+    elif [ -f build/json_testbench ]; then
+        JS_BIN="build/json_testbench"
+    else
+        echo "[BUILD] Compiling json_testbench..."
+        if [ -d build ]; then
+            cd build && make json_testbench && cd ..
+            JS_BIN="build/json_testbench"
+        fi
+    fi
+
+    if [ -n "${JS_BIN}" ]; then
+        run_test "TB-JSON01..JSON07: cpcu_ws JSON serializer" \
+            "${JS_BIN}"
+    else
+        echo -e "${YELLOW}[SKIP]${RESET} json_testbench not built"
+    fi
+
     run_test "TB-DSP: DSP Pipeline Validation" \
         "python3 test/test_dsp_pipeline.py"
 fi

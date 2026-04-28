@@ -39,6 +39,10 @@ static inline void ipc_map_ptrs(IPC_Context *ctx)
     ctx->dsp_export =   (IPC_DSPExport *)(b + off);
     off            +=   sizeof(IPC_DSPExport);
     ctx->config     =   (IPC_RuntimeConfig *)(b + off);     /* v2.3.3 */
+    off            +=   sizeof(IPC_RuntimeConfig);
+    ctx->tool_presence = (IPC_ToolPresence *)(b + off);     /* v2.4.0 */
+    off            +=   sizeof(IPC_ToolPresence);
+    ctx->dsp_filtered  = (IPC_DspFiltered *)(b + off);      /* v2.4.0 */
 }
 
 /*============= IPC_Create =========================================================================*/

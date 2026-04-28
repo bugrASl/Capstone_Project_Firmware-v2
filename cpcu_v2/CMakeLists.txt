@@ -182,12 +182,66 @@ if(CURSES_FOUND)
     message(STATUS "ncurses found — editor_testbench will be built")
 endif()
 
+##============= cpcu_ws — WebSocket bridge (v2.4.0) ========================================
+##
+##  The bridge is a separate process that subscribes to /dev/shm/cpcu_ipc
+##  (read-only — same role as cpcu_tui) and exposes a JSON dashboard
+##  over HTTP+WebSocket. See cpcu_v2/docs/WEB_DASHBOARD.md and
+##  cpcu_v2/web/vendor/README.md for the deployment story.
+##
+##  Mongoose is fetched on demand into web/vendor/mongoose.{c,h}.
+##  When the real files are present we link against them; otherwise we
+##  fall back to a tiny stub header so cpcu_ws.c still compiles
+##  (producing a non-functional binary that tells the user to run
+##  fetch.sh). This keeps fresh clones building cleanly without
+##  network access.
+##
+##  Layout (consistent with the rest of the project — Pattern A):
+##    src/cpcu_ws.c          bridge process source
+##    src/cpcu_json.c        JSON serializer source
+##    include/cpcu_json.h    JSON serializer header
+##    web/static/            browser client (HTML/CSS/JS)
+##    web/vendor/            third-party (Mongoose), fetched on demand
+##
+if(EXISTS "${CMAKE_SOURCE_DIR}/web/vendor/mongoose.c"
+   AND EXISTS "${CMAKE_SOURCE_DIR}/web/vendor/mongoose.h")
+    set(WS_HAS_MONGOOSE TRUE)
+    message(STATUS "Mongoose found — cpcu_ws will be a working bridge")
+else()
+    set(WS_HAS_MONGOOSE FALSE)
+    message(STATUS "Mongoose NOT vendored — cpcu_ws will build as a stub.")
+    message(STATUS "  Run web/vendor/fetch.sh then re-run cmake.")
+endif()
+
+add_executable(cpcu_ws
+    src/cpcu_ws.c
+    src/cpcu_json.c
+)
+target_include_directories(cpcu_ws PRIVATE
+    web/vendor
+)
+target_link_libraries(cpcu_ws PRIVATE cpcu_ipc rt m pthread)
+if(WS_HAS_MONGOOSE)
+    target_sources(cpcu_ws PRIVATE web/vendor/mongoose.c)
+    target_compile_definitions(cpcu_ws PRIVATE CPCU_WS_HAVE_MONGOOSE)
+endif()
+
+## JSON serializer testbench (v2.4.0) — round-trip-ish test on
+## generated JSON shapes. Doesn't link against Mongoose, so it builds
+## even on offline clones.
+add_executable(json_testbench
+    test/json_testbench.c
+    src/cpcu_json.c
+)
+target_link_libraries(json_testbench PRIVATE m)
+
 ## Enable CTest
 enable_testing()
 add_test(NAME codec_roundtrip COMMAND test_codec)
 add_test(NAME safety_fsm      COMMAND safety_testbench)
 add_test(NAME smoother_unit   COMMAND smooth_testbench)
 add_test(NAME config_loader   COMMAND config_testbench)
+add_test(NAME json_writer     COMMAND json_testbench)
 if(CURSES_FOUND)
     add_test(NAME editor_unit COMMAND editor_testbench)
 endif()

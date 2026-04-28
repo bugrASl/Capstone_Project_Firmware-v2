@@ -240,6 +240,14 @@ DRAIN_BATCH             =   200
 SERVO_MIN_US            =   [ 498, 1074, 1074, 1001, 1001,  976]
 SERVO_MAX_US            =   [2500, 1953, 1953, 2002, 2002, 1733]
 
+# v2.3.7: gripper soft-firm clamp. The integrator is prevented from
+# closing the gripper below this position even if a velocity-mode
+# gesture is held longer. One-sided — opening direction is unaffected.
+# Loaded from runtime.json's grip_firm_us (default 1100). Range
+# 800..2200 enforced by both the C parser (cpcu_config.c) and the
+# dsp loader (load_dsp_runtime_config). See SOFT_GRIP.md.
+GRIP_FIRM_US_DEFAULT    =   1100
+
 # Default servo poses per gesture, in microseconds (6 servos).
 # Gestures the team's predict.py acknowledges in its color_map (and
 # therefore the trained SVM is known to emit):
@@ -319,8 +327,10 @@ RUNTIME_CONFIG_PATH_FALLBACK = "config/runtime.json"
 def load_dsp_runtime_config(model_classes, path=None):
     """Read the dsp-side slice of runtime.json.
 
-    Returns (interp_floor, interp_ceil, hysteresis_votes, behavior_map)
-    where behavior_map is the populated GESTURE_BEHAVIOR.
+    Returns (interp_floor, interp_ceil, hysteresis_votes, behavior_map,
+             grip_firm_us). The grip_firm_us was added in v2.3.7 and
+             is the soft floor cpcu_dsp.py clamps the gripper integrator
+             at — see SOFT_GRIP.md.
 
     If the file can't be opened or parsed, defaults are used and a
     warning is printed. cpcu_kernel will already have failed earlier
@@ -329,6 +339,7 @@ def load_dsp_runtime_config(model_classes, path=None):
     floor    = INTERP_CONF_FLOOR
     ceil_    = INTERP_CONF_CEIL
     votes    = CONFIRMATION_THRESHOLD
+    grip_firm = GRIP_FIRM_US_DEFAULT
     behavior = {"rest": {"mode": "freeze", "rate": [0]*NUM_SERVOS}}
     # Default: every model class is freeze with its existing pose.
     for cls in model_classes:
@@ -358,7 +369,7 @@ def load_dsp_runtime_config(model_classes, path=None):
     if raw is None:
         print(f"[DSP] WARNING: no runtime config loaded, using defaults",
               flush=True)
-        return floor, ceil_, votes, behavior
+        return floor, ceil_, votes, behavior, grip_firm
 
     # Tolerant: missing fields keep their defaults.
     try:
@@ -407,19 +418,34 @@ def load_dsp_runtime_config(model_classes, path=None):
                 # Velocity mode if any rate is non-zero, else freeze.
                 mode = "velocity" if any(v != 0 for v in clean) else "freeze"
                 behavior[cls_name] = {"mode": mode, "rate": clean}
+
+        # v2.3.7: gripper soft-firm clamp. dsp uses this in velocity
+        # mode to prevent hand_flex from integrating past a safe
+        # firm-hold position. Range-checked against the loader's
+        # JSON validation (800..2200). Default 1100 from CFG_Defaults.
+        if "grip_firm_us" in raw:
+            v = int(raw["grip_firm_us"])
+            if 800 <= v <= 2200:
+                grip_firm = v
+            else:
+                print(f"[DSP] WARNING: grip_firm_us {v} out of "
+                      f"range [800..2200], keeping default {grip_firm}",
+                      flush=True)
     except Exception as e:
         print(f"[DSP] runtime config parse error: {e}, using defaults",
               flush=True)
-        return INTERP_CONF_FLOOR, INTERP_CONF_CEIL, CONFIRMATION_THRESHOLD, behavior
+        return (INTERP_CONF_FLOOR, INTERP_CONF_CEIL,
+                CONFIRMATION_THRESHOLD, behavior, GRIP_FIRM_US_DEFAULT)
 
     print(f"[DSP] runtime config loaded from {used_path}: "
-          f"floor={floor:.2f} ceil={ceil_:.2f} votes={votes}", flush=True)
+          f"floor={floor:.2f} ceil={ceil_:.2f} votes={votes} "
+          f"grip_firm={grip_firm}", flush=True)
     for cls_name, beh in behavior.items():
         if beh["mode"] == "velocity":
             print(f"[DSP]   velocity-mode '{cls_name}': "
                   f"rate={beh['rate']}", flush=True)
 
-    return floor, ceil_, votes, behavior
+    return floor, ceil_, votes, behavior, grip_firm
 
 
 def _strip_jsonc_comments(text):
@@ -638,7 +664,7 @@ def run_inference(verbose=False):
         model_class_names = [str(c) for c in model.classes_]
     else:
         model_class_names = ["rest"]
-    interp_floor, interp_ceil, hysteresis_votes, behavior_map = \
+    interp_floor, interp_ceil, hysteresis_votes, behavior_map, grip_firm = \
         load_dsp_runtime_config(model_class_names)
 
     # Periodic-report state
@@ -687,6 +713,22 @@ def run_inference(verbose=False):
                 _cleaned, _env, feats = process_window(w_hi)
                 features_flat.extend(feats)
                 rms_per_ch[ch]      =   feats[0]
+                # v2.4.0: publish envelope into IPC_DspFiltered for the
+                # web dashboard. _env is ~40 samples @ TARGET_FS_HZ
+                # (= 200 Hz). The bridge appends them to a 200-sample
+                # rolling buffer (= 1 s of trailing envelope per channel),
+                # which both the Waves tab (envelope plot) and the
+                # Spectrum tab (browser-side FFT) consume. Cost is a
+                # bytes-shift of 800 B per channel, negligible.
+                try:
+                    ipc.write_dsp_filtered_window(ch, _env, sample_rate_hz=TARGET_FS_HZ)
+                except Exception as _ex:
+                    # Don't let a publication error kill inference.
+                    # (e.g. running against an old shm without the new
+                    # region — we'd write past the mmap end.)
+                    if buf_idx == 0:
+                        print(f"[DSP] write_dsp_filtered_window failed: {_ex}",
+                              flush=True)
 
             # ── 3. Inference + debounce (if model loaded) ──
             if inference_enabled:
@@ -830,6 +872,16 @@ def run_inference(verbose=False):
                         # this clamp is for dsp's own sanity.
                         new_v   =   max(SERVO_MIN_US[s],
                                         min(SERVO_MAX_US[s], new_v))
+                        # v2.3.7: gripper soft-firm clamp. The integrator
+                        # is prevented from closing the gripper past the
+                        # configured firm-hold position even if the
+                        # gesture is held longer. ONE-SIDED — opening
+                        # direction (target > grip_firm) is not affected,
+                        # so hand_open still works normally. cpcu_io's
+                        # stall watchdog is the lower-layer backstop;
+                        # this is the policy layer.
+                        if s == 5 and new_v < grip_firm:
+                            new_v = grip_firm
                         current_target_us[s] = new_v
 
                 # Publish the (possibly clamped, possibly integrated) target.

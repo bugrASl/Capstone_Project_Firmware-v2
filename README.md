@@ -1,8 +1,8 @@
 # Prosthetic Hand Capstone — InfiniTech (BSAU + CPCU)
 
-[![Status: v2.3.8](https://img.shields.io/badge/Status-v2.3.8-brightgreen.svg)](#)
+[![Status: v2.4.1](https://img.shields.io/badge/Status-v2.4.1-brightgreen.svg)](#)
 [![BSAU: v2.4](https://img.shields.io/badge/BSAU-v2.4-blue.svg)](bsau_v2/README.md)
-[![CPCU: v2.3.8](https://img.shields.io/badge/CPCU-v2.3.8-blue.svg)](cpcu_v2/README.md)
+[![CPCU: v2.4.1](https://img.shields.io/badge/CPCU-v2.4.1-blue.svg)](cpcu_v2/README.md)
 [![Tests: 168 PASS](https://img.shields.io/badge/Tests-168%20PASS-brightgreen.svg)](cpcu_v2/docs/CPCU_TEST_GUIDE.md)
 
 **EE493/494 Capstone Design Project · METU, Spring 2026.**
@@ -126,6 +126,8 @@ and there's no way around it.
 
 | Version | Date | Where | What |
 |---|---|---|---|
+| **v2.4.1 (Dashboard: Spectrum + Tools + mDNS)** | Apr 2026 | `src/cpcu_ws.c`, `web/static/index.html`, `test/signal_testbench.c`, `docs/WEB_DASHBOARD.md` | Spectrum tab — per-channel selector, browser-side 256-pt Cooley-Tukey FFT (Hann-windowed, DC-removed), static spectrum + 30-second waterfall side-by-side. Tools tab — reads new `tools[]` array in state frames, renders alive tools with heartbeat freshness check. signal_testbench publishes to `IPC_ToolPresence` slot 1 (channel + Vpp amplitude + drops counter); clears alive=0 on exit. New `raw_full` field in wave frames (8 ch × 256 int16 @ 2 kHz → browser FFT). mDNS guidance via Pi's built-in Avahi (`sudo hostnamectl set-hostname cpcu` then open `http://cpcu.local:8765`). pca_testbench publisher intentionally not added — the mutex with cpcu_kernel makes the configuration unreachable; see WEB_DASHBOARD.md §3 for the rationale. 233 PASS unchanged. See [`cpcu_v2/docs/WEB_DASHBOARD.md`](cpcu_v2/docs/WEB_DASHBOARD.md). |
+| **v2.4.0 (CPCU Dashboard)** | Apr 2026 | `src/cpcu_ws.c`, `include/cpcu_json.h`, `src/cpcu_json.c`, `web/static/index.html`, `web/vendor/`, `cpcu_ipc.h`, `cpcu_ipc.c`, `cpcu_ipc_bridge.py`, `cpcu_dsp.py`, `launch.sh`, `json_testbench.c` | Read-only multi-viewer web bridge. Mongoose-based HTTP+WS server at `:8765` broadcasts state (10 Hz) + waves (20 Hz) JSON to any number of browser clients on the LAN. Single-page dashboard with Overview + Waves tabs (raw envelope from `IPC_SensorEntry` ring + filtered envelope from new `IPC_DspFiltered` region). Spectrum + Tools tabs are stubs targeted for v2.4.1. New `IPC_ToolPresence` and `IPC_DspFiltered` regions; `IPC_VERSION` 0x0205 → 0x0206. Hand-rolled JSON serializer (7 unit tests). 233 PASS in Phase 1. See [`cpcu_v2/docs/WEB_DASHBOARD.md`](cpcu_v2/docs/WEB_DASHBOARD.md). |
 | **v2.3.8 (TUI live editor)** | Apr 2026 | `cpcu_tui_editor.{h,c}`, `cpcu_tui.c`, `cpcu_tui_render.c`, `cpcu_kernel.c`, `cpcu_ipc.h`, `editor_testbench.c` | Press `e` on CONFIG page → arm parks (v2.3.4 handshake) → spreadsheet editor for 13 runtime fields (servo limits/bias, smoother knobs, DSP thresholds, grip levels). Arrows navigate, Enter+digits edit, Esc cancels, `r` reverts, Ctrl+S saves via v2.3.6 `CFG_PatchFile` and SIGHUPs kernel. New `kernel_pid` field in IPC_ControlBlock (consumed reserved bytes; IPC_VERSION 0x0204 → 0x0205). 24 new unit tests (TB-ED01..TB-ED05). 226/226 PASS. See [`cpcu_v2/docs/TUI_EDITOR.md`](cpcu_v2/docs/TUI_EDITOR.md). |
 | **v2.3.7 (soft-grip + stall watchdog)** | Apr 2026 | `cpcu_dsp.py`, `cpcu_io.c`, `cpcu_ipc.h`, `cpcu_tui_render.c`, `runtime.json`, `test_dsp_pipeline.py` | Two-layer gripper hardware protection. dsp clamps integrator at `grip_firm_us` (default 1100). io watchdog retreats to `grip_touch_us` (1200) if smoother current+target stay at the floor for `grip_stall_recover_ms` (2000). Clears on natural release (250 ms debounce) or SAFE. New `io_gripper_stalls` counter in IPC_Diagnostics (no layout change), shown on TUI HEALTH page. 3 new tests (TB-DSP17). 202/202 PASS. See [`cpcu_v2/docs/SOFT_GRIP.md`](cpcu_v2/docs/SOFT_GRIP.md). |
 | **v2.3.6 (pca_testbench round-trip + live smoother tuning)** | Apr 2026 | `cpcu_config.{h,c}`, `pca_testbench.c`, `cpcu_io.c`, `config_testbench.c` | `CFG_PatchFile()` — surgical JSON edit. `pca_testbench` loads `runtime.json` on startup, gains `[`/`]`/`b`/`B`/`v`/`a`/`d`/`S`/`L` keys to tune servo limits, bias, and smoother (velocity/accel/deadband) at the bench and save back. cpcu_io re-applies smoother values on `config_seq` change (covers SIGHUP reload). Other JSON fields (gesture_velocity etc.) preserved byte-for-byte. 13 new tests (TB-CFG09/CFG10). 199/199 PASS. See [`cpcu_v2/docs/RUNTIME_CONFIG.md`](cpcu_v2/docs/RUNTIME_CONFIG.md) §10. |
@@ -175,6 +177,7 @@ once to explain that feature in full).
 | [`cpcu_v2/docs/VELOCITY_MODE.md`](cpcu_v2/docs/VELOCITY_MODE.md) | Per-class per-servo velocity rates → stateful target integration with confidence scaling | v2.3.5 |
 | [`cpcu_v2/docs/SOFT_GRIP.md`](cpcu_v2/docs/SOFT_GRIP.md) | Two-layer gripper protection: dsp soft clamp at `grip_firm_us` + io stall watchdog with retreat | v2.3.7 |
 | [`cpcu_v2/docs/TUI_EDITOR.md`](cpcu_v2/docs/TUI_EDITOR.md) | Live runtime-config editor on TUI's CONFIG page — spreadsheet-style cursor, Ctrl+S commit via `CFG_PatchFile` + SIGHUP | v2.3.8 |
+| [`cpcu_v2/docs/WEB_DASHBOARD.md`](cpcu_v2/docs/WEB_DASHBOARD.md) | Read-only multi-viewer web bridge — Mongoose HTTP/WS at `:8765`, single-page browser dashboard with Overview / Waves / Spectrum / Tools tabs | v2.4.0/.1 |
 
 ## Hardware
 

@@ -1,5 +1,5 @@
 #
-#   Prosthetic Hand Capstone — Project Directory Structure (v2.3.8)
+#   Prosthetic Hand Capstone — Project Directory Structure (v2.4.1)
 #   Author: bugrASl
 #   Date:   April 2026
 #
@@ -12,7 +12,115 @@
 #   touched by that change are listed in the "v2.1 DATASET mode" section
 #   below.
 #
-#   v2.3.8 (April 2026, latest):
+#   v2.4.1 (April 2026, latest):
+#     - cpcu_v2/src/cpcu_ws.c                     v2.4.1 — added raw_full
+#                                                       field to wave
+#                                                       frames (256 raw
+#                                                       int16 samples per
+#                                                       channel @ 2 kHz for
+#                                                       browser-side FFT);
+#                                                       added tools[] array
+#                                                       to state frames
+#                                                       reading IPC_ToolPresence
+#                                                       slots with heartbeat
+#                                                       freshness check;
+#                                                       wave buf doubled
+#                                                       16 KB → 32 KB
+#     - cpcu_v2/web/static/index.html             v2.4.1 — Spectrum tab
+#                                                       (per-channel buttons,
+#                                                       hand-rolled radix-2
+#                                                       Cooley-Tukey FFT in JS,
+#                                                       Hann window, DC removal,
+#                                                       static spectrum + 30 s
+#                                                       waterfall side-by-side,
+#                                                       50 Hz reference marker);
+#                                                       Tools tab (renders
+#                                                       tools[] from state,
+#                                                       alive dot, heartbeat
+#                                                       age, decoded per-tool
+#                                                       state)
+#     - cpcu_v2/test/signal_testbench.c           v2.4.1 — publishes to
+#                                                       IPC_ToolPresence slot 1
+#                                                       each main-loop iteration
+#                                                       (~20 Hz); writes name
+#                                                       "signal_testbench",
+#                                                       payload [selected_ch,
+#                                                       Vpp_amplitude, drops];
+#                                                       clears alive=0 on
+#                                                       clean exit
+#     - cpcu_v2/docs/WEB_DASHBOARD.md             v2.4.1 — Spectrum/Tools/
+#                                                       mDNS sections updated;
+#                                                       wave frame schema
+#                                                       includes raw_full;
+#                                                       §9 reframed as
+#                                                       "what shipped vs
+#                                                       what's still out";
+#                                                       pca_testbench-not-a-
+#                                                       publisher rationale
+#                                                       documented
+#
+#   v2.4.0 (April 2026):
+#     - cpcu_v2/src/cpcu_ws.c                 new  — bridge process:
+#                                                       maps IPC, broadcasts
+#                                                       state (10 Hz) + waves
+#                                                       (20 Hz) JSON to all
+#                                                       connected WS clients;
+#                                                       Mongoose-based
+#     - cpcu_v2/include/cpcu_json.h + cpcu_v2/src/cpcu_json.c           new  — hand-rolled JSON
+#                                                       writer (~250 LOC)
+#     - cpcu_v2/web/static/index.html         new  — single-page browser
+#                                                       dashboard (CPCU
+#                                                       Dashboard); Overview
+#                                                       and Waves tabs live;
+#                                                       Spectrum + Tools tabs
+#                                                       are stubs for v2.4.1
+#     - cpcu_v2/web/vendor/README.md          new  — Mongoose vendoring
+#                                                       documentation
+#     - cpcu_v2/web/vendor/fetch.sh           new  — pulls Mongoose 7.14
+#     - cpcu_v2/web/vendor/mongoose_stub.h    new  — parser-pleaser stub
+#                                                       so cpcu_ws compiles
+#                                                       offline before fetch
+#     - cpcu_v2/include/cpcu_ipc.h                v2.4.0 — IPC_VERSION
+#                                                       0x0205 -> 0x0206;
+#                                                       new IPC_ToolPresence
+#                                                       (8 slots × 64 B) and
+#                                                       IPC_DspFiltered
+#                                                       (per-channel post-
+#                                                       filter envelope, 1 s
+#                                                       trailing window)
+#     - cpcu_v2/src/cpcu_ipc.c                    v2.4.0 — wires the new
+#                                                       region pointers
+#     - cpcu_v2/scripts/cpcu_dsp.py               v2.4.0 — publishes envelope
+#                                                       to IPC_DspFiltered
+#                                                       per channel per window
+#     - cpcu_v2/scripts/cpcu_ipc_bridge.py        v2.4.0 — new offset
+#                                                       constants (OFF_CONFIG
+#                                                       was missing too —
+#                                                       fixed); SHM_TOTAL
+#                                                       updated;
+#                                                       write_dsp_filtered_window
+#                                                       method
+#     - cpcu_v2/scripts/launch.sh                        new modes: 'ws'
+#                                                       (foreground bridge)
+#                                                       and 'install-ws-service'
+#                                                       (systemd unit gen)
+#     - cpcu_v2/test/json_testbench.c             new  — TB-JSON01..JSON07
+#                                                       (7 checks for the
+#                                                       JSON serializer)
+#     - cpcu_v2/CMakeLists.txt                           new cpcu_ws + 
+#                                                       json_testbench targets;
+#                                                       Mongoose detection
+#     - cpcu_v2/run_tests.sh                             added json_testbench
+#                                                       to Phase 1
+#     - cpcu_v2/docs/WEB_DASHBOARD.md             new  — full topic doc
+#                                                       (~600 lines: rationale,
+#                                                       architecture, IPC
+#                                                       layout, wire format,
+#                                                       deployment modes,
+#                                                       security stance,
+#                                                       troubleshooting)
+#
+#   v2.3.8 (April 2026):
 #     - cpcu_v2/include/cpcu_ipc.h                v2.3.8 — IPC_VERSION
 #                                                       0x0204 -> 0x0205;
 #                                                       kernel_pid uint32 added
@@ -316,8 +424,8 @@
 #     - All docs refreshed for v3.4 page reorder, v2.3 ring recovery,
 #       v2.4 NRF non-fatal, no-sudo policy.
 #
-#   Total automated tests: 7 (codec) + 38 (safety FSM, +5 in v2.3.1) + 28 (smoother, new in v2.3.2) + 43 (config, +13 in v2.3.6) + 86 (DSP pipeline, +3 in v2.3.7) + 24 (TUI editor, new in v2.3.8)
-#                        = 226 PASS in Phase 1.
+#   Total automated tests: 7 (codec) + 38 (safety FSM, +5 in v2.3.1) + 28 (smoother, new in v2.3.2) + 43 (config, +13 in v2.3.6) + 86 (DSP pipeline, +3 in v2.3.7) + 24 (TUI editor, new in v2.3.8) + 7 (JSON serializer, new in v2.4.0)
+#                        = 233 PASS in Phase 1.
 #
 
 # =============================================================================

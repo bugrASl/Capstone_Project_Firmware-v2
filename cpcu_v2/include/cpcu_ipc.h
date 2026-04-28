@@ -36,7 +36,7 @@ extern "C" {
 #define IPC_SHM_NAME            "/cpcu_ipc"
 #define IPC_SHM_PERMS           0644            /* Owner RW, Group/Others R */
 #define IPC_MAGIC               0x494E4654UL    /* "INFT" - Infinitech */
-#define IPC_VERSION             0x0205          /* v2.3.8 — added kernel_pid for TUI Ctrl+S SIGHUP */
+#define IPC_VERSION             0x0206          /* v2.4.0 — added IPC_ToolPresence + IPC_DspFiltered for web bridge */
 
 #define IPC_SENSOR_RING_SIZE    1024
 #define IPC_SENSOR_RING_MASK    (IPC_SENSOR_RING_SIZE - 1)
@@ -257,6 +257,93 @@ typedef struct __attribute__((aligned(64)))
 _Static_assert(sizeof(IPC_RuntimeConfig) >= 512,
                "IPC_RuntimeConfig must be >= 512 bytes (8 cache lines minimum)");
 
+/*============= IPC_ToolPresence (v2.4.0) ==============================================*/
+/*  A small registry of "side tools" that opt into being visible to the
+ *  web dashboard. Each tool that wants to publish state owns one slot
+ *  identified by tool_id. Slots are not assigned dynamically — each
+ *  tool hard-codes which slot it writes to (see IPC_TOOL_SLOT_* below)
+ *  to avoid a hand-shake protocol. The web bridge reads all slots and
+ *  shows whichever are alive.
+ *
+ *  v2.4.0 ships only the *region* — the publisher patches in
+ *  pca_testbench and signal_testbench come in v2.4.1 (Layer F of the
+ *  web-bridge layered roll-out). Until then, all slots stay
+ *  alive=0 and the dashboard's Tools tab shows "no side tools running".
+ */
+#define IPC_TOOL_PRESENCE_SLOTS    8           /* room for future tools */
+#define IPC_TOOL_NAME_MAX          16
+#define IPC_TOOL_PAYLOAD_BYTES     32          /* tool-specific opaque blob */
+
+#define IPC_TOOL_SLOT_PCA          0           /* pca_testbench */
+#define IPC_TOOL_SLOT_SIGNAL       1           /* signal_testbench */
+/* slots 2..7 reserved for future tools */
+
+typedef struct {
+    _Atomic uint8_t     alive;                 /* 1 = tool is running */
+    uint8_t             _pad0[7];
+    _Atomic uint64_t    last_heartbeat_us;     /* tool's monotonic clock */
+    char                tool_name[IPC_TOOL_NAME_MAX];   /* "pca_testbench" etc. */
+    /* Tool-specific opaque payload. The dashboard JSON-serializer for
+     * each tool slot interprets this field. For pca_testbench: selected
+     * servo idx (1 B), current pulse_us (2 B), smoother enabled (1 B),
+     * scratch. For signal_testbench: selected channel (1 B), buffered
+     * RMS (4 B), drop counter (4 B). Anything else is the tool's call.
+     * 32 bytes is enough for ~1-2 dozen small fields, more than any
+     * dashboard widget will need to show. */
+    uint8_t             payload[IPC_TOOL_PAYLOAD_BYTES];
+    /* Total: 1 + 7 + 8 + 16 + 32 = 64 B = one cache line. */
+} IPC_ToolSlot;
+
+_Static_assert(sizeof(IPC_ToolSlot) == 64, "IPC_ToolSlot must be 64 bytes (1 cache line)");
+
+typedef struct {
+    IPC_ToolSlot        slot[IPC_TOOL_PRESENCE_SLOTS];
+} IPC_ToolPresence;
+
+_Static_assert(sizeof(IPC_ToolPresence) == 64 * IPC_TOOL_PRESENCE_SLOTS,
+               "IPC_ToolPresence must be 8 * 64 bytes");
+
+/*============= IPC_DspFiltered (v2.4.0) ==============================================*/
+/*  Per-channel snapshot of the most recent post-bandpass+notch+envelope
+ *  buffer that cpcu_dsp.py computed. The web bridge reads this for the
+ *  "filtered" view in the Waves tab and (in the next turn) the Spectrum
+ *  tab. Updated once per dsp window (50 ms stride at WINDOW_MS = 200,
+ *  i.e. ~20 Hz refresh).
+ *
+ *  Layout: 8 channels × 200 samples float32 = 6400 B per buffer.
+ *  Plus a seqlock-style sequence counter so the bridge gets a
+ *  consistent snapshot.
+ *
+ *  Why 200 samples? cpcu_dsp.py's TARGET_FS_HZ = 200 and
+ *  WINDOW_MS = 200 → 200 * 200 / 1000 = 40 samples per window. So
+ *  200 samples = the last 5 windows (1 second of envelope history),
+ *  which is plenty for the wave-tab plot and gives the FFT enough
+ *  context (next turn).
+ *
+ *  Note: IPC_DSPExport (256 B) already publishes the *features* the
+ *  classifier sees — RMS, MAV, etc. This new region publishes the
+ *  *signal itself*, post-filter, for visualization. Different
+ *  consumer, different region.
+ */
+#define IPC_DSPFILT_CHANNELS       8
+#define IPC_DSPFILT_SAMPLES        200         /* 1 s @ 200 Hz */
+
+typedef struct {
+    _Atomic uint32_t    seq;                   /* odd = writer in progress */
+    uint32_t            sample_rate_hz;        /* 200 — for the consumer */
+    uint64_t            update_us;             /* monotonic time of last update */
+    uint8_t             _pad0[16];             /* align channels[] to cache line */
+    /* Row-major: [channel][sample]. Column-major would be marginally
+     * faster for per-sample-across-channels reads, but the bridge
+     * consumes channel by channel, so row-major matches access. */
+    float               channel[IPC_DSPFILT_CHANNELS][IPC_DSPFILT_SAMPLES];
+} IPC_DspFiltered;
+
+/* 32 B header + 8 * 200 * 4 B = 6432 B. Pad to next 64 B boundary
+ * so subsequent regions stay cache-aligned. */
+_Static_assert(sizeof(IPC_DspFiltered) >= 32 + IPC_DSPFILT_CHANNELS * IPC_DSPFILT_SAMPLES * 4,
+               "IPC_DspFiltered geometry sanity");
+
 /*============= TOTAL SHM SIZE =========================================================*/
 
 #define IPC_SHM_SIZE    (\
@@ -265,7 +352,9 @@ _Static_assert(sizeof(IPC_RuntimeConfig) >= 512,
         sizeof(IPC_MotorCommand)                            +\
         sizeof(IPC_Diagnostics)                             +\
         sizeof(IPC_DSPExport)                               +\
-        sizeof(IPC_RuntimeConfig)                            \
+        sizeof(IPC_RuntimeConfig)                           +\
+        sizeof(IPC_ToolPresence)                            +\
+        sizeof(IPC_DspFiltered)                              \
         )
 
 /*============= CONTEXT HANDLE =========================================================*/
@@ -279,6 +368,8 @@ typedef struct
     IPC_Diagnostics     *diag;
     IPC_DSPExport       *dsp_export;
     IPC_RuntimeConfig   *config;            /* v2.3.3 */
+    IPC_ToolPresence    *tool_presence;     /* v2.4.0 */
+    IPC_DspFiltered     *dsp_filtered;      /* v2.4.0 */
     int                 shm_fd;
 } IPC_Context;
 

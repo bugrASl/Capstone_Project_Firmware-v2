@@ -1,4 +1,4 @@
-# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4 / velocity v2.3.5 / patch v2.3.6 / soft-grip v2.3.7 / editor v2.3.8
+# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4 / velocity v2.3.5 / patch v2.3.6 / soft-grip v2.3.7 / editor v2.3.8 / dashboard v2.4.0
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -405,7 +405,43 @@ code 0. The render path is hardware-tested.
 - "round-trip — disk value after save = X" failed → `CFG_PatchFile`
   isn't actually persisting, or the save path picked the wrong file.
 
-### 3.7 TUI demo validation (visual, no hardware)
+### 3.7 TB-JSON — cpcu_json serializer (automated, no hardware) (v2.4.0)
+
+```bash
+build/json_testbench
+```
+
+**What it checks:** the hand-rolled JSON writer in `src/cpcu_json.c`,
+which is the only thing standing between IPC values and what the
+browser dashboard receives. Bugs here would corrupt every wire frame.
+
+The 7 checks cover:
+
+1. **JSON01** — empty object `{}`
+2. **JSON02** — flat object with int/string/bool fields, comma-separated correctly
+3. **JSON03** — float arrays, including negative numbers
+4. **JSON04** — nested object via `jw_kv_obj_begin`/`jw_obj_end`
+5. **JSON05** — string escaping (quotes, newlines, backslashes)
+6. **JSON06** — NaN and ±Inf serialize as `null` (per JSON spec)
+7. **JSON07** — overflow flag set when output exceeds buffer
+
+**Pass criterion:** stdout shows `[PASS]` for all 7 checks, exit
+code 0.
+
+**What it means when it fails:**
+
+- JSON02-04 broken → comma logic is wrong; output is invalid JSON.
+  Browser will silently drop frames (`JSON.parse` throws).
+- JSON05 broken → strings with special chars produce malformed
+  output. Live system would mostly avoid this (gesture names are
+  simple ASCII) but error messages might trigger it.
+- JSON06 broken → NaN slips into output. JSON parsers reject `NaN`
+  literals; browser drops frame.
+- JSON07 broken → small buffer doesn't get the overflow flag, code
+  thinks it has good output but it's truncated. Cascade failure —
+  could crash bridge if downstream code memcpy's beyond.
+
+### 3.8 TUI demo validation (visual, no hardware)
 
 ```bash
 ./cpcu_tui --demo
@@ -496,7 +532,7 @@ terminal**: you're running an older build that hardcoded `g_mini_h=4`.
 Rebuild with the current `signal_testbench.c` — layout now scales
 vertically with `g_term_h`.
 
-### 3.7 Note on `signal_testbench` (what it is, what it isn't)
+### 3.9 Note on `signal_testbench` (what it is, what it isn't)
 
 `signal_testbench` plots the **raw ADC stream** straight off the IPC ring.
 It is a physical-layer test: function-gen → BSAU ADC → NRF TX → NRF RX →

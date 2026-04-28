@@ -566,9 +566,64 @@ SVCEOF
         log "  sudo systemctl status cpcu"
         log "  journalctl -u cpcu -f              (no sudo needed)"
         ;;
+    ws)
+        # v2.4.0: launch the read-only web bridge in the foreground.
+        # Reads /dev/shm/cpcu_ipc and serves the CPCU Dashboard at
+        # http://<pi-ip>:8765. Defaults to 0.0.0.0 (LAN-shared); pass
+        # --bind ws://127.0.0.1:8765 in argv if you want loopback only.
+        [ -x "${BIN_DIR}/cpcu_ws" ] || fatal "${BIN_DIR}/cpcu_ws not found"
+        log "Starting cpcu_ws (web bridge) — Ctrl+C to stop"
+        log "Dashboard at http://$(hostname -I | awk '{print $1}'):8765"
+        exec "${BIN_DIR}/cpcu_ws" --static "${SCRIPT_DIR}/../web/static" "$@"
+        ;;
+    install-ws-service)
+        # v2.4.0: generate /etc/systemd/system/cpcu_ws.service so the
+        # bridge starts on boot alongside cpcu.service. Self-elevates.
+        if [ "$(id -u)" -ne 0 ]; then
+            log "install-ws-service needs root (writes /etc/systemd/system/cpcu_ws.service)"
+            log "Re-execing under sudo (you'll be prompted for your password)..."
+            exec sudo "$0" "$@"
+        fi
+        REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
+        # Try the deployed-static-dir first; fall back to scripts/../web/static.
+        if [ -d /opt/cpcu/ws_static ]; then
+            STATIC_DIR=/opt/cpcu/ws_static
+        else
+            STATIC_DIR="${SCRIPT_DIR}/../web/static"
+        fi
+        cat > /etc/systemd/system/cpcu_ws.service << WSEOF
+[Unit]
+Description=CPCU Dashboard — read-only web bridge
+After=cpcu.service network.target
+Requires=cpcu.service
+
+[Service]
+Type=simple
+User=${REAL_USER}
+ExecStart=${BIN_DIR}/cpcu_ws --bind ws://0.0.0.0:8765 --static ${STATIC_DIR}
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:${LOG_DIR}/cpcu_ws.log
+StandardError=append:${LOG_DIR}/cpcu_ws.log
+
+[Install]
+WantedBy=multi-user.target
+WSEOF
+        log "Wrote /etc/systemd/system/cpcu_ws.service (User=${REAL_USER})"
+        log "  bind: ws://0.0.0.0:8765 (LAN-shared)"
+        log "  static dir: ${STATIC_DIR}"
+        systemctl daemon-reload
+        systemctl enable cpcu_ws.service
+        log "Service enabled. Start with:"
+        log "  sudo systemctl start cpcu_ws         (or just reboot)"
+        log "Stop / status:"
+        log "  sudo systemctl stop cpcu_ws"
+        log "  sudo systemctl status cpcu_ws"
+        log "  journalctl -u cpcu_ws -f"
+        ;;
     *)
         err "Unknown mode: ${MODE}"
-        echo "Usage: $0 [kernel|tui|collect|signal|pca|menu|attach|stop|install-service|grant-caps]"
+        echo "Usage: $0 [kernel|tui|collect|signal|pca|ws|menu|attach|stop|install-service|install-ws-service|grant-caps]"
         exit 2
         ;;
 esac
