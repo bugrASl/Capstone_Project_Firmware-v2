@@ -3,13 +3,25 @@
  *  @brief      Core 3 — Real-time I/O controller
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.3.6
+ *  @version    2.3.7
  *  @details    Deterministic loop:
  *                  1. Busy-poll NRF via spidev         -> read payload
  *                  2. WL_Unpack -> seq/safety/link     -> push to SPSC ring
  *                  3. Rate-limited (50 Hz) PCA servo update via I2C
  *                  4. Safety checks: radio, DSP, I2C, thermal, ring
  *                  5. Heartbeat to shared memory for watchdog
+ *
+ *              v2.3.7 changes:
+ *                  - Gripper stall watchdog. When the smoother current
+ *                    has been at servo_min[5] (within 5 us) for
+ *                    grip_stall_recover_ms continuously, AND the target
+ *                    is still asking it to stay there, retreat to
+ *                    grip_touch_us. While active, incoming target[5]
+ *                    is clamped at grip_touch_us as a floor. Clears on
+ *                    target rising above touch+margin for 250 ms, or
+ *                    on SAFE. The io_gripper_stalls counter in
+ *                    IPC_Diagnostics tracks fires. Hardware-protection
+ *                    backstop to dsp's soft-firm clamp; see SOFT_GRIP.md.
  *
  *              v2.3.6 changes:
  *                  - Smoother per-channel velocity / accel / deadband
@@ -371,6 +383,23 @@ int main(int argc, char *argv[])
     uint32_t cfg_seq_seen = cfg_cache.config_seq;
     apply_runtime_smoother_cfg(&smooth, &cfg_cache);
 
+    /* v2.3.7: gripper stall watchdog state. The watchdog fires when
+     * the smoother current[5] has been at servo_min[5] (within a
+     * small margin) for grip_stall_recover_ms continuously, AND the
+     * smoother target is still asking it to stay there. The retreat
+     * is to grip_touch_us; while active, incoming motor_cmd targets
+     * for channel 5 are clamped to grip_touch_us so dsp can't keep
+     * pinning us back to the floor. Cleared when target rises above
+     * grip_touch_us + margin for 250 ms (debounce — avoids twitchy
+     * re-engage on a single dropped tick).
+     *
+     * 0 in gripper_at_floor_since_us means "not currently at floor".
+     * gripper_unstall_since_us tracks the debounce for clearing
+     * stall_active. See SOFT_GRIP.md for the state diagram. */
+    uint64_t gripper_at_floor_since_us = 0;
+    uint64_t gripper_unstall_since_us  = 0;
+    bool     gripper_stall_active       = false;
+
     /*---------------------------------------------------------------------------*/
 
     while(g_run)
@@ -517,6 +546,98 @@ int main(int argc, char *argv[])
                 /* Advance smoother toward targets */
                 SMOOTH_Update(&smooth, servo_dt);
 
+                /* v2.3.7: gripper stall watchdog. Two-state machine.
+                 *
+                 * INACTIVE: monitor whether current[5] is at the floor
+                 *   (within MARGIN_US). If yes for grip_stall_recover_ms
+                 *   continuously, FIRE: snap target to grip_touch_us,
+                 *   set active=true, increment counter.
+                 *
+                 * ACTIVE: clamp incoming target[5] to grip_touch_us as
+                 *   a floor (doesn't constrain opening). When target
+                 *   naturally rises above grip_touch_us + MARGIN_US for
+                 *   grip_unstall_debounce_us, clear active.
+                 *
+                 * The stall is detected on the smoother's CURRENT, not
+                 * its TARGET — the target may already have been clamped
+                 * to grip_firm_us by dsp's soft policy. We care about
+                 * whether the physical position has been pinned. */
+                #define WD_MARGIN_US           5
+                #define WD_UNSTALL_DEBOUNCE_US (250 * 1000ULL)
+                {
+                    uint16_t cur5 = smooth.current[5];
+                    uint16_t tgt5 = smooth.target[5];
+                    uint16_t floor_us = pca.servo_min[5];
+                    uint16_t touch_us = cfg_cache.grip_touch_us
+                                          ? cfg_cache.grip_touch_us : 1200;
+                    uint64_t recover_us = (uint64_t)
+                        (cfg_cache.grip_stall_recover_ms
+                          ? cfg_cache.grip_stall_recover_ms : 2000) * 1000ULL;
+
+                    bool at_floor = (cur5 <= floor_us + WD_MARGIN_US) &&
+                                    (tgt5 <= floor_us + WD_MARGIN_US);
+
+                    if(!gripper_stall_active)
+                    {
+                        if(at_floor)
+                        {
+                            if(gripper_at_floor_since_us == 0)
+                                gripper_at_floor_since_us = t;
+                            else if((t - gripper_at_floor_since_us) > recover_us)
+                            {
+                                /* FIRE: retreat. */
+                                SMOOTH_SetTarget(&smooth, 5, touch_us);
+                                gripper_stall_active = true;
+                                gripper_unstall_since_us = 0;
+                                atomic_fetch_add_explicit(
+                                    &ipc.diag->io_gripper_stalls, 1u,
+                                    memory_order_relaxed);
+                                LOG_W("IO", "gripper stall watchdog fired -> "
+                                            "retreat to %u us (was at floor "
+                                            "%llu ms)",
+                                      (unsigned)touch_us,
+                                      (unsigned long long)
+                                        ((t - gripper_at_floor_since_us) / 1000));
+                            }
+                        }
+                        else
+                        {
+                            gripper_at_floor_since_us = 0;
+                        }
+                    }
+                    else /* gripper_stall_active */
+                    {
+                        /* Override incoming target while active.
+                         * SMOOTH_SetAllTargets called above may have
+                         * just set target[5] back to whatever dsp is
+                         * publishing. Re-clamp to touch as a floor. */
+                        if(smooth.target[5] < touch_us)
+                            SMOOTH_SetTarget(&smooth, 5, touch_us);
+
+                        /* Recovery: target naturally above touch+margin
+                         * for the debounce window. */
+                        if(smooth.target[5] > touch_us + WD_MARGIN_US)
+                        {
+                            if(gripper_unstall_since_us == 0)
+                                gripper_unstall_since_us = t;
+                            else if((t - gripper_unstall_since_us)
+                                     > WD_UNSTALL_DEBOUNCE_US)
+                            {
+                                gripper_stall_active = false;
+                                gripper_at_floor_since_us = 0;
+                                gripper_unstall_since_us  = 0;
+                                LOG_I("IO", "gripper stall cleared");
+                            }
+                        }
+                        else
+                        {
+                            gripper_unstall_since_us = 0;
+                        }
+                    }
+                }
+                #undef WD_MARGIN_US
+                #undef WD_UNSTALL_DEBOUNCE_US
+
                 /* v2.3.3: refresh runtime config snapshot. If the kernel
                  * just reloaded JSON (SIGHUP), this picks up the new
                  * values within one servo tick. Failed reads (writer
@@ -612,6 +733,13 @@ int main(int argc, char *argv[])
                 SMOOTH_Snap(&smooth);
 
                 PCA_SetAllNeutral(&pca);
+
+                /* v2.3.7: clear gripper stall watchdog so post-recovery
+                 * doesn't have us still pinned at grip_touch_us. The
+                 * arm just snapped to neutral; nothing's at the floor. */
+                gripper_stall_active       = false;
+                gripper_at_floor_since_us  = 0;
+                gripper_unstall_since_us   = 0;
 
                 /* v2.3.2: keep the deadband shadow coherent with what's
                  * actually latched in the PCA. Without this, the next

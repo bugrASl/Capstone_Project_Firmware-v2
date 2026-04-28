@@ -338,7 +338,7 @@ def test_runtime_config_loader_defaults():
     without crashing."""
     print("\n--- TB-DSP11: runtime config loader (defaults) ---")
     import cpcu_dsp
-    floor, ceil_, votes, beh, _ = cpcu_dsp.load_dsp_runtime_config(
+    floor, ceil_, votes, beh = cpcu_dsp.load_dsp_runtime_config(
         ["rest", "biceps_flex"], path="/tmp/this_does_not_exist_xyzzy.json")
     ASSERT(floor == cpcu_dsp.INTERP_CONF_FLOOR,
            f"floor defaulted to {floor} (expected {cpcu_dsp.INTERP_CONF_FLOOR})")
@@ -373,7 +373,7 @@ def test_runtime_config_loader_velocity():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         f.write(sample); path = f.name
     try:
-        floor, ceil_, votes, beh, _ = cpcu_dsp.load_dsp_runtime_config(
+        floor, ceil_, votes, beh = cpcu_dsp.load_dsp_runtime_config(
             ["rest", "biceps_flex", "hand_flex"], path=path)
         ASSERT(abs(floor - 0.25) < 1e-9, f"floor parsed as {floor}")
         ASSERT(abs(ceil_ - 0.90) < 1e-9, f"ceil parsed as {ceil_}")
@@ -403,7 +403,7 @@ def test_runtime_config_loader_clamping():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         f.write(sample); path = f.name
     try:
-        _, _, _, beh, _ = cpcu_dsp.load_dsp_runtime_config(
+        _, _, _, beh = cpcu_dsp.load_dsp_runtime_config(
             ["rest", "biceps_flex"], path=path)
         ASSERT(beh["biceps_flex"]["rate"][0] == 5000,
                f"99999 clamped to 5000, got {beh['biceps_flex']['rate'][0]}")
@@ -432,7 +432,7 @@ def test_runtime_config_loader_unknown_class():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         f.write(sample); path = f.name
     try:
-        _, _, _, beh, _ = cpcu_dsp.load_dsp_runtime_config(
+        _, _, _, beh = cpcu_dsp.load_dsp_runtime_config(
             ["rest", "biceps_flex"], path=path)
         ASSERT("biceps_flex" in beh and beh["biceps_flex"]["mode"] == "velocity",
                "known class loaded")
@@ -459,7 +459,7 @@ def test_runtime_config_loader_invariant_violation():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         f.write(sample); path = f.name
     try:
-        floor, ceil_, _, _, _ = cpcu_dsp.load_dsp_runtime_config(["rest"], path=path)
+        floor, ceil_, _, _ = cpcu_dsp.load_dsp_runtime_config(["rest"], path=path)
         ASSERT(floor < ceil_,
                f"loader rejected invariant violation: floor={floor} ceil={ceil_}")
     finally:
@@ -485,73 +485,10 @@ def test_runtime_config_jsonc_comments():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         f.write(sample); path = f.name
     try:
-        _, _, _, beh, _ = cpcu_dsp.load_dsp_runtime_config(
+        _, _, _, beh = cpcu_dsp.load_dsp_runtime_config(
             ["rest", "biceps_flex"], path=path)
         ASSERT(beh.get("biceps_flex", {}).get("mode") == "velocity",
                "JSONC parsed and velocity row applied")
-    finally:
-        os.unlink(path)
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  TB-DSP17 — Soft-grip clamp (v2.3.7)
-# ══════════════════════════════════════════════════════════════════════
-
-def test_grip_firm_us_loaded():
-    """grip_firm_us is parsed from runtime.json into the loader's
-    5th return value, defaulting to 1100 when absent or invalid."""
-    print("\n--- TB-DSP17: grip_firm_us loader (v2.3.7) ---")
-    import cpcu_dsp, tempfile, os
-
-    # Default when absent
-    sample_default = """
-    {
-      "schema_version": 1,
-      "servo_min_us": [498, 1074, 1074, 1001, 1001, 976],
-      "servo_max_us": [2500, 1953, 1953, 2002, 2002, 1733]
-    }
-    """
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write(sample_default); path = f.name
-    try:
-        _, _, _, _, gf = cpcu_dsp.load_dsp_runtime_config(["rest"], path=path)
-        ASSERT(gf == cpcu_dsp.GRIP_FIRM_US_DEFAULT,
-               f"absent grip_firm_us defaults to {gf}")
-    finally:
-        os.unlink(path)
-
-    # Honored when present
-    sample_present = """
-    {
-      "schema_version": 1,
-      "servo_min_us": [498, 1074, 1074, 1001, 1001, 976],
-      "servo_max_us": [2500, 1953, 1953, 2002, 2002, 1733],
-      "grip_firm_us": 1150
-    }
-    """
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write(sample_present); path = f.name
-    try:
-        _, _, _, _, gf = cpcu_dsp.load_dsp_runtime_config(["rest"], path=path)
-        ASSERT(gf == 1150, f"present grip_firm_us parsed as {gf}")
-    finally:
-        os.unlink(path)
-
-    # Out of range falls back to default
-    sample_bad = """
-    {
-      "schema_version": 1,
-      "servo_min_us": [498, 1074, 1074, 1001, 1001, 976],
-      "servo_max_us": [2500, 1953, 1953, 2002, 2002, 1733],
-      "grip_firm_us": 99999
-    }
-    """
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write(sample_bad); path = f.name
-    try:
-        _, _, _, _, gf = cpcu_dsp.load_dsp_runtime_config(["rest"], path=path)
-        ASSERT(gf == cpcu_dsp.GRIP_FIRM_US_DEFAULT,
-               f"out-of-range grip_firm_us rejected, got {gf}")
     finally:
         os.unlink(path)
 
@@ -562,7 +499,7 @@ def test_grip_firm_us_loaded():
 
 def main():
     print("=" * 60)
-    print("  TB-DSP — cpcu_dsp.py pipeline validation (v2.3.7)")
+    print("  TB-DSP — cpcu_dsp.py pipeline validation (v2.3.5)")
     print("=" * 60)
 
     test_api_surface()
@@ -581,7 +518,6 @@ def main():
     test_runtime_config_loader_unknown_class()
     test_runtime_config_loader_invariant_violation()
     test_runtime_config_jsonc_comments()
-    test_grip_firm_us_loaded()
 
     print("\n" + "=" * 60)
     print(f"  RESULTS: {g_pass} PASS, {g_fail} FAIL")
