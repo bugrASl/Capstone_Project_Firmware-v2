@@ -254,18 +254,28 @@ if(CURSES_FOUND)
     install(TARGETS cpcu_tui RUNTIME DESTINATION /opt/cpcu/bin)
 endif()
 
-## Python scripts -> /opt/cpcu/scripts
+## Python helpers -> /opt/cpcu/python   (v2.7: renamed from scripts/)
 install(FILES
-    scripts/cpcu_dsp.py
-    scripts/cpcu_ipc_bridge.py
+    python/cpcu_dsp.py
+    python/cpcu_ipc_bridge.py
+    DESTINATION /opt/cpcu/python
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+)
+
+## Internal shell helpers -> /opt/cpcu/scripts  (v2.7: only the helpers,
+## launch.sh now lives at the top level)
+install(FILES
+    scripts/setup_pi.sh
+    scripts/configure.sh
+    scripts/run_tests.sh
     DESTINATION /opt/cpcu/scripts
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
-## Launch scripts -> /opt/cpcu/scripts
+## launch.sh — the user API — at the top level of /opt/cpcu  (v2.7)
 install(FILES
-    scripts/launch.sh
-    DESTINATION /opt/cpcu/scripts
+    launch.sh
+    DESTINATION /opt/cpcu
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 

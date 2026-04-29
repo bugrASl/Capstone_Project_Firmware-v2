@@ -56,7 +56,7 @@
 
 /* Paths */
 #define CPCU_IO_BIN             "./cpcu_io"
-#define CPCU_DSP_SCRIPT         "/opt/cpcu/scripts/cpcu_dsp.py"
+#define CPCU_DSP_SCRIPT         "/opt/cpcu/python/cpcu_dsp.py"
 #define CPCU_DSP_SCRIPT_ALT     "./cpcu_dsp.py"
 #define PYTHON3_BIN             "/usr/bin/python3"
 
@@ -75,7 +75,7 @@
 
 /* Paths */
 #define CPCU_IO_BIN             "./cpcu_io"
-#define CPCU_DSP_SCRIPT         "/opt/cpcu/scripts/cpcu_dsp.py"
+#define CPCU_DSP_SCRIPT         "/opt/cpcu/python/cpcu_dsp.py"
 #define CPCU_DSP_SCRIPT_ALT     "./cpcu_dsp.py"
 #define PYTHON3_BIN             "/usr/bin/python3"
 

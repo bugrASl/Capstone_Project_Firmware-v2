@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  configure.sh — Edit compile-time #defines in CPCU and BSAU headers.
+#  scripts/configure.sh — Internal helper for `./launch.sh configure`
 # =============================================================================
 #  Author : bugrASl
 #  Date   : April 2026
-#  Version: v2.3.3
+#  Version: v2.7
+#
+#  ───────────────────────────────────────────────────────────────────────────
+#  THIS IS A HELPER SCRIPT — invoked only by ./launch.sh configure.
+#  Users should never invoke this directly. The user-facing API is:
+#
+#      ./launch.sh configure              (interactive)
+#      ./launch.sh configure --show       (list current values)
+#      ./launch.sh configure --radio-timeout 1000   (set one)
+#      ./launch.sh configure --reset      (restore defaults)
+#  ───────────────────────────────────────────────────────────────────────────
 #
 #  WHY THIS EXISTS
 #    Some constants in this project are SAFETY thresholds — radio timeout,
@@ -14,53 +24,35 @@
 #    This script is a documented sed-wrapper that:
 #      1. Knows where each tunable lives.
 #      2. Validates new values against sane ranges.
-#      3. Reminds you to rebuild after every edit.
+#      3. Reminds the launcher to rebuild after every edit.
 #
 #    For runtime-tunable knobs (servo limits, gesture velocities, deadband,
 #    grip levels, per-servo bias) edit cpcu_v2/config/runtime.json directly,
-#    or use the CPCU TUI's edit mode (v2.3.4+).
-#    See cpcu_v2/docs/RUNTIME_CONFIG.md for the full split.
+#    or use the CPCU TUI's edit mode.
 #
-#  USAGE
-#    Interactive (no args, walks every editable):
-#      ./configure.sh
-#
-#    Show all current values:
-#      ./configure.sh --show
-#
-#    Show what's been changed from defaults:
-#      ./configure.sh --diff
-#
-#    Restore all defaults:
-#      ./configure.sh --reset
-#      ./configure.sh --reset --runtime    # also regenerate runtime.json
-#
-#    Flag-driven, single change:
-#      ./configure.sh --radio-timeout 1000
-#      ./configure.sh --vbat-low 3.1 --thermal-warn 70
-#
-#    Show one current value (no flag arg):
-#      ./configure.sh --radio-timeout
-#
-#    Scope-prefixed (CPCU vs BSAU):
-#      ./configure.sh --bsau --mode dataset
-#      ./configure.sh --cpcu --vbat-crit 2.65
+#  v2.7 changes:
+#    - Moved from cpcu_v2/configure.sh to cpcu_v2/scripts/configure.sh.
+#    - CPCU_ROOT path resolution climbs one directory (we live in
+#      scripts/ now, not at the repo root).
+#    - All "next steps" prose stripped — the launcher prints user-facing
+#      messages from the rebuild-required exit code.
 # =============================================================================
 
 set -e
 
 #------------------------------------------------------------------------------
-# Locate the repo root robustly (works whether script is invoked from anywhere)
+# Locate the cpcu_v2/ root and the repo parent. Robust against being invoked
+# from anywhere thanks to BASH_SOURCE.
 #------------------------------------------------------------------------------
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-CPCU_ROOT="${SCRIPT_DIR}"
+CPCU_ROOT="$( cd "${SCRIPT_DIR}/.." && pwd )"
 REPO_ROOT="$( cd "${CPCU_ROOT}/.." && pwd )"
 BSAU_ROOT="${REPO_ROOT}/bsau_v2"
 
-# Sanity check: this script lives next to setup_pi.sh inside cpcu_v2/.
+# Sanity check: cpcu_v2/include/cpcu_safety.h must exist where we expect it.
 if [ ! -f "${CPCU_ROOT}/include/cpcu_safety.h" ]; then
     echo "[configure.sh] ERROR: can't locate cpcu_v2/include/cpcu_safety.h"
-    echo "                  expected layout: <repo>/cpcu_v2/configure.sh"
+    echo "                  expected layout: <repo>/cpcu_v2/scripts/configure.sh"
     exit 1
 fi
 
@@ -412,12 +404,10 @@ else
 fi
 
 #------------------------------------------------------------------------------
-# Rebuild hint
+# Rebuild signaling — exit 11 if a rebuild is needed. The caller (launch.sh)
+# prints the user-facing prompt; this script just signals.
 #------------------------------------------------------------------------------
 if [ "${NEED_REBUILD}" = "1" ]; then
-    echo
-    echo -e "${Y}=== REBUILD REQUIRED ===${N}"
-    echo "CPCU:  cd ${CPCU_ROOT} && cmake --build build"
-    echo "BSAU:  rebuild + flash via STM32CubeIDE"
-    echo "Then restart the system for the new values to take effect."
+    exit 11
 fi
+exit 0

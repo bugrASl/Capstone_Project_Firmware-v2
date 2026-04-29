@@ -1,33 +1,39 @@
 #!/bin/bash
 ##
-##  run_tests.sh — CPCU v2.3 Test Runner
+##  scripts/run_tests.sh — Internal helper for `./launch.sh test*`
 ##  Author: bugrASl
 ##  Date:   April 2026
+##  Version: v2.7
+##
+##  ────────────────────────────────────────────────────────────────────
+##  THIS IS A HELPER SCRIPT — invoked only by ./launch.sh test*.
+##  Users should never invoke this directly. The user-facing API is:
+##
+##      ./launch.sh test            # Phase 1 (software-only, 233 PASS)
+##      ./launch.sh test-ipc        # Phase 1 + Phase 2 (kernel needed)
+##      ./launch.sh test-hw         # Phase 1 + 2 + 3 (full Pi hardware)
+##      ./launch.sh test-pca        # interactive PCA9685 servo TUI
+##      ./launch.sh test-signal     # interactive signal integrity TUI (live)
+##      ./launch.sh test-signal-demo  # signal TUI with synthetic data
+##      ./launch.sh test-safety-demo  # cpcu_tui --demo with fault keys
+##  ────────────────────────────────────────────────────────────────────
 ##
 ##  Runs all test phases in dependency order.
 ##  Phase 1 needs no hardware. Phase 2 needs shared memory. Phase 3 needs Pi hardware.
 ##
-##  Usage — RUN AS REGULAR USER (no sudo at the prompt):
-##      ./run_tests.sh              # Run all automated phases (1 2 3)
-##      ./run_tests.sh 1            # Run Phase 1 only (codec + safety + DSP)
-##      ./run_tests.sh 1 2          # Run Phases 1 and 2
-##      ./run_tests.sh pca          # Launch interactive PCA9685 servo testbench
-##      ./run_tests.sh signal       # Launch interactive signal integrity testbench
-##      ./run_tests.sh signal-demo  # Launch signal testbench with synthetic data (no hw)
-##      ./run_tests.sh safety-demo  # Launch cpcu_tui --demo with fault-injection hotkeys
-##
-##  v2.3 changes:
-##      - All sudo invocations removed. The PCA / signal testbench
-##        previously did `exec sudo ./binary`; now they just `exec
-##        ./binary`. setup_pi.sh adds you to the spi+i2c+gpio groups
-##        so the device files are reachable without root, and shm_open
-##        uses 0666 so /dev/shm/cpcu_ipc is also reachable.
-##      - Build location auto-detected: tries `./binary` first (legacy),
-##        then `build/binary` (modern out-of-tree cmake), then bails
-##        with a clear error if neither exists.
-##
+##  v2.7 changes:
+##      - Moved from cpcu_v2/run_tests.sh to cpcu_v2/scripts/run_tests.sh.
+##      - Auto-CDs to cpcu_v2/ at startup so the legacy ./binary and
+##        build/binary path lookups still work.
 
 set -e
+
+# Locate cpcu_v2 root (one directory above this script) and CD there
+# so the existing ./binary, build/binary, test/foo paths resolve
+# unchanged from the v2.3 era.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CPCU_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${CPCU_ROOT}"
 
 GREEN="\033[32m"
 RED="\033[31m"
