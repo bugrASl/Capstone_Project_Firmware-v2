@@ -1,6 +1,6 @@
 #!/bin/bash
 ##
-##  launch.sh — CPCU v2.5 Boot Script (tmux multi-mode launcher)
+##  launch.sh — CPCU v2.6 Boot Script (tmux multi-mode launcher)
 ##  Author: bugrASl
 ##  Date:   April 2026
 ##
@@ -11,6 +11,9 @@
 ##      ./scripts/launch.sh collect      # tmux: kernel + cpcu_tui (capture-mode reminder)
 ##      ./scripts/launch.sh pca          # pca_testbench only (no kernel, no tmux)
 ##      ./scripts/launch.sh kernel       # kernel only (foreground)
+##      ./scripts/launch.sh build        # cmake configure (lazy) + build + install + grant-caps
+##      ./scripts/launch.sh test         # run Phase 1 software tests (no hardware)
+##      ./scripts/launch.sh check        # pre-flight: report environment problems and exit
 ##      ./scripts/launch.sh attach       # re-attach to running tmux session
 ##      ./scripts/launch.sh stop         # kill the tmux session and all children
 ##      ./scripts/launch.sh install-service  # set up systemd unit + enable
@@ -21,6 +24,27 @@
 ##  run without sudo. SCHED_FIFO / mlockall need CAP_SYS_NICE +
 ##  CAP_IPC_LOCK; the install step grants those via setcap on the
 ##  binaries (see grant_caps below).
+##
+##  v2.6 changes (2026-04):
+##      - Added `build` mode wrapping the dev rebuild loop:
+##        cmake configure (lazy) + cmake --build + cmake --install +
+##        grant-caps. One command for the whole rebuild cycle.
+##      - Added `test` mode as a thin wrapper for `./run_tests.sh 1`.
+##      - Added `check` mode: standalone pre-flight that classifies
+##        environment problems as fatal or warning, exits 0/1
+##        accordingly. Useful in CI and as a "before I demo" sanity.
+##
+##      Operations intentionally NOT wrapped:
+##        * `apt update` / `apt upgrade` — wrong scope (OS-level),
+##          wrong privilege model (sudo every launch), wrong frequency
+##          (weekly vs many launches/day), and apt upgrade can replace
+##          the running kernel mid-session. Stays a manual user op.
+##        * `setup_pi.sh` — one-time provisioning that modifies
+##          /boot/firmware and requires reboot. Different scope from
+##          launch.sh; stays in setup_pi.sh.
+##
+##      The split: setup_pi.sh provisions the Pi, launch.sh
+##      builds + runs, run_tests.sh validates. One coherent scope each.
 ##
 ##  v2.5 changes (2026-04):
 ##      - All sudo invocations removed from the user-facing path. The
@@ -133,6 +157,155 @@ preflight_kernel() {
 preflight_pca()    { [ -x "${BIN_DIR}/pca_testbench" ]    || fatal "${BIN_DIR}/pca_testbench not found"; }
 preflight_tui()    { [ -x "${BIN_DIR}/cpcu_tui" ]         || fatal "${BIN_DIR}/cpcu_tui not found"; }
 preflight_signal() { [ -x "${BIN_DIR}/signal_testbench" ] || fatal "${BIN_DIR}/signal_testbench not found"; }
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  BUILD / TEST / CHECK helpers (v2.6)
+# ──────────────────────────────────────────────────────────────────────
+
+# Locate the repo root (contains CMakeLists.txt + scripts/). Resolves
+# whether the script was invoked from the install path
+# (/opt/cpcu/scripts/launch.sh) or directly from the repo
+# (cpcu_v2/scripts/launch.sh).
+find_repo_root() {
+    local me d fallback
+    me="$(readlink -f "$0")"
+    d="$(dirname "$(dirname "${me}")")"
+    if [ -f "${d}/CMakeLists.txt" ]; then echo "${d}"; return 0; fi
+    fallback="${HOME}/prosthetic_hand/cpcu_v2"
+    if [ -f "${fallback}/CMakeLists.txt" ]; then echo "${fallback}"; return 0; fi
+    return 1
+}
+
+# Lazy cmake configure: only re-runs when CMakeCache.txt is missing
+# or older than CMakeLists.txt. Saves ~5 s on every build call.
+run_cmake_configure() {
+    local repo="$1"
+    if [ ! -f "${repo}/build/CMakeCache.txt" ]; then
+        log "First build — running cmake configure..."
+        ( cd "${repo}" && cmake -S . -B build ) || fatal "cmake configure failed"
+    elif [ "${repo}/CMakeLists.txt" -nt "${repo}/build/CMakeCache.txt" ]; then
+        log "CMakeLists.txt is newer than cache — re-running cmake configure..."
+        ( cd "${repo}" && cmake -S . -B build ) || fatal "cmake configure failed"
+    else
+        log "cmake cache up to date — skipping configure"
+    fi
+}
+
+# Wrap the full dev rebuild loop: configure (lazy) + build + install
+# + grant-caps. Only the grant-caps step needs sudo; the rest runs as
+# user thanks to setup_pi.sh's chown of /opt/cpcu.
+run_build() {
+    local repo
+    repo="$(find_repo_root)" \
+        || fatal "couldn't find repo root — checked \$0 and ~/prosthetic_hand/cpcu_v2"
+    log "Repo root: ${repo}"
+
+    run_cmake_configure "${repo}"
+
+    log "Building..."
+    ( cd "${repo}" && cmake --build build -j4 ) || fatal "build failed"
+
+    log "Installing to /opt/cpcu..."
+    ( cd "${repo}" && cmake --install build ) || fatal "install failed"
+
+    log "Re-applying RT capabilities..."
+    "$0" grant-caps || fatal "grant-caps failed"
+
+    log "${C_GRN}${C_BLD}Build complete.${C_RST} Run '${C_BLD}$0 tui${C_RST}' to start the system."
+}
+
+# Phase 1 software tests (no hardware needed).
+run_phase1_tests() {
+    local repo
+    repo="$(find_repo_root)" || fatal "couldn't find repo root"
+    [ -x "${repo}/run_tests.sh" ] || fatal "${repo}/run_tests.sh not found or not executable"
+
+    log "Running Phase 1 software tests..."
+    ( cd "${repo}" && ./run_tests.sh 1 )
+}
+
+# Standalone pre-flight: report what's wrong, exit 1 if a fatal-class
+# issue would prevent launch, exit 0 otherwise. Warn-class issues
+# (missing model, PCA not detected) are reported but don't fail.
+run_check() {
+    log "Standalone pre-flight check..."
+    local fatal_count=0 warn_count=0
+
+    [ -x "${BIN_DIR}/cpcu_kernel" ] \
+        || { err "MISSING ${BIN_DIR}/cpcu_kernel — run '$0 build'"; fatal_count=$((fatal_count+1)); }
+    [ -x "${BIN_DIR}/cpcu_io" ] \
+        || { err "MISSING ${BIN_DIR}/cpcu_io — run '$0 build'";     fatal_count=$((fatal_count+1)); }
+    [ -x "${BIN_DIR}/cpcu_tui" ] \
+        || { warn "${BIN_DIR}/cpcu_tui not installed";              warn_count=$((warn_count+1)); }
+
+    # Capabilities — fatal if binaries exist but aren't capped.
+    if [ -x "${BIN_DIR}/cpcu_kernel" ]; then
+        if ! getcap "${BIN_DIR}/cpcu_kernel" 2>/dev/null | grep -q cap_sys_nice; then
+            err "cpcu_kernel missing CAP_SYS_NICE — run '$0 grant-caps'"
+            fatal_count=$((fatal_count+1))
+        fi
+    fi
+
+    # Python deps
+    if ! python3 -c "import numpy, scipy, joblib" 2>/dev/null; then
+        warn "Python deps missing — DSP will be feature-only"
+        warn_count=$((warn_count+1))
+    fi
+
+    # Model files — warn only; cpcu_dsp.py supports feature-only mode.
+    if [ ! -f "${MODEL_DIR}/hmi_svm_model_200hz.joblib" ] \
+       || [ ! -f "${MODEL_DIR}/hmi_scaler_200hz.joblib" ]; then
+        warn "ML model not in ${MODEL_DIR} — DSP will run feature-only"
+        warn_count=$((warn_count+1))
+    fi
+
+    # Runtime config symlink
+    if [ ! -f "/opt/cpcu/config.json" ]; then
+        err "No /opt/cpcu/config.json — symlink missing (re-run setup_pi.sh)"
+        fatal_count=$((fatal_count+1))
+    fi
+
+    # isolcpus
+    local isolated
+    isolated=$(cat /sys/devices/system/cpu/isolated 2>/dev/null || echo "")
+    if [ -z "${isolated}" ]; then
+        err "No cores isolated — RT guarantees void (add isolcpus to cmdline.txt + reboot)"
+        fatal_count=$((fatal_count+1))
+    fi
+
+    # Peripherals
+    [ -e /dev/spidev0.0 ] \
+        || { err "/dev/spidev0.0 missing — enable SPI in raspi-config"; fatal_count=$((fatal_count+1)); }
+    [ -e /dev/i2c-1 ] \
+        || { err "/dev/i2c-1 missing — enable I2C in raspi-config";     fatal_count=$((fatal_count+1)); }
+
+    # PCA detection — warn only; bench testing without PCA is OK.
+    if command -v i2cdetect >/dev/null 2>&1; then
+        if ! i2cdetect -y 1 2>/dev/null | grep -q " 40 "; then
+            warn "PCA9685 not detected at I²C 0x40"
+            warn_count=$((warn_count+1))
+        fi
+    fi
+
+    # Group membership
+    if ! groups | grep -qE '\bspi\b' || ! groups | grep -qE '\bi2c\b'; then
+        warn "Not in spi/i2c groups — log out and back in"
+        warn_count=$((warn_count+1))
+    fi
+
+    echo
+    if [ "${fatal_count}" -gt 0 ]; then
+        err "${fatal_count} fatal issue(s), ${warn_count} warning(s) — system will NOT start"
+        exit 1
+    elif [ "${warn_count}" -gt 0 ]; then
+        log "${C_YEL}${warn_count} warning(s) — system can start with degraded behavior${C_RST}"
+        exit 0
+    else
+        log "${C_GRN}All checks passed — system is ready to launch${C_RST}"
+        exit 0
+    fi
+}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -473,6 +646,9 @@ case "${MODE}" in
     collect)    run_collect ;;
     signal)     run_signal ;;
     pca)        run_pca ;;
+    build)      run_build ;;
+    test)       run_phase1_tests ;;
+    check)      run_check ;;
     menu)       show_menu ;;
     attach)
         # Convenience: re-attach to running session
