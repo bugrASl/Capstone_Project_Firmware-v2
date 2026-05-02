@@ -402,101 +402,133 @@ static void draw_help(void)
     erase();
     int r = 0;
 
-    /* Header bar */
+    /* Two-column layout: keys on the left, explanation on the right.
+     * Centred title bar across the full width. */
+    const int LEFT_COL  = 2;
+    const int RIGHT_COL = (g_tui_w / 2) + 1;
+    const int RIGHT_W   = g_tui_w - RIGHT_COL - 2;
+    (void)RIGHT_W;  /* reserved for future right-column truncation */
+
+    /* ─── Header ─── */
     attron(COLOR_PAIR(CP_HEADER) | A_BOLD);
     mvprintw(r, 0, "%-*s", g_tui_w,
-             "  PCA9685 SERVO TESTBENCH — HELP   (press '?' or 'h' to close)");
+             "  PCA9685 SERVO TESTBENCH — HELP");
     attroff(COLOR_PAIR(CP_HEADER) | A_BOLD);
     r += 2;
 
-    /* What this tool is for */
+    /* ─── What this is ─── */
     attron(A_BOLD);
-    mvprintw(r++, 1, "What is this?");
+    mvprintw(r++, LEFT_COL, "WHAT THIS TOOL IS");
     attroff(A_BOLD);
-    mvprintw(r++, 3, "A direct-drive servo calibration tool. It talks to the PCA9685");
-    mvprintw(r++, 3, "PWM driver over I2C — no kernel, no IPC, no DSP. Use it to:");
-    mvprintw(r++, 5, "1. Find the safe MIN and MAX pulse width for each servo.");
-    mvprintw(r++, 5, "2. Add a per-servo BIAS to compensate for mounting offset.");
-    mvprintw(r++, 5, "3. Verify the runtime.json calibration is what you want.");
-    mvprintw(r++, 3, "All edits stay in memory until you press 'S' to save them.");
+    mvprintw(r++, LEFT_COL, "  Direct-drive servo calibration. Talks to the PCA9685 chip");
+    mvprintw(r++, LEFT_COL, "  over I2C — no kernel, no IPC, no DSP. You use it to teach");
+    mvprintw(r++, LEFT_COL, "  the system the safe pulse-width range of each servo before");
+    mvprintw(r++, LEFT_COL, "  the kernel ever drives the arm with EMG signals.");
     r++;
 
-    /* Typical workflow */
+    /* ─── Workflow ─── */
     attron(A_BOLD);
-    mvprintw(r++, 1, "Typical workflow");
+    mvprintw(r++, LEFT_COL, "TYPICAL WORKFLOW (do this once per servo)");
     attroff(A_BOLD);
-    mvprintw(r++, 3, "1. UP/DOWN to pick a servo.");
-    mvprintw(r++, 3, "2. LEFT/RIGHT (fine) or PgUp/PgDn (coarse) to jog the pulse.");
-    mvprintw(r++, 3, "3. When the servo reaches its mechanical limit, press '['");
-    mvprintw(r++, 3, "   (set MIN) or ']' (set MAX) to record that position.");
-    mvprintw(r++, 3, "4. Press 'n' for neutral (1500us) — the safe-park pose.");
-    mvprintw(r++, 3, "5. Press 'S' to save your calibration to runtime.json.");
-    mvprintw(r++, 3, "   The kernel will pick it up live on its next SIGHUP.");
+    mvprintw(r++, LEFT_COL, "  1. UP/DOWN  to pick a servo (the > marker shows which)");
+    mvprintw(r++, LEFT_COL, "  2. LEFT/RIGHT  jog -10/+10us until the servo just reaches its");
+    mvprintw(r++, LEFT_COL, "                 mechanical end-stop. Listen for the stall.");
+    mvprintw(r++, LEFT_COL, "  3. Back off ~10-20us so you don't command the stall point.");
+    mvprintw(r++, LEFT_COL, "  4. Press [  to record that position as the new MIN. Repeat");
+    mvprintw(r++, LEFT_COL, "             at the other end of travel and press ]  for MAX.");
+    mvprintw(r++, LEFT_COL, "  5. Press n  to verify the neutral 1500us pose looks right.");
+    mvprintw(r++, LEFT_COL, "             If not, jog to where neutral SHOULD be and press");
+    mvprintw(r++, LEFT_COL, "             b  to record that offset as BIAS.");
+    mvprintw(r++, LEFT_COL, "  6. Press S  to save the calibration to runtime.json.");
+    mvprintw(r++, LEFT_COL, "  7. If the kernel is running:  kill -HUP $(pgrep cpcu_kernel)");
+    mvprintw(r++, LEFT_COL, "                                to apply changes live.");
     r++;
 
-    /* The status line at the top */
+    /* ─── Status fields ─── */
     attron(A_BOLD);
-    mvprintw(r++, 1, "What does the top status line mean?");
+    mvprintw(r++, LEFT_COL, "STATUS LINE AT THE TOP");
     attroff(A_BOLD);
-    mvprintw(r++, 3, "  I2C Device:  CONNECTED if /dev/i2c-1 opened and PCA9685 ACK'd");
-    mvprintw(r++, 3, "  bus=...      which I2C bus device file is open");
-    mvprintw(r++, 3, "  addr=0x40    PCA9685 I2C 7-bit address (0x40 is its default)");
-    mvprintw(r++, 3, "  pre=121      PWM prescaler register; 121 == ~50 Hz refresh,");
-    mvprintw(r++, 3, "               which is the standard hobby-servo PWM rate.");
+    mvprintw(r++, LEFT_COL, "  I2C Device:  CONNECTED  if /dev/i2c-1 opened + PCA ACK'd");
+    mvprintw(r++, LEFT_COL, "  bus=...      which I2C bus device is in use");
+    mvprintw(r++, LEFT_COL, "  addr=0x40    PCA9685 7-bit I2C address (its default)");
+    mvprintw(r++, LEFT_COL, "  pre=121      PWM prescaler register. 121 == ~50 Hz refresh,");
+    mvprintw(r++, LEFT_COL, "               which is the standard hobby-servo update rate.");
     r++;
 
-    /* Per-servo display fields */
     attron(A_BOLD);
-    mvprintw(r++, 1, "Per-servo display (in the SELECTED block)");
+    mvprintw(r++, LEFT_COL, "SELECTED-SERVO PANEL (middle of the screen)");
     attroff(A_BOLD);
-    mvprintw(r++, 3, "  Range:    safe MIN-MAX pulse widths in microseconds");
-    mvprintw(r++, 3, "  Current:  what's being commanded right now");
-    mvprintw(r++, 3, "  Angle:    estimated, derived from current pulse and range");
-    mvprintw(r++, 3, "  Bias:     signed offset added before the MIN-MAX clamp,");
-    mvprintw(r++, 3, "            useful for trimming a servo mounted slightly off");
-    r++;
+    mvprintw(r++, LEFT_COL, "  Range:    the recorded safe MIN-MAX pulse range");
+    mvprintw(r++, LEFT_COL, "  Current:  what's being commanded RIGHT NOW (in us, then");
+    mvprintw(r++, LEFT_COL, "            counts -> us round-trip through the PCA chip)");
+    mvprintw(r++, LEFT_COL, "  Angle:    estimated joint angle from current pulse + range");
+    mvprintw(r++, LEFT_COL, "  Bias:     signed offset added before clamping to MIN-MAX");
 
-    /* Keys grouped by task */
+    /* ─── Right-side column: keys + explanations ─── */
+    int rr = 2;     /* start one row below the header line */
+
     attron(A_BOLD);
-    mvprintw(r++, 1, "Keys by task (press '?' to dismiss this help)");
+    mvprintw(rr++, RIGHT_COL, "MOVE THE SELECTED SERVO");
     attroff(A_BOLD);
-
     attron(COLOR_PAIR(CP_DIM));
-    mvprintw(r++, 3, "MOVE THE SELECTED SERVO");
-    mvprintw(r++, 5, "UP/DOWN     pick which servo this affects");
-    mvprintw(r++, 5, "LEFT/RIGHT  jog by 10us  (clamps at hardware-safe 500-2500us,");
-    mvprintw(r++, 5, "            so you CAN probe past the recorded MIN/MAX to");
-    mvprintw(r++, 5, "            discover the true limits, then press [ or ])");
-    mvprintw(r++, 5, "PgUp/PgDn   jog by 50us  (faster sweep)");
-    mvprintw(r++, 5, ",  .        fine -1us / +1us  (smoother knobs only — see TUNE)");
-    mvprintw(r++, 5, "n           jump to neutral 1500us");
-    mvprintw(r++, 5, "m  M        snap to recorded MIN  /  MAX");
-    mvprintw(r++, 5, "N  A        all servos to neutral / write all at once");
-    r++;
-    mvprintw(r++, 3, "RECORD CALIBRATION (in memory; 'S' to commit)");
-    mvprintw(r++, 5, "[           set MIN to current pulse");
-    mvprintw(r++, 5, "]           set MAX to current pulse");
-    mvprintw(r++, 5, "b  B        set BIAS to current offset / clear BIAS");
-    r++;
-    mvprintw(r++, 3, "TUNE MOTION (smoother)");
-    mvprintw(r++, 5, "s           toggle smoother on/off (default OFF)");
-    mvprintw(r++, 5, "v  a  d     cycle velocity / accel / deadband presets");
-    r++;
-    mvprintw(r++, 3, "SAVE / LOAD / QUIT");
-    mvprintw(r++, 5, "S           save calibration to runtime.json");
-    mvprintw(r++, 5, "L           reload calibration from runtime.json");
-    mvprintw(r++, 5, "r           refresh the I2C registers display");
-    mvprintw(r++, 5, "0           all servos OFF (disable PWM, motors go limp)");
-    mvprintw(r++, 5, "q  Q        quit (warns if unsaved changes)");
+    mvprintw(rr++, RIGHT_COL, "  UP/DOWN     pick which servo");
+    mvprintw(rr++, RIGHT_COL, "  LEFT/RIGHT  jog -/+ 10us");
+    mvprintw(rr++, RIGHT_COL, "  PgUp/PgDn   jog -/+ 50us  (coarse)");
+    mvprintw(rr++, RIGHT_COL, "  n           snap to neutral 1500us");
+    mvprintw(rr++, RIGHT_COL, "  m  M        snap to recorded MIN/MAX");
+    mvprintw(rr++, RIGHT_COL, "  N           ALL servos to neutral");
+    mvprintw(rr++, RIGHT_COL, "  A           write ALL servos in one bulk");
+    mvprintw(rr++, RIGHT_COL, "              I2C transaction (vs default of");
+    mvprintw(rr++, RIGHT_COL, "              one-at-a-time)");
+    attroff(COLOR_PAIR(CP_DIM));
+    rr++;
+
+    attron(A_BOLD);
+    mvprintw(rr++, RIGHT_COL, "RECORD CALIBRATION (RAM only)");
+    attroff(A_BOLD);
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(rr++, RIGHT_COL, "  [           set MIN to current pulse");
+    mvprintw(rr++, RIGHT_COL, "  ]           set MAX to current pulse");
+    mvprintw(rr++, RIGHT_COL, "  b  B        set / clear BIAS offset");
+    attroff(COLOR_PAIR(CP_DIM));
+    rr++;
+
+    attron(A_BOLD);
+    mvprintw(rr++, RIGHT_COL, "TUNE MOTION SMOOTHER");
+    attroff(A_BOLD);
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(rr++, RIGHT_COL, "  s    smoother on/off (default OFF)");
+    mvprintw(rr++, RIGHT_COL, "  v    cycle VELocity preset");
+    mvprintw(rr++, RIGHT_COL, "       (max us/s the servo will travel)");
+    mvprintw(rr++, RIGHT_COL, "  a    cycle ACCeleration preset");
+    mvprintw(rr++, RIGHT_COL, "       (us/s^2 ramp-up/down rate)");
+    mvprintw(rr++, RIGHT_COL, "  d    cycle DEADband preset");
+    mvprintw(rr++, RIGHT_COL, "       (us window where small changes");
+    mvprintw(rr++, RIGHT_COL, "        suppress jitter)");
+    mvprintw(rr++, RIGHT_COL, "  ,  . fine -/+ on the last v/a/d");
+    attroff(COLOR_PAIR(CP_DIM));
+    rr++;
+
+    attron(A_BOLD);
+    mvprintw(rr++, RIGHT_COL, "PERSIST / DIAGNOSE");
+    attroff(A_BOLD);
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(rr++, RIGHT_COL, "  S    save to runtime.json");
+    mvprintw(rr++, RIGHT_COL, "  L    reload from runtime.json");
+    mvprintw(rr++, RIGHT_COL, "  r    re-read I2C registers");
+    mvprintw(rr++, RIGHT_COL, "  0    all servos OFF (PWM disabled,");
+    mvprintw(rr++, RIGHT_COL, "       motors go limp)");
+    mvprintw(rr++, RIGHT_COL, "  ?  h toggle this help");
+    mvprintw(rr++, RIGHT_COL, "  q  Q quit (warns on unsaved)");
     attroff(COLOR_PAIR(CP_DIM));
 
-    /* Footer hint */
-    if(r < g_term_h - 2)
+    /* ─── Footer ─── */
+    if(g_term_h >= 4)
     {
-        r = g_term_h - 2;
+        int footer_r = g_term_h - 1;
         attron(COLOR_PAIR(CP_HEADER));
-        mvprintw(r, 0, "%-*s", g_tui_w,
-                 "  Press '?' or 'h' to close help and return to the calibration view");
+        mvprintw(footer_r, 0, "%-*s", g_tui_w,
+                 "  Press '?' or 'h' again to return to the calibration view");
         attroff(COLOR_PAIR(CP_HEADER));
     }
 }
@@ -635,19 +667,54 @@ static void draw_screen(void)
         r += 3;
     }
 
-    /* KEYBINDINGS */
+    /* KEYBINDINGS — two-column layout with fixed-width key column.
+     * Each cell is 12 chars for the key label, then the action.
+     * If you change the format string here, keep the columns aligned.
+     * Press '?' for the full annotated reference. */
     draw_hline(r - 1, 0, g_tui_w);
     attron(COLOR_PAIR(CP_DIM));
-    mvprintw(r, 1,     "?  show help (full key list + workflow)            n  neutral (1500)");
-    mvprintw(r + 1, 1, "UP/DOWN   select servo       LEFT/RIGHT  +/- %d us", STEP_FINE);
-    mvprintw(r + 2, 1, "PgUp/PgDn +/- %d us          ,/.  fine -/+", STEP_COARSE);
-    mvprintw(r + 3, 1, "[  set MIN     ]  set MAX     b  set BIAS  B  clear BIAS");
-    mvprintw(r + 4, 1, "S  save        L  reload      m/M  jog MIN/MAX   N  all neutral");
-    mvprintw(r + 5, 1, "v  cycle VEL   a  cycle ACC   d  cycle DEAD     A  write all");
-    mvprintw(r + 6, 1, "s  toggle smoother (now: %s)  0  all OFF (disable PWM)  q  quit",
-             smooth_enabled ? "ON" : "OFF");
+
+    /* Row 0 — discovery hint stands alone, full width */
+    mvprintw(r,     1, "  %-12s %-32s   %-12s %s",
+             "?", "show help (full reference)", "q", "quit");
+
+    /* Row 1 — selecting + jogging */
+    {
+        char fine_str[32], coarse_str[32];
+        snprintf(fine_str,   sizeof(fine_str),   "jog -/+ %dus",         STEP_FINE);
+        snprintf(coarse_str, sizeof(coarse_str), "jog -/+ %dus (coarse)", STEP_COARSE);
+
+        mvprintw(r + 1, 1, "  %-12s %-32s   %-12s %s",
+                 "UP/DOWN",     "pick servo",
+                 "LEFT/RIGHT",  fine_str);
+        mvprintw(r + 2, 1, "  %-12s %-32s   %-12s %s",
+                 "PgUp/PgDn",   coarse_str,
+                 "n",           "snap to neutral 1500us");
+    }
+    mvprintw(r + 3, 1, "  %-12s %-32s   %-12s %s",
+             "m / M",       "snap to recorded MIN / MAX",
+             "N / A",       "all neutral / bulk write all");
+
+    /* Row 4 — calibration recording */
+    mvprintw(r + 4, 1, "  %-12s %-32s   %-12s %s",
+             "[  /  ]",     "set MIN / MAX from current",
+             "b / B",       "set / clear BIAS");
+
+    /* Row 5 — smoother controls */
+    mvprintw(r + 5, 1, "  %-12s %-32s   %-12s %s",
+             "v / a / d",   "cycle VEL / ACC / DEAD preset",
+             ", / .",       "fine -/+ on last v/a/d knob");
+
+    /* Row 6 — persistence + diagnose, plus smoother on/off state */
+    mvprintw(r + 6, 1, "  %-12s %-32s   %-12s %s",
+             "S / L",       "save / reload runtime.json",
+             "r",           "refresh I2C registers");
+    mvprintw(r + 7, 1, "  %-12s %-32s   %-12s smoother: %s",
+             "0",           "all servos OFF (PWM disabled)",
+             "s",           smooth_enabled ? "ON " : "OFF");
+
     attroff(COLOR_PAIR(CP_DIM));
-    r += 7;
+    r += 8;
 
     /* v2.3.6: status line for save/load/calibration feedback. Shown
      * for ~3-5 seconds (set per action). The dirty marker shows
