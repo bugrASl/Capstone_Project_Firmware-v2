@@ -31,6 +31,12 @@ static void delay_ms(uint32_t ms)
     nanosleep(&ts, NULL);
 }
 
+/* Reserved for future register-level timing tweaks (e.g. powerup wait,
+ * PA settle). Currently unused — NRF24L01+ datasheet timings are all
+ * comfortably > 1ms so delay_ms suffices. Kept rather than deleted
+ * because the moment you need µs-resolution waits, you'll want this
+ * exact wrapper back. */
+__attribute__((unused))
 static void delay_us(uint32_t us)
 {
     struct timespec ts  =   { .tv_sec = 0, .tv_nsec = us * 1000L };

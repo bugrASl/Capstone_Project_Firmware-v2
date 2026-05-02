@@ -304,13 +304,33 @@ do_reset() {
     if [ "${also_runtime}" = "1" ]; then
         local runtime="${CPCU_ROOT}/config/runtime.json"
         local example="${CPCU_ROOT}/config/runtime.json.example"
-        if [ -f "${example}" ]; then
-            echo -e "${Y}[configure]${N} Also regenerating runtime.json from example..."
-            cp -i "${example}" "${runtime}"
-        else
-            echo -e "${Y}[configure]${N} No runtime.json.example found; runtime.json untouched."
-            echo "  (The shipped runtime.json IS the example. Edit it manually if needed.)"
+
+        # Backup any existing runtime.json before clobbering, so the
+        # operator can recover if --reset was the wrong call.
+        if [ -f "${runtime}" ]; then
+            cp -p "${runtime}" "${runtime}.bak"
+            echo -e "${Y}[configure]${N} Backed up existing runtime.json -> runtime.json.bak"
         fi
+
+        if [ -f "${example}" ]; then
+            echo -e "${Y}[configure]${N} Regenerating runtime.json from runtime.json.example..."
+            cp "${example}" "${runtime}"
+        else
+            # v2.7: source the shared emitter and write known-good defaults.
+            # No more "no example found, can't help" dead-end.
+            local emit_helper="${SCRIPT_DIR}/_default_runtime_json.sh"
+            if [ -f "${emit_helper}" ]; then
+                . "${emit_helper}"
+                echo -e "${Y}[configure]${N} Regenerating runtime.json with embedded defaults..."
+                emit_default_runtime_json "${runtime}"
+            else
+                echo -e "${R}[configure]${N} ERROR: ${emit_helper} missing; can't regenerate runtime.json."
+                echo "  Restore from git: git checkout HEAD -- config/runtime.json"
+                return 1
+            fi
+        fi
+        echo -e "${G}[configure]${N} Wrote ${runtime}"
+        echo "  Reload kernel to apply: kill -HUP \$(pgrep cpcu_kernel)"
     fi
 }
 

@@ -16,6 +16,19 @@ Usage:
 
 Author: bugrASl
 Date:   April 2026
+
+──────────────────────────────────────────────────────────────────────────
+MAINTAINER NOTE — KEEP IPC OFFSETS IN SYNC
+──────────────────────────────────────────────────────────────────────────
+When a section is added to cpcu_v2/include/cpcu_ipc.h:
+    1. Mirror it in cpcu_v2/python/cpcu_ipc_bridge.py (OFF_*, SZ_*).
+    2. Add a new ASSERT line to test_section_offsets() below covering
+       the new section's offset.
+    3. Update the SHM_TOTAL assertion to extend through the new section.
+
+The test is the contract enforcement between C and Python views. Without
+the assertion for a new section, layout drift goes silently uncaught.
+──────────────────────────────────────────────────────────────────────────
 """
 
 import struct
@@ -24,18 +37,23 @@ import os
 import time
 import mmap
 
-# Add both this directory (test/) and ../scripts/ to sys.path so that
-# `import cpcu_ipc_bridge` works regardless of the cwd the test is run from.
+# Add both this directory (test/) and the python module dir to sys.path
+# so `import cpcu_ipc_bridge` works regardless of cwd. v2.7 moved Python
+# modules from scripts/ to python/; we add both so this test works on
+# either layout.
 _TEST_DIR    =   os.path.dirname(os.path.abspath(__file__))
+_PYTHON_DIR  =   os.path.normpath(os.path.join(_TEST_DIR, "..", "python"))
 _SCRIPTS_DIR =   os.path.normpath(os.path.join(_TEST_DIR, "..", "scripts"))
-for _p in (_TEST_DIR, _SCRIPTS_DIR):
+for _p in (_TEST_DIR, _PYTHON_DIR, _SCRIPTS_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 from cpcu_ipc_bridge import (
     IPCBridge, IPC_MAGIC, IPC_VERSION, SHM_TOTAL,
     OFF_CTRL, OFF_RING, OFF_MOTOR, OFF_DIAG, OFF_EXPORT,
+    OFF_CONFIG, OFF_TOOL_PRESENCE, OFF_DSP_FILTERED,
     SZ_CTRL, SZ_ENTRY, SZ_MOTOR, SZ_DIAG, SZ_EXPORT, SZ_RING,
+    SZ_CONFIG, SZ_TOOL_PRESENCE, SZ_DSP_FILTERED,
     CTRL_MAGIC, CTRL_VERSION, CTRL_HEAD, CTRL_TAIL,
     CTRL_DSP_READY, CTRL_STATE,
     MOTOR_SEQ, MOTOR_SERVO, MOTOR_GESTURE, MOTOR_CONF,
@@ -67,14 +85,19 @@ def test_struct_sizes():
 
 
 def test_section_offsets():
-    """Verify section offsets are sequential and non-overlapping."""
+    """Verify section offsets are sequential and non-overlapping.
+       Updated v2.4.0: now includes CONFIG (v2.3.3), TOOL_PRESENCE
+       (v2.4.0), and DSP_FILTERED (v2.4.0) sections."""
     print("\n--- Section Offset Validation ---")
-    ASSERT(OFF_CTRL == 0,                               f"CTRL at 0")
-    ASSERT(OFF_RING == 192,                             f"RING at 192")
-    ASSERT(OFF_MOTOR == 192 + 64 * 1024,               f"MOTOR at {OFF_MOTOR}")
-    ASSERT(OFF_DIAG == OFF_MOTOR + 128,                 f"DIAG at {OFF_DIAG}")
-    ASSERT(OFF_EXPORT == OFF_DIAG + 128,                f"EXPORT at {OFF_EXPORT}")
-    ASSERT(SHM_TOTAL == OFF_EXPORT + 256,               f"Total SHM = {SHM_TOTAL}")
+    ASSERT(OFF_CTRL          == 0,                                      f"CTRL at 0")
+    ASSERT(OFF_RING          == 192,                                    f"RING at 192")
+    ASSERT(OFF_MOTOR         == 192 + 64 * 1024,                        f"MOTOR at {OFF_MOTOR}")
+    ASSERT(OFF_DIAG          == OFF_MOTOR + 128,                        f"DIAG at {OFF_DIAG}")
+    ASSERT(OFF_EXPORT        == OFF_DIAG + 128,                         f"EXPORT at {OFF_EXPORT}")
+    ASSERT(OFF_CONFIG        == OFF_EXPORT + SZ_EXPORT,                 f"CONFIG at {OFF_CONFIG}")
+    ASSERT(OFF_TOOL_PRESENCE == OFF_CONFIG + SZ_CONFIG,                 f"TOOL_PRESENCE at {OFF_TOOL_PRESENCE}")
+    ASSERT(OFF_DSP_FILTERED  == OFF_TOOL_PRESENCE + SZ_TOOL_PRESENCE,   f"DSP_FILTERED at {OFF_DSP_FILTERED}")
+    ASSERT(SHM_TOTAL         == OFF_DSP_FILTERED + SZ_DSP_FILTERED,     f"Total SHM = {SHM_TOTAL}")
 
 
 def test_magic_and_version():

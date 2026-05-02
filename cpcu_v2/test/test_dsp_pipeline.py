@@ -43,9 +43,12 @@ import os
 import sys
 import numpy as np
 
-# Add scripts/ to import path so `from cpcu_dsp import ...` works
+# Add the directory holding cpcu_dsp.py to import path. v2.7 moved Python
+# modules from scripts/ to python/; we add both so this test works on
+# either layout.
 HERE                =   os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', 'scripts'))
+sys.path.insert(0, os.path.join(HERE, '..', 'python'))    # v2.7 layout
+sys.path.insert(0, os.path.join(HERE, '..', 'scripts'))   # v2.6 fallback
 
 g_pass              =   0
 g_fail              =   0

@@ -93,15 +93,26 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_RUNTIME="${REPO_DIR}/config/runtime.json"
 SYS_CONFIG="/opt/cpcu/config.json"
 
-if [ -f "${REPO_RUNTIME}" ]; then
-    if [ -L "${SYS_CONFIG}" ] && [ "$(readlink "${SYS_CONFIG}")" = "${REPO_RUNTIME}" ]; then
-        echo "  config.json symlink already correct"
-    else
-        ln -sfn "${REPO_RUNTIME}" "${SYS_CONFIG}"
-        echo "  Linked ${SYS_CONFIG} -> ${REPO_RUNTIME}"
-    fi
+# Source the shared runtime.json emitter.
+. "${SCRIPT_DIR}/_default_runtime_json.sh"
+
+# v2.7: if runtime.json is missing (fresh checkout, accidentally
+# deleted, etc.), write a known-good default so the kernel can boot.
+# Operator can customize later via the TUI editor or by editing the
+# file directly.
+if [ ! -f "${REPO_RUNTIME}" ]; then
+    echo "  ${REPO_RUNTIME} missing — writing default..."
+    emit_default_runtime_json "${REPO_RUNTIME}"
+    chown "${REAL_USER}:${REAL_USER}" "${REPO_RUNTIME}" 2>/dev/null || true
+    chown "${REAL_USER}:${REAL_USER}" "${REPO_DIR}/config" 2>/dev/null || true
+    echo "  Wrote default runtime.json (you can edit ${REPO_RUNTIME} or use the TUI editor later)"
+fi
+
+if [ -L "${SYS_CONFIG}" ] && [ "$(readlink "${SYS_CONFIG}")" = "${REPO_RUNTIME}" ]; then
+    echo "  config.json symlink already correct"
 else
-    echo "  WARNING: ${REPO_RUNTIME} not found — runtime config not linked."
+    ln -sfn "${REPO_RUNTIME}" "${SYS_CONFIG}"
+    echo "  Linked ${SYS_CONFIG} -> ${REPO_RUNTIME}"
 fi
 
 ##============= KERNEL CONFIG CHECK ========================================================

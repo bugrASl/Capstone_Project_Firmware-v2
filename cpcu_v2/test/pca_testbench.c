@@ -1065,7 +1065,7 @@ int main(int argc, char *argv[])
                     {
                         cal_dirty = false;
                         snprintf(status_line, sizeof(status_line),
-                                 "SAVED to %s — kill -HUP cpcu_kernel "
+                                 "SAVED to %.180s — kill -HUP cpcu_kernel "
                                  "to reload live", cfg_path_used);
                         status_until = time(NULL) + 5;
                     }
@@ -1116,7 +1116,7 @@ int main(int argc, char *argv[])
                         }
                         cal_dirty = false;
                         snprintf(status_line, sizeof(status_line),
-                                 "Reloaded calibration from %s",
+                                 "Reloaded calibration from %.220s",
                                  cfg_path_used);
                         status_until = time(NULL) + 3;
                     }

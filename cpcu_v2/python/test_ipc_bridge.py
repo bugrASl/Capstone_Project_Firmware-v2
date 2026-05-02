@@ -38,7 +38,9 @@ for _p in (_TEST_DIR, _PYTHON_DIR, _SCRIPTS_DIR):
 from cpcu_ipc_bridge import (
     IPCBridge, IPC_MAGIC, IPC_VERSION, SHM_TOTAL,
     OFF_CTRL, OFF_RING, OFF_MOTOR, OFF_DIAG, OFF_EXPORT,
+    OFF_CONFIG, OFF_TOOL_PRESENCE, OFF_DSP_FILTERED,
     SZ_CTRL, SZ_ENTRY, SZ_MOTOR, SZ_DIAG, SZ_EXPORT, SZ_RING,
+    SZ_CONFIG, SZ_TOOL_PRESENCE, SZ_DSP_FILTERED,
     CTRL_MAGIC, CTRL_VERSION, CTRL_HEAD, CTRL_TAIL,
     CTRL_DSP_READY, CTRL_STATE,
     MOTOR_SEQ, MOTOR_SERVO, MOTOR_GESTURE, MOTOR_CONF,
@@ -70,14 +72,19 @@ def test_struct_sizes():
 
 
 def test_section_offsets():
-    """Verify section offsets are sequential and non-overlapping."""
+    """Verify section offsets are sequential and non-overlapping.
+       Updated v2.4.0: now includes CONFIG (v2.3.3), TOOL_PRESENCE
+       (v2.4.0), and DSP_FILTERED (v2.4.0) sections."""
     print("\n--- Section Offset Validation ---")
-    ASSERT(OFF_CTRL == 0,                               f"CTRL at 0")
-    ASSERT(OFF_RING == 192,                             f"RING at 192")
-    ASSERT(OFF_MOTOR == 192 + 64 * 1024,               f"MOTOR at {OFF_MOTOR}")
-    ASSERT(OFF_DIAG == OFF_MOTOR + 128,                 f"DIAG at {OFF_DIAG}")
-    ASSERT(OFF_EXPORT == OFF_DIAG + 128,                f"EXPORT at {OFF_EXPORT}")
-    ASSERT(SHM_TOTAL == OFF_EXPORT + 256,               f"Total SHM = {SHM_TOTAL}")
+    ASSERT(OFF_CTRL          == 0,                                      f"CTRL at 0")
+    ASSERT(OFF_RING          == 192,                                    f"RING at 192")
+    ASSERT(OFF_MOTOR         == 192 + 64 * 1024,                        f"MOTOR at {OFF_MOTOR}")
+    ASSERT(OFF_DIAG          == OFF_MOTOR + 128,                        f"DIAG at {OFF_DIAG}")
+    ASSERT(OFF_EXPORT        == OFF_DIAG + 128,                         f"EXPORT at {OFF_EXPORT}")
+    ASSERT(OFF_CONFIG        == OFF_EXPORT + SZ_EXPORT,                 f"CONFIG at {OFF_CONFIG}")
+    ASSERT(OFF_TOOL_PRESENCE == OFF_CONFIG + SZ_CONFIG,                 f"TOOL_PRESENCE at {OFF_TOOL_PRESENCE}")
+    ASSERT(OFF_DSP_FILTERED  == OFF_TOOL_PRESENCE + SZ_TOOL_PRESENCE,   f"DSP_FILTERED at {OFF_DSP_FILTERED}")
+    ASSERT(SHM_TOTAL         == OFF_DSP_FILTERED + SZ_DSP_FILTERED,     f"Total SHM = {SHM_TOTAL}")
 
 
 def test_magic_and_version():

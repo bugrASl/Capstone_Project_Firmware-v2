@@ -19,10 +19,10 @@
  *                    IPC_RuntimeConfig in shared memory. Refuse to start on
  *                    schema mismatch / parse error / missing file (no
  *                    silent fallback to defaults — user must explicitly
- *                    run scripts/configure.sh --reset to regenerate).
+ *                    run './launch.sh configure --reset --runtime' to regenerate).
  *                  - SIGHUP triggers a re-parse + IPC re-publish without
  *                    restarting any child processes.
- *                  - See cpcu_v2/docs/RUNTIME_CONFIG.md.
+ *                  - See cpcu_v2/docs/CONFIGURATION.md.
  *
  *              v2.2 changes:
  *                  - Uses cpcu_log LOG_* macros everywhere
@@ -287,10 +287,10 @@ int main(int argc, char *argv[])
     }
     if(cfg_ret != 0)
     {
-        LOG_F("KERN", "no usable runtime config — refusing to start. "
-                      "Run scripts/configure.sh --reset to regenerate, or "
-                      "pass --config <path> to override. "
-                      "See cpcu_v2/docs/RUNTIME_CONFIG.md.");
+        LOG_F("KERN", "no usable runtime config — refusing to start.");
+        LOG_F("KERN", "  To recover: run './launch.sh configure --reset --runtime'");
+        LOG_F("KERN", "  Or restore from git: 'git checkout HEAD -- config/runtime.json'");
+        LOG_F("KERN", "  See cpcu_v2/docs/CONFIGURATION.md for the full schema.");
         Log_CloseFiles();
         return 1;
     }

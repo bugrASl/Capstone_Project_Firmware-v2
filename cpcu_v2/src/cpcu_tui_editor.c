@@ -508,8 +508,9 @@ int ED_Render(int r)
             if(selected_cell && g_ed.mode == ED_MODE_ENTRY)
             {
                 /* Show the entry buffer with a trailing underscore as
-                 * cursor hint. */
-                snprintf(cellbuf, sizeof(cellbuf), "%s_", g_ed.entry_buf);
+                 * cursor hint. Bound to 14 chars so the `_` and null
+                 * always fit in the 16-byte cellbuf. */
+                snprintf(cellbuf, sizeof(cellbuf), "%.14s_", g_ed.entry_buf);
             }
             else
             {

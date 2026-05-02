@@ -289,9 +289,3 @@ install(FILES
 
 ## Model placeholder directory
 install(DIRECTORY DESTINATION /opt/cpcu/models)
-
-## Systemd service
-install(FILES
-    scripts/cpcu.service
-    DESTINATION /etc/systemd/system
-)
