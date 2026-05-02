@@ -132,9 +132,12 @@ if [ "$PHASES" = "signal" ]; then
     ## Check shared memory
     if [ ! -f /dev/shm/cpcu_ipc ]; then
         echo -e "${RED}[ERROR]${RESET} Shared memory not found."
-        echo "  Start cpcu_kernel first:"
-        echo "      ./scripts/launch.sh kernel"
-        echo "  (cpcu_io must also be running to receive NRF packets)"
+        echo "  This branch expected a kernel to be already running."
+        echo "  Either:"
+        echo "    ./launch.sh test-signal     # spawns the kernel itself (recommended)"
+        echo "  or, if you want to keep the kernel under your own control:"
+        echo "    ./launch.sh kernel &        # in one terminal"
+        echo "    ./launch.sh signal           # in another"
         exit 1
     fi
 

@@ -254,6 +254,20 @@ if(CURSES_FOUND)
     install(TARGETS cpcu_tui RUNTIME DESTINATION /opt/cpcu/bin)
 endif()
 
+## Testbenches -> /opt/cpcu/bin (v2.7: launch.sh runs them from here)
+## Each is gated on the corresponding CMake target existing, since some
+## (pca_testbench, signal_testbench, editor_testbench) require ncurses.
+install(TARGETS test_codec safety_testbench smooth_testbench
+                config_testbench json_testbench
+        RUNTIME DESTINATION /opt/cpcu/bin)
+if(CURSES_FOUND)
+    install(TARGETS pca_testbench signal_testbench editor_testbench
+            RUNTIME DESTINATION /opt/cpcu/bin)
+endif()
+if(TARGET cpcu_ws)
+    install(TARGETS cpcu_ws RUNTIME DESTINATION /opt/cpcu/bin)
+endif()
+
 ## Python helpers -> /opt/cpcu/python   (v2.7: renamed from scripts/)
 install(FILES
     python/cpcu_dsp.py
@@ -289,3 +303,10 @@ install(FILES
 
 ## Model placeholder directory
 install(DIRECTORY DESTINATION /opt/cpcu/models)
+
+## Note: no systemd unit is installed by cmake. v2.5+ generates the unit
+## dynamically via `./launch.sh install-service`, which writes to
+## /etc/systemd/system with the correct user, paths, and capabilities
+## baked in at install time. This avoids needing root for `cmake --install`
+## and keeps the unit's content in sync with launch.sh's understanding
+## of where things live.

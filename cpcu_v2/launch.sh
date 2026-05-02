@@ -182,9 +182,33 @@ preflight_kernel() {
     [ -e /dev/i2c-1 ]     || warn "/dev/i2c-1 missing — run './launch.sh setup'"
 }
 
-preflight_pca()    { [ -x "${BIN_DIR}/pca_testbench" ]    || fatal "${BIN_DIR}/pca_testbench not found — run './launch.sh build'"; }
-preflight_tui()    { [ -x "${BIN_DIR}/cpcu_tui" ]         || fatal "${BIN_DIR}/cpcu_tui not found — run './launch.sh build'"; }
-preflight_signal() { [ -x "${BIN_DIR}/signal_testbench" ] || fatal "${BIN_DIR}/signal_testbench not found — run './launch.sh build'"; }
+preflight_pca()    { resolve_bin pca_testbench;    }
+preflight_tui()    { resolve_bin cpcu_tui;          }
+preflight_signal() { resolve_bin signal_testbench;  }
+
+# Locate a binary, preferring the installed copy under /opt/cpcu/bin/
+# but falling back to ${CPCU_ROOT}/build/ for developers who haven't
+# (yet) run `cmake --install`. Sets the global ${RESOLVED_BIN} on
+# success; fatals on failure.
+#
+# Why both paths: the v2.7 layout installs testbenches to
+# /opt/cpcu/bin/ via CMakeLists.txt's install() rules. Older trees
+# (or trees that built without installing) leave them in build/
+# only — running ./launch.sh signal there should "just work" rather
+# than nag the user to re-install.
+resolve_bin() {
+    local name="$1"
+    local installed="${BIN_DIR}/${name}"
+    local local_build="${CPCU_ROOT}/build/${name}"
+    if [ -x "${installed}" ]; then
+        RESOLVED_BIN="${installed}"
+    elif [ -x "${local_build}" ]; then
+        RESOLVED_BIN="${local_build}"
+        warn "Using build/${name} (not installed). Run './launch.sh build' to install."
+    else
+        fatal "${name} not found in ${BIN_DIR} or ${CPCU_ROOT}/build — run './launch.sh build'"
+    fi
+}
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -241,12 +265,22 @@ tmux_create_with_kernel() {
 }
 
 tmux_add_window() {
-    tmux new-window -t "$SESSION_NAME" -n "$1" "$2"
+    tmux new-window -t "$SESSION_NAME" -n "$1" "$2" 2>/dev/null
 }
 
 tmux_attach_at() {
     local target_window="$1"
-    tmux select-window -t "${SESSION_NAME}:${target_window}"
+    tmux select-window -t "${SESSION_NAME}:${target_window}" 2>/dev/null
+
+    # If the session is gone (kernel crashed and ate it), bail with
+    # a clear message instead of silently trying to attach to nothing.
+    if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        err "tmux session '${SESSION_NAME}' is no longer running."
+        err "The kernel probably crashed at startup. Check what went wrong:"
+        err "  /opt/cpcu/bin/cpcu_kernel       # run it directly to see the error"
+        err "  tail -50 ${LOG_DIR}/cpcu.log    # check the log"
+        return 1
+    fi
 
     echo
     log "${C_BLD}Session ready.${C_RST} You're attached to the ${C_GRN}${target_window}${C_RST} window."
@@ -408,6 +442,15 @@ cmd_build() {
         fatal "/opt/cpcu doesn't exist. Run './launch.sh setup' first."
     fi
 
+    # --clean forces a fresh build directory. Use this if you've
+    # changed CMakeLists.txt in a way that requires regenerating the
+    # install plan (added/removed targets), or if the cached config
+    # has otherwise gone stale.
+    if [ "${1:-}" = "--clean" ]; then
+        log "Removing build/ directory for a clean rebuild..."
+        rm -rf "${CPCU_ROOT}/build"
+    fi
+
     cmake_configure_if_needed
 
     log "Building..."
@@ -415,6 +458,26 @@ cmd_build() {
 
     log "Installing to /opt/cpcu..."
     ( cd "${CPCU_ROOT}" && cmake --install build ) || fatal "install failed"
+
+    # Sanity check: did the testbenches actually land in /opt/cpcu/bin?
+    # If they built but didn't install, the user's CMakeLists.txt is
+    # older than the cmake cache (preserved-mtime cp, or someone
+    # changed the install rules without invalidating the cache).
+    # Detect and offer the recovery command.
+    local missing=()
+    for tb in pca_testbench signal_testbench editor_testbench; do
+        if [ -x "${CPCU_ROOT}/build/${tb}" ] && [ ! -x "${BIN_DIR}/${tb}" ]; then
+            missing+=("${tb}")
+        fi
+    done
+    if [ "${#missing[@]}" -gt 0 ]; then
+        warn "Built but not installed: ${missing[*]}"
+        warn "Your cmake build cache is stale. Recovering with a clean rebuild..."
+        rm -rf "${CPCU_ROOT}/build"
+        cmake_configure_if_needed
+        ( cd "${CPCU_ROOT}" && cmake --build build -j4 ) || fatal "clean rebuild failed"
+        ( cd "${CPCU_ROOT}" && cmake --install build ) || fatal "clean install failed"
+    fi
 
     log "Re-applying real-time capabilities (you'll see one sudo prompt)..."
     cmd_grant_caps_internal
@@ -556,18 +619,20 @@ run_kernel_only() {
 run_tui_tmux() {
     preflight_kernel
     preflight_tui
+    local tui_bin="${RESOLVED_BIN}"
     log "Mode: TUI (tmux: KERNEL + TUI)"
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
-    tmux_add_window "TUI" "${BIN_DIR}/cpcu_tui"
+    tmux_add_window "TUI" "${tui_bin}"
     tmux_attach_at "TUI"
 }
 
 run_collect_tmux() {
     preflight_kernel
     preflight_tui
+    local tui_bin="${RESOLVED_BIN}"
     log "Mode: COLLECT (tmux: KERNEL + TUI, capture-focused)"
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
-    tmux_add_window "TUI" "${BIN_DIR}/cpcu_tui"
+    tmux_add_window "TUI" "${tui_bin}"
 
     echo
     log "${C_BLD}Capture workflow:${C_RST}"
@@ -585,48 +650,68 @@ run_collect_tmux() {
 run_signal_tmux() {
     preflight_kernel
     preflight_signal
+    local sig_bin="${RESOLVED_BIN}"
     log "Mode: SIGNAL (tmux: KERNEL + SIGNAL)"
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
-    tmux_add_window "SIGNAL" "${BIN_DIR}/signal_testbench"
+    tmux_add_window "SIGNAL" "${sig_bin}"
     tmux_attach_at "SIGNAL"
+}
+
+# Demo variant: signal_testbench --demo. Generates synthetic 100 Hz
+# sines on all 8 channels internally — no kernel, no /dev/shm/cpcu_ipc,
+# no BSAU needed. Useful for screenshots, verifying TUI rendering,
+# and sanity-checking that the testbench builds correctly.
+run_signal_demo() {
+    preflight_signal
+    local sig_bin="${RESOLVED_BIN}"
+    log "Mode: SIGNAL DEMO (synthetic data; no kernel, no shared memory)"
+    log "  Inside the TUI:  w cycle wave types  [/] change frequency  q quit"
+    sleep 0.5
+    trap - EXIT INT TERM
+    cd "$(dirname "${sig_bin}")"
+    exec "${sig_bin}" --demo
 }
 
 run_pca() {
     preflight_pca
+    local pca_bin="${RESOLVED_BIN}"
     log "Mode: PCA (no kernel; direct I²C servo calibration)"
     log "Controls: arrows / m / M / n / 0 / A / q — press '?' inside for help"
     sleep 0.5
     trap - EXIT INT TERM
-    cd "${BIN_DIR}"
-    exec "${BIN_DIR}/pca_testbench"
+    cd "$(dirname "${pca_bin}")"
+    exec "${pca_bin}"
 }
 
 # ───── Fallbacks (no tmux installed) ─────
 
 run_tui_fallback() {
     preflight_kernel; preflight_tui
+    local tui_bin="${RESOLVED_BIN}"
     log "Mode: TUI (background-mode fallback — kernel logs may overlap UI)"
     kernel_start_background_fallback || fatal "Kernel failed"
     sleep 1
-    cd "${BIN_DIR}" && "${BIN_DIR}/cpcu_tui"
+    cd "$(dirname "${tui_bin}")" && "${tui_bin}"
     log "cpcu_tui exited"
 }
 
 run_collect_fallback() {
     preflight_kernel; preflight_tui
+    local tui_bin="${RESOLVED_BIN}"
     log "Mode: COLLECT (background-mode fallback)"
     kernel_start_background_fallback || fatal "Kernel failed"
     sleep 1
     log "Press 7 inside the TUI to capture."
-    cd "${BIN_DIR}" && "${BIN_DIR}/cpcu_tui"
+    cd "$(dirname "${tui_bin}")" && "${tui_bin}"
 }
 
 run_signal_fallback() {
     preflight_kernel; preflight_signal
+    local sig_bin="${RESOLVED_BIN}"
     log "Mode: SIGNAL (background-mode fallback)"
     kernel_start_background_fallback || fatal "Kernel failed"
     sleep 1
-    cd "${BIN_DIR}" && "${BIN_DIR}/signal_testbench"
+    cd "$(dirname "${sig_bin}")" && "${sig_bin}"
 }
 
 run_tui()    { if require_tmux; then run_tui_tmux;    else warn "tmux not installed — install via './launch.sh setup'"; run_tui_fallback;    fi; }
@@ -879,8 +964,8 @@ EOF
         build)
             cat <<'EOF'
 
-./launch.sh build
-─────────────────
+./launch.sh build [--clean]
+───────────────────────────
 Compiles the C binaries and installs them to /opt/cpcu.
 
 What it does:
@@ -890,6 +975,13 @@ What it does:
   - Copies Python helpers to /opt/cpcu/python
   - Copies launch.sh to /opt/cpcu/launch.sh
   - Re-applies real-time capabilities (CAP_SYS_NICE, CAP_IPC_LOCK)
+  - Auto-detects "built but not installed" inconsistencies and
+    self-recovers with a clean rebuild
+
+Pass --clean to force a fresh build directory. Use this when you've
+replaced CMakeLists.txt and the cmake cache has gone stale (added or
+removed install targets, changed compile flags, etc.). Equivalent to
+`rm -rf build && ./launch.sh build`.
 
 Run this every time you change C source. You'll see one sudo prompt
 at the end (for the capability granting step).
@@ -1165,16 +1257,23 @@ case "${MODE}" in
     -v|--version|version)   cmd_version ;;
 
     setup)                  cmd_setup "$@" ;;
-    build)                  cmd_build ;;
+    build)                  cmd_build "$@" ;;
     check)                  cmd_check ;;
     configure)              cmd_configure "$@" ;;
 
     test-sw)                cmd_test_phase "1" ;;
     test-ipc)               cmd_test_phase "1 2" ;;
     test-hw)                cmd_test_phase "1 2 3" ;;
-    test-pca)               cmd_test_phase "pca" ;;
-    test-signal)            cmd_test_phase "signal" ;;
-    test-signal-demo)       cmd_test_phase "signal-demo" ;;
+    # The interactive testbench dispatches go through launch.sh's own
+    # kernel-aware helpers (which spawn cpcu_kernel inside a tmux
+    # session as needed), not through run_tests.sh — `test-pca`,
+    # `test-signal`, and `test-signal-demo` all become aliases for
+    # the equivalent operating-mode commands so users get a usable
+    # session out of the box without having to start the kernel
+    # manually first.
+    test-pca)               run_pca ;;
+    test-signal)            run_signal ;;
+    test-signal-demo)       run_signal_demo ;;
     test-safety-demo)       cmd_test_phase "safety-demo" ;;
 
     kernel|"")
