@@ -735,6 +735,34 @@ cmd_ws() {
         fatal "Web static dir not found (looked at /opt/cpcu/ws_static and ${CPCU_ROOT}/web/static)"
     fi
 
+    # cpcu_ws reads from /dev/shm/cpcu_ipc — it needs the kernel to
+    # have created that region. Mirror the run_tui / run_signal
+    # pattern: if the kernel isn't already up, spawn it in a tmux
+    # session, then put cpcu_ws in a second window. ./launch.sh stop
+    # tears everything down cleanly.
+    if [ ! -e /dev/shm/cpcu_ipc ]; then
+        if ! require_tmux; then
+            err "tmux not installed — install via './launch.sh setup',"
+            err "  or start cpcu_kernel manually first then re-run './launch.sh ws'."
+            exit 1
+        fi
+        log "Mode: WS (tmux: KERNEL + WS)"
+        log "Dashboard at http://$(hostname -I | awk '{print $1}'):8765"
+        log "  (or http://${HOSTNAME}.local:8765 if mDNS is enabled)"
+        log "Static dir: ${static_dir}"
+        log "${C_YEL}Note:${C_RST} default bind is 0.0.0.0 — anyone on your LAN can view."
+        log "      Pass --bind ws://127.0.0.1:8765 to restrict to localhost."
+
+        tmux_create_with_kernel || fatal "Couldn't bring up kernel"
+        tmux_add_window "WS" "${BIN_DIR}/cpcu_ws --static \"${static_dir}\" $*"
+        tmux_attach_at "WS"
+        return $?
+    fi
+
+    # Shared memory already exists — kernel is running somewhere
+    # (existing tmux session, systemd, or another launch.sh
+    # invocation). Run cpcu_ws in the foreground attached to that
+    # kernel; the user manages the kernel lifecycle separately.
     log "Starting cpcu_ws (web bridge) — Ctrl+C to stop"
     log "Dashboard at http://$(hostname -I | awk '{print $1}'):8765"
     log "  (or http://${HOSTNAME}.local:8765 if mDNS is enabled)"
