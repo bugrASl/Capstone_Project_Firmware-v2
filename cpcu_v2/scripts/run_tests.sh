@@ -63,7 +63,7 @@ PHASES="${@:-1 2 3}"
 
 ##============= INTERACTIVE: PCA9685 Servo Testbench =======================================
 
-if echo "$PHASES" | grep -qw "pca"; then
+if [ "$PHASES" = "pca" ]; then
     echo -e "\n${YELLOW}══════════════════════════════════════════${RESET}"
     echo -e "${YELLOW}  PCA9685 Interactive Servo Testbench${RESET}"
     echo -e "${YELLOW}══════════════════════════════════════════${RESET}"
@@ -106,7 +106,7 @@ fi
 
 ##============= INTERACTIVE: Signal Integrity Testbench ====================================
 
-if echo "$PHASES" | grep -qw "signal"; then
+if [ "$PHASES" = "signal" ]; then
     echo -e "\n${YELLOW}══════════════════════════════════════════${RESET}"
     echo -e "${YELLOW}  Signal Integrity Testbench${RESET}"
     echo -e "${YELLOW}══════════════════════════════════════════${RESET}"
@@ -152,7 +152,7 @@ fi
 
 ##============= INTERACTIVE: Safety Fault Injector (no hardware) ===========================
 
-if echo "$PHASES" | grep -qw "safety-demo"; then
+if [ "$PHASES" = "safety-demo" ]; then
     echo -e "\n${YELLOW}══════════════════════════════════════════${RESET}"
     echo -e "${YELLOW}  Safety Fault Injector [DEMO MODE]${RESET}"
     echo -e "${YELLOW}══════════════════════════════════════════${RESET}"
@@ -187,7 +187,7 @@ fi
 
 ##============= INTERACTIVE: Signal Testbench DEMO (no hardware) ===========================
 
-if echo "$PHASES" | grep -qw "signal-demo"; then
+if [ "$PHASES" = "signal-demo" ]; then
     echo -e "\n${YELLOW}══════════════════════════════════════════${RESET}"
     echo -e "${YELLOW}  Signal Integrity Testbench [DEMO MODE]${RESET}"
     echo -e "${YELLOW}══════════════════════════════════════════${RESET}"

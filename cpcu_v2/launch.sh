@@ -207,11 +207,21 @@ tmux_create_with_kernel() {
     tmux new-session -d -s "$SESSION_NAME" -n "KERNEL" \
         "bash -c 'cd ${BIN_DIR} && exec taskset -c 0 ./cpcu_kernel --log 2>&1 | tee -a ${LOG_DIR}/cpcu.log'"
 
-    tmux set-option -t "$SESSION_NAME" remain-on-exit on >/dev/null
-    tmux set-option -t "$SESSION_NAME" status on            >/dev/null
-    tmux set-option -t "$SESSION_NAME" status-justify centre >/dev/null
-    tmux set-option -t "$SESSION_NAME" status-left  " #S " >/dev/null
-    tmux set-option -t "$SESSION_NAME" status-right " %H:%M " >/dev/null
+    # Wait briefly for the new session to be reachable. tmux's set-option
+    # calls below otherwise race with the daemon and emit harmless but
+    # noisy "no server running" stderr warnings.
+    for i in 1 2 3 4 5; do
+        if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+
+    tmux set-option -t "$SESSION_NAME" remain-on-exit on        >/dev/null 2>&1
+    tmux set-option -t "$SESSION_NAME" status on                >/dev/null 2>&1
+    tmux set-option -t "$SESSION_NAME" status-justify centre    >/dev/null 2>&1
+    tmux set-option -t "$SESSION_NAME" status-left  " #S "      >/dev/null 2>&1
+    tmux set-option -t "$SESSION_NAME" status-right " %H:%M "   >/dev/null 2>&1
 
     TMUX_OWNED=1
 
@@ -322,6 +332,13 @@ trap cleanup EXIT INT TERM
 # ════════════════════════════════════════════════════════════════════════
 
 cmd_setup() {
+    # Self-heal: ensure launch.sh and all helpers are executable. This
+    # lets the user invoke us once via `bash launch.sh setup` and never
+    # need to type chmod themselves, even if their checkout came from a
+    # source that strips the +x bit (zip download, FAT32, scp from
+    # Windows, etc.).
+    chmod +x "${LAUNCH_SCRIPT}" 2>/dev/null || true
+    chmod +x "${SCRIPTS_DIR}"/*.sh 2>/dev/null || true
     ensure_helper_executable "${SCRIPTS_DIR}/setup_pi.sh"
 
     log "Running one-time Pi setup..."
