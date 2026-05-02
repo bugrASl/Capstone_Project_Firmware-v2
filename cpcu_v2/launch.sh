@@ -18,23 +18,27 @@
 ##    SETUP / BUILD (once-per-Pi, then once-per-source-change):
 ##      ./launch.sh setup                  Configure the Pi (one-time)
 ##      ./launch.sh build                  Compile + install the project
+##      ./launch.sh build --clean          Force a fresh build (wipes build/)
+##      ./launch.sh vendor                 Fetch Mongoose for the web dashboard
 ##      ./launch.sh check                  Verify everything is ready
 ##
 ##    TESTING (verify subsystems before running live):
 ##      ./launch.sh test-sw                Software-only tests (233 PASS)
-##      ./launch.sh test-ipc               + IPC validation (kernel needed)
+##      ./launch.sh test-ipc               + IPC validation (kernel auto-spawns)
 ##      ./launch.sh test-hw                + Pi hardware probes
 ##      ./launch.sh test-pca               Interactive servo motion check
 ##      ./launch.sh test-signal            Live signal-integrity TUI (needs BSAU)
 ##      ./launch.sh test-signal-demo       Same TUI with synthetic data
 ##      ./launch.sh test-safety-demo       Fault-injection demo (no hardware)
 ##
-##    RUNTIME / COMPILE-TIME TUNING:
-##      ./launch.sh configure              Interactive (compile-time)
+##    TUNING:
+##      ./launch.sh configure              Interactive (compile-time safety knobs)
 ##      ./launch.sh configure --show       Show all values
 ##      ./launch.sh configure --diff       Show changes from defaults
-##      ./launch.sh configure --reset      Restore defaults
-##      ./launch.sh configure --<name> <value>   Set one knob
+##      ./launch.sh configure --reset      Restore compile-time defaults
+##      ./launch.sh configure --reset --runtime
+##                                         Also regenerate config/runtime.json
+##      ./launch.sh configure --<name> <value>   Set one compile-time knob
 ##
 ##    OPERATING THE LIVE SYSTEM:
 ##      ./launch.sh tui                    Interactive: kernel + TUI dashboard
@@ -46,6 +50,11 @@
 ##      ./launch.sh menu                   Interactive picker (default on TTY)
 ##      ./launch.sh attach                 Re-attach to a running session
 ##      ./launch.sh stop                   Stop the running session
+##
+##    COMBINED MODES (append --with-ws to add the web dashboard):
+##      ./launch.sh tui --with-ws          KERNEL + TUI + WS in one tmux session
+##      ./launch.sh signal --with-ws       KERNEL + SIGNAL + WS
+##      ./launch.sh collect --with-ws      KERNEL + TUI + WS, capture-focused
 ##
 ##    SERVICES (start at boot):
 ##      ./launch.sh install-service        systemd unit for the kernel
@@ -1111,7 +1120,7 @@ cmd_help() {
     local topic="${1:-}"
     case "${topic}" in
         ""|main)
-            sed -n '2,55p' "$0" | sed 's/^##  \?//; s/^##$//'
+            sed -n '2,66p' "$0" | sed 's/^##  \?//; s/^##$//'
             ;;
         setup)
             cat <<'EOF'
