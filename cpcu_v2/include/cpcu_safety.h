@@ -281,7 +281,7 @@ typedef struct
 void        SAFETY_Init(SAFETY_Context *ctx);
 
 uint32_t    SAFETY_SeqGap(SAFETY_Context *ctx, uint8_t seq);
-void        SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt, uint64_t now_us);
+uint32_t    SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt, uint64_t now_us);
 void        SAFETY_CheckTimeout(SAFETY_Context *ctx, uint64_t now_us);
 
 void        SAFETY_FeedMotorCMD(SAFETY_Context *ctx, uint64_t now_us);

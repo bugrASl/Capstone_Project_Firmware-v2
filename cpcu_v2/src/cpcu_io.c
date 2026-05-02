@@ -413,13 +413,12 @@ int main(int argc, char *argv[])
             {
                 WL_Unpack(raw, &pkt);
 
-                uint32_t gap    =   SAFETY_SeqGap(&safety, pkt.seq);
+                uint32_t gap    =   SAFETY_FeedPacket(&safety, &pkt, t);
                 if(gap > 0)
                 {
                     atomic_fetch_add(&ipc.diag->io_seq_gaps, gap);
                 }
 
-                SAFETY_FeedPacket(&safety, &pkt, t);
                 IPC_PushSensor(&ipc, &pkt, t);
                 atomic_fetch_add(&ipc.diag->io_pkts_received, 1);
             }

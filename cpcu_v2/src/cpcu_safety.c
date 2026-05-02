@@ -133,8 +133,8 @@ static void link_feed(LINK_Stats *l, const WL_Packet *pkt, uint32_t gap,
 
 /*============= FEED PACKET ================================================*/
 
-void SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
-                       uint64_t now_us)
+uint32_t SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
+                          uint64_t now_us)
 {
     /* v2.3.1: any successful FeedPacket call lifts the cold-start grace.
      * We don't gate this on FIRST_PACKET — what matters is that we're
@@ -202,6 +202,8 @@ void SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
             /* Other transitions are driven from UpdateState. */
             break;
     }
+
+    return gap;
 }
 
 /*============= TIMEOUT CHECK ==============================================*/
