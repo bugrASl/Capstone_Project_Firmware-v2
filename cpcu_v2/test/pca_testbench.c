@@ -79,6 +79,29 @@
 #define REFRESH_US      50000       /* 20 Hz */
 #define SMOOTH_DT_US    50000       /* 20 Hz update if smoother is on */
 
+/* Absolute hardware safety limits. The per-servo servo_min/servo_max
+ * (loaded from runtime.json) are the *calibrated* limits — they're
+ * what gets enforced during normal operation. But during calibration
+ * here in the testbench, the user needs to be able to push *past*
+ * the current MIN/MAX to discover the true mechanical range, then
+ * record that with [ or ]. So jog operations clamp only to these
+ * absolute hardware limits, not to the soft calibration values.
+ *
+ * 500 µs / 2500 µs are the conservative bounds for hobby servos:
+ * almost no commercially available servo can travel beyond these,
+ * and most stop responding at their internal endstops well before
+ * reaching them. Commanding outside this range won't damage the
+ * PCA9685 either — it just produces a pulse the servo's controller
+ * ignores or clamps internally. So this is safe to expose as the
+ * jog ceiling/floor.
+ *
+ * The [ and ] keys (set MIN, set MAX) write the *current* pulse
+ * width into servo_min/servo_max regardless of how it compares to
+ * the previous values, so this lets the user widen the calibrated
+ * range. */
+#define PCA_HARD_FLOOR_US   500
+#define PCA_HARD_CEIL_US    2500
+
 /* Populated every frame by layout_update() */
 static int  g_term_w    =   80;
 static int  g_term_h    =   24;
@@ -137,6 +160,10 @@ static char             cfg_path_used[256]          = {0};
 static bool             cal_dirty                   = false;
 static char             status_line[256]            = {0};
 static time_t           status_until                = 0;
+
+/* Help-overlay toggle. '?' or 'h' flips this; when true, draw_screen
+ * renders a full-screen explanation instead of the normal layout. */
+static bool             g_help_visible              = false;
 
 /* v2.3.6: per-channel smoother state, mirrored to runtime.json on
  * save. Stored as int16 for symmetry with servo_bias / the patcher
@@ -358,8 +385,133 @@ static void draw_servo_row(int row, int idx, bool is_selected)
     attroff(COLOR_PAIR(CP_DIM));
 }
 
+/* ─────────────────────────────────────────────────────────────────
+ *  HELP OVERLAY
+ *
+ *  Toggled by '?' or 'h'. Walks the user through what this tool is
+ *  for, the typical workflow, and groups the keys by task. The
+ *  normal layout is replaced (not overlaid) so even on a small
+ *  terminal the help is fully readable.
+ *
+ *  The text below is intentionally written for someone who has
+ *  never used pca_testbench before. Returning users can press '?'
+ *  again to dismiss.
+ * ───────────────────────────────────────────────────────────────── */
+static void draw_help(void)
+{
+    erase();
+    int r = 0;
+
+    /* Header bar */
+    attron(COLOR_PAIR(CP_HEADER) | A_BOLD);
+    mvprintw(r, 0, "%-*s", g_tui_w,
+             "  PCA9685 SERVO TESTBENCH — HELP   (press '?' or 'h' to close)");
+    attroff(COLOR_PAIR(CP_HEADER) | A_BOLD);
+    r += 2;
+
+    /* What this tool is for */
+    attron(A_BOLD);
+    mvprintw(r++, 1, "What is this?");
+    attroff(A_BOLD);
+    mvprintw(r++, 3, "A direct-drive servo calibration tool. It talks to the PCA9685");
+    mvprintw(r++, 3, "PWM driver over I2C — no kernel, no IPC, no DSP. Use it to:");
+    mvprintw(r++, 5, "1. Find the safe MIN and MAX pulse width for each servo.");
+    mvprintw(r++, 5, "2. Add a per-servo BIAS to compensate for mounting offset.");
+    mvprintw(r++, 5, "3. Verify the runtime.json calibration is what you want.");
+    mvprintw(r++, 3, "All edits stay in memory until you press 'S' to save them.");
+    r++;
+
+    /* Typical workflow */
+    attron(A_BOLD);
+    mvprintw(r++, 1, "Typical workflow");
+    attroff(A_BOLD);
+    mvprintw(r++, 3, "1. UP/DOWN to pick a servo.");
+    mvprintw(r++, 3, "2. LEFT/RIGHT (fine) or PgUp/PgDn (coarse) to jog the pulse.");
+    mvprintw(r++, 3, "3. When the servo reaches its mechanical limit, press '['");
+    mvprintw(r++, 3, "   (set MIN) or ']' (set MAX) to record that position.");
+    mvprintw(r++, 3, "4. Press 'n' for neutral (1500us) — the safe-park pose.");
+    mvprintw(r++, 3, "5. Press 'S' to save your calibration to runtime.json.");
+    mvprintw(r++, 3, "   The kernel will pick it up live on its next SIGHUP.");
+    r++;
+
+    /* The status line at the top */
+    attron(A_BOLD);
+    mvprintw(r++, 1, "What does the top status line mean?");
+    attroff(A_BOLD);
+    mvprintw(r++, 3, "  I2C Device:  CONNECTED if /dev/i2c-1 opened and PCA9685 ACK'd");
+    mvprintw(r++, 3, "  bus=...      which I2C bus device file is open");
+    mvprintw(r++, 3, "  addr=0x40    PCA9685 I2C 7-bit address (0x40 is its default)");
+    mvprintw(r++, 3, "  pre=121      PWM prescaler register; 121 == ~50 Hz refresh,");
+    mvprintw(r++, 3, "               which is the standard hobby-servo PWM rate.");
+    r++;
+
+    /* Per-servo display fields */
+    attron(A_BOLD);
+    mvprintw(r++, 1, "Per-servo display (in the SELECTED block)");
+    attroff(A_BOLD);
+    mvprintw(r++, 3, "  Range:    safe MIN-MAX pulse widths in microseconds");
+    mvprintw(r++, 3, "  Current:  what's being commanded right now");
+    mvprintw(r++, 3, "  Angle:    estimated, derived from current pulse and range");
+    mvprintw(r++, 3, "  Bias:     signed offset added before the MIN-MAX clamp,");
+    mvprintw(r++, 3, "            useful for trimming a servo mounted slightly off");
+    r++;
+
+    /* Keys grouped by task */
+    attron(A_BOLD);
+    mvprintw(r++, 1, "Keys by task (press '?' to dismiss this help)");
+    attroff(A_BOLD);
+
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(r++, 3, "MOVE THE SELECTED SERVO");
+    mvprintw(r++, 5, "UP/DOWN     pick which servo this affects");
+    mvprintw(r++, 5, "LEFT/RIGHT  jog by 10us  (clamps at hardware-safe 500-2500us,");
+    mvprintw(r++, 5, "            so you CAN probe past the recorded MIN/MAX to");
+    mvprintw(r++, 5, "            discover the true limits, then press [ or ])");
+    mvprintw(r++, 5, "PgUp/PgDn   jog by 50us  (faster sweep)");
+    mvprintw(r++, 5, ",  .        fine -1us / +1us  (smoother knobs only — see TUNE)");
+    mvprintw(r++, 5, "n           jump to neutral 1500us");
+    mvprintw(r++, 5, "m  M        snap to recorded MIN  /  MAX");
+    mvprintw(r++, 5, "N  A        all servos to neutral / write all at once");
+    r++;
+    mvprintw(r++, 3, "RECORD CALIBRATION (in memory; 'S' to commit)");
+    mvprintw(r++, 5, "[           set MIN to current pulse");
+    mvprintw(r++, 5, "]           set MAX to current pulse");
+    mvprintw(r++, 5, "b  B        set BIAS to current offset / clear BIAS");
+    r++;
+    mvprintw(r++, 3, "TUNE MOTION (smoother)");
+    mvprintw(r++, 5, "s           toggle smoother on/off (default OFF)");
+    mvprintw(r++, 5, "v  a  d     cycle velocity / accel / deadband presets");
+    r++;
+    mvprintw(r++, 3, "SAVE / LOAD / QUIT");
+    mvprintw(r++, 5, "S           save calibration to runtime.json");
+    mvprintw(r++, 5, "L           reload calibration from runtime.json");
+    mvprintw(r++, 5, "r           refresh the I2C registers display");
+    mvprintw(r++, 5, "0           all servos OFF (disable PWM, motors go limp)");
+    mvprintw(r++, 5, "q  Q        quit (warns if unsaved changes)");
+    attroff(COLOR_PAIR(CP_DIM));
+
+    /* Footer hint */
+    if(r < g_term_h - 2)
+    {
+        r = g_term_h - 2;
+        attron(COLOR_PAIR(CP_HEADER));
+        mvprintw(r, 0, "%-*s", g_tui_w,
+                 "  Press '?' or 'h' to close help and return to the calibration view");
+        attroff(COLOR_PAIR(CP_HEADER));
+    }
+}
+
 static void draw_screen(void)
 {
+    /* If help overlay is on, hand off entirely. The user keeps the
+     * key state (selected servo, draft values, etc.) so dismissing
+     * help drops them back exactly where they were. */
+    if(g_help_visible)
+    {
+        draw_help();
+        return;
+    }
+
     erase();
     int r = 0;
 
@@ -486,12 +638,12 @@ static void draw_screen(void)
     /* KEYBINDINGS */
     draw_hline(r - 1, 0, g_tui_w);
     attron(COLOR_PAIR(CP_DIM));
-    mvprintw(r, 1,     "UP/DOWN   select servo       LEFT/RIGHT  +/- %d us", STEP_FINE);
-    mvprintw(r + 1, 1, "PgUp/PgDn +/- %d us          n  neutral (1500)", STEP_COARSE);
-    mvprintw(r + 2, 1, "m  jog to MIN  M  jog to MAX  N  all neutral   A  write all at once");
+    mvprintw(r, 1,     "?  show help (full key list + workflow)            n  neutral (1500)");
+    mvprintw(r + 1, 1, "UP/DOWN   select servo       LEFT/RIGHT  +/- %d us", STEP_FINE);
+    mvprintw(r + 2, 1, "PgUp/PgDn +/- %d us          ,/.  fine -/+", STEP_COARSE);
     mvprintw(r + 3, 1, "[  set MIN     ]  set MAX     b  set BIAS  B  clear BIAS");
-    mvprintw(r + 4, 1, "v  cycle VEL   a  cycle ACC   d  cycle DEAD   ,/.  fine -/+");
-    mvprintw(r + 5, 1, "S  save        L  reload      r  refresh registers");
+    mvprintw(r + 4, 1, "S  save        L  reload      m/M  jog MIN/MAX   N  all neutral");
+    mvprintw(r + 5, 1, "v  cycle VEL   a  cycle ACC   d  cycle DEAD     A  write all");
     mvprintw(r + 6, 1, "s  toggle smoother (now: %s)  0  all OFF (disable PWM)  q  quit",
              smooth_enabled ? "ON" : "OFF");
     attroff(COLOR_PAIR(CP_DIM));
@@ -801,32 +953,36 @@ int main(int argc, char *argv[])
                 break;
 
             case KEY_LEFT:
-                if(servo_us[selected] >= pca.servo_min[selected] + STEP_FINE)
+                /* Allow probing below the recorded servo_min during
+                 * calibration. Clamp only to hardware-absolute floor. */
+                if(servo_us[selected] >= PCA_HARD_FLOOR_US + STEP_FINE)
                     servo_us[selected] -= STEP_FINE;
                 else
-                    servo_us[selected] = pca.servo_min[selected];
+                    servo_us[selected] = PCA_HARD_FLOOR_US;
                 write_servo(selected);
                 break;
             case KEY_RIGHT:
-                if(servo_us[selected] <= pca.servo_max[selected] - STEP_FINE)
+                /* Allow probing above the recorded servo_max during
+                 * calibration. Clamp only to hardware-absolute ceiling. */
+                if(servo_us[selected] <= PCA_HARD_CEIL_US - STEP_FINE)
                     servo_us[selected] += STEP_FINE;
                 else
-                    servo_us[selected] = pca.servo_max[selected];
+                    servo_us[selected] = PCA_HARD_CEIL_US;
                 write_servo(selected);
                 break;
 
             case KEY_PPAGE:
-                if(servo_us[selected] <= pca.servo_max[selected] - STEP_COARSE)
+                if(servo_us[selected] <= PCA_HARD_CEIL_US - STEP_COARSE)
                     servo_us[selected] += STEP_COARSE;
                 else
-                    servo_us[selected] = pca.servo_max[selected];
+                    servo_us[selected] = PCA_HARD_CEIL_US;
                 write_servo(selected);
                 break;
             case KEY_NPAGE:
-                if(servo_us[selected] >= pca.servo_min[selected] + STEP_COARSE)
+                if(servo_us[selected] >= PCA_HARD_FLOOR_US + STEP_COARSE)
                     servo_us[selected] -= STEP_COARSE;
                 else
-                    servo_us[selected] = pca.servo_min[selected];
+                    servo_us[selected] = PCA_HARD_FLOOR_US;
                 write_servo(selected);
                 break;
 
@@ -1065,7 +1221,7 @@ int main(int argc, char *argv[])
                     {
                         cal_dirty = false;
                         snprintf(status_line, sizeof(status_line),
-                                 "SAVED to %.180s — kill -HUP cpcu_kernel "
+                                 "SAVED to %s — kill -HUP cpcu_kernel "
                                  "to reload live", cfg_path_used);
                         status_until = time(NULL) + 5;
                     }
@@ -1116,7 +1272,7 @@ int main(int argc, char *argv[])
                         }
                         cal_dirty = false;
                         snprintf(status_line, sizeof(status_line),
-                                 "Reloaded calibration from %.220s",
+                                 "Reloaded calibration from %s",
                                  cfg_path_used);
                         status_until = time(NULL) + 3;
                     }
@@ -1156,6 +1312,14 @@ int main(int argc, char *argv[])
 
             case '0':
                 if(hw_connected) PCA_AllOff(&pca);
+                break;
+
+            case '?':
+            case 'h':
+            case 'H':
+                /* Toggle the help overlay. State is preserved underneath,
+                 * so dismissing returns the user exactly where they were. */
+                g_help_visible = !g_help_visible;
                 break;
 
             case 'q':
