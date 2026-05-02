@@ -1,4 +1,4 @@
-# CPCU Test Guide — v3.4 / safety v2.3.1 / smoother v2.3.2 / config v2.3.3 / edit-mode v2.3.4 / velocity v2.3.5 / patch v2.3.6 / soft-grip v2.3.7 / editor v2.3.8 / dashboard v2.4.0
+# Testing
 
 **Author:** bugrASl
 **Date:** April 2026
@@ -75,14 +75,14 @@ documenting the UI, or proving that a TUI change didn't break rendering,
 chmod +x run_tests.sh
 
 # Automated — run in order
-./run_tests.sh 1            # Phase 1: software tests (any machine)
-./run_tests.sh 1 2          # Phase 1 + 2: software + IPC
-./run_tests.sh 1 2 3        # All automated phases (Pi with hardware)
+./launch.sh test            # Phase 1: software tests (any machine)
+./launch.sh test-ipc          # Phase 1 + 2: software + IPC
+./launch.sh test-hw        # All automated phases (Pi with hardware)
 
 # Interactive — launch TUI tools
-./run_tests.sh pca          # Servo calibration (needs I2C)
-./run_tests.sh signal       # Signal integrity (needs kernel + BSAU)
-./run_tests.sh signal-demo  # Signal integrity (synthetic, anywhere)
+./launch.sh test-pca          # Servo calibration (needs I2C)
+./launch.sh test-signal       # Signal integrity (needs kernel + BSAU)
+./launch.sh test-signal-demo  # Signal integrity (synthetic, anywhere)
 
 # Demo — preview TUIs without any hardware
 ./cpcu_tui --demo           # Full 4-page dashboard
@@ -250,7 +250,7 @@ verdict goes `DEGRADED`; Page 1's state row flips to `SAFE` on the
 expected threshold.
 
 ```bash
-./run_tests.sh safety-demo
+./launch.sh test-safety-demo
 # Shortcut: launches cpcu_tui --demo after printing a quick reminder
 # of the fault-injection hotkeys.
 ```
@@ -362,7 +362,7 @@ This testbench exercises the parser only — the IPC seqlock side is
 tested implicitly by the live system (cpcu_io reads cfg_cache every
 tick during normal operation). The pattern matches the established
 motor-cmd seqlock and is documented in
-[`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) §5.
+[`CONFIGURATION.md`](CONFIGURATION.md) §5.
 
 ### 3.6 TB-ED — TUI live editor (automated, no hardware) (v2.3.8)
 
@@ -492,7 +492,7 @@ live.
     `[EDITING - arm parked]` (green) once the demo's smoother
     settles. Pressing `e` again returns to `[LOCKED]`. Pressing `e`
     on any OTHER page must do nothing — it's page-7-local. See
-    [`EDIT_MODE.md`](EDIT_MODE.md) for the full handshake protocol.
+    [`TUI_EDITOR.md`](TUI_EDITOR.md) §4 for the full handshake protocol.
 -   Resizing the terminal window reflows the layout on the next frame.
 -   Pressing `F` (inject radio freeze) causes the Health banner on
     Page 1 to turn yellow then red, verdict goes `WARNING` → `DEGRADED`,
@@ -607,7 +607,7 @@ the PCA9685 + NRF24L01+ wired.
 ### 5.1 Automated checks
 
 ```bash
-./run_tests.sh 3
+./launch.sh test-hw
 ```
 
 **What it checks, one at a time:**
@@ -628,7 +628,7 @@ the PCA9685 + NRF24L01+ wired.
 ### 5.2 Interactive servo test
 
 ```bash
-./run_tests.sh pca
+./launch.sh test-pca
 ```
 
 **Controls:**
@@ -726,7 +726,7 @@ Connect a function generator (100 Hz sine, ~0.6 V amplitude, 1.65 V DC
 offset) to all 8 EMG inputs:
 
 ```bash
-./run_tests.sh signal
+./launch.sh test-signal
 ```
 
 Press TAB for all-channel view.
@@ -901,4 +901,4 @@ can tell at a glance whether something is within tolerance.
 
 Every unfamiliar term used here (ADC, NRF24L01+, PCA9685, SPI, I²C, SPSC,
 seqlock, SCHED_FIFO, isolcpus, DSP, RMS, Goertzel, Vpp, MAV, BSAU, CPCU) is
-defined in the [CPCU_RUN_GUIDE.md glossary](CPCU_RUN_GUIDE.md#11-glossary).
+defined in the [USER_GUIDE.md glossary](USER_GUIDE.md#11-glossary).

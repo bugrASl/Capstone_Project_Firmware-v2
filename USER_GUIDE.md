@@ -508,7 +508,7 @@ wireless link, or the servos — they just check that the math, the
 filters, the safety logic, and the data structures all work.
 
 ```
-./launch.sh test
+./launch.sh test-sw
 ```
 
 This runs **233 tests** across 7 areas:
@@ -1132,7 +1132,7 @@ cd ~/prosthetic_hand/cpcu_v2
 ./launch.sh check                # everything green?
 
 # === Verification (skip if already passed) ===
-./launch.sh test                 # 233 PASS expected
+./launch.sh test-sw              # 233 PASS expected
 ./launch.sh test-hw              # all hardware checks
 # (flash BSAU on laptop in CubeIDE, see section 8)
 ./launch.sh test-signal          # live, with function generator on PA0
@@ -1160,6 +1160,31 @@ cd ~/prosthetic_hand/cpcu_v2
 That's the entire user-facing surface. There is no other command,
 no other tool, and no other thing you need to know to operate the
 prosthetic hand system end-to-end.
+
+---
+
+## See also
+
+For when you want to dig deeper than this guide:
+
+- **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — system architecture: how the CPU cores
+  divide labor, how shared memory is laid out, how the safety FSM works.
+  Read this if you're modifying the C source.
+- **[`CONFIGURATION.md`](CONFIGURATION.md)** — every tunable in the system, with
+  defaults, ranges, and rationale. Read this when `./launch.sh configure --show`
+  isn't enough detail.
+- **[`TESTING.md`](TESTING.md)** — the test plan in full: what each of the 233
+  software tests covers, what the hardware tests prove, how to add a new test.
+- **[`BOOT_AND_SYNC.md`](BOOT_AND_SYNC.md)** — the cold-start grace period that
+  prevents spurious safety trips when CPCU boots before BSAU.
+- **[`TUI_EDITOR.md`](TUI_EDITOR.md)** — the live-editing dashboard (page 7,
+  press `e`) and the underlying edit-mode handshake protocol.
+- **[`WEB_DASHBOARD.md`](WEB_DASHBOARD.md)** — the browser-based read-only
+  multi-viewer dashboard (`./launch.sh ws`).
+- **Topic deep-dives:** [`JITTER_MITIGATION.md`](JITTER_MITIGATION.md),
+  [`VELOCITY_MODE.md`](VELOCITY_MODE.md),
+  [`SOFT_GRIP.md`](SOFT_GRIP.md) — feature-specific docs for the
+  smoother, the gesture velocity stack, and the gripper protection.
 
 ---
 

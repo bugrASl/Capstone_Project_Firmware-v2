@@ -1,5 +1,10 @@
 # TUI Live Editor — In-System Runtime Tuning
 
+> v2.7: this doc absorbed the previous standalone `TUI_EDITOR.md` §4
+> as §4 "Edit-mode handshake protocol". The handshake is what
+> makes the editor safe to use while the system is running; it
+> deserves to live in the same doc as the editor itself.
+
 **Author:** bugrASl
 **Date:** April 2026
 **Version:** v2.3.8 (introduced)
@@ -129,7 +134,163 @@ clamps col to the new row's count.
 
 ---
 
-## 4. The save protocol
+## 4. Edit-mode handshake protocol (v2.3.4)
+
+The naive alternative would be: TUI just sets a flag, dsp+io
+immediately stop their normal work. But that's bad in two ways:
+
+**Mid-motion freeze is dangerous.** If dsp publishes a motor command
+and io is mid-trajectory toward it, freezing in place leaves the arm
+in a transient pose — possibly mid-air with the gripper closing on
+something. Better to walk to a known-safe pose (neutral) before
+declaring "ok to edit".
+
+**The user needs feedback.** If the editor activates *immediately*
+on `e` while the arm is still moving for ~1 second, the user starts
+typing values that get applied to a moving arm. They lose the
+mental model of "static state I'm tweaking."
+
+So the handshake has two phases:
+1. **PARKING**: request raised, walking to neutral. UI shows yellow banner, edits blocked.
+2. **EDITING**: settled at neutral, fully parked. UI shows green banner, edits allowed.
+
+The transition between them is data-driven (`SMOOTH_AllSettled()`),
+not time-based.
+
+---
+
+
+
+### Wire-level protocol
+
+Three new atomic bytes plus one timestamp in `IPC_ControlBlock`
+(reserve region of cache line 0 — no layout change, IPC_VERSION
+bumped 0x0203 → 0x0204):
+
+```c
+_Atomic uint8_t     edit_mode_request;      // TUI -> world
+_Atomic uint8_t     edit_mode_active;       // io  -> TUI
+_Atomic uint8_t     edit_mode_dsp_ack;      // dsp -> TUI
+_Atomic uint64_t    edit_mode_request_us;   // TUI stamps on raise
+```
+
+### Single-writer-per-byte rule
+
+Each byte has exactly one writer. Multiple readers are fine.
+
+| Byte | Writer | Readers |
+|---|---|---|
+| `edit_mode_request` | TUI | cpcu_io, cpcu_dsp.py |
+| `edit_mode_active` | cpcu_io | TUI |
+| `edit_mode_dsp_ack` | cpcu_dsp.py | TUI |
+| `edit_mode_request_us` | TUI (stamps on raise) | TUI (reads for timeout calc) |
+
+Single-writer-per-byte means we don't need a seqlock — atomic loads
+and stores at byte granularity are sufficient. The four bytes don't
+need to be a coherent snapshot, only individually atomic.
+
+### Sequence — entering edit mode
+
+```
+t=0      TUI:    edit_mode_request := 1
+                 edit_mode_request_us := now_us
+                 (banner switches to "[PARKING ARM...]" yellow)
+
+t=20ms   io:     observes request=1
+                 SMOOTH_SetAllTargets(neutral)
+                 (smoother begins trapezoidal walk to 1500us)
+                 motor_cmd from dsp ignored (sticky-park)
+
+t=80ms   dsp:    observes request=1
+                 commits current_state := "rest"
+                 hysteresis_count := 0
+                 stops calling write_motor_cmd
+                 edit_mode_dsp_ack := 1
+
+t=300ms  io:     SMOOTH_AllSettled() -> true (depending on starting pose)
+                 edit_mode_active := 1
+
+t=320ms  TUI:    next render observes active=1
+                 banner switches to "[EDITING — arm parked]" green
+                 editor unlocks
+```
+
+### Sequence — exiting edit mode
+
+```
+t=0      TUI:    edit_mode_request := 0
+                 (banner switches to "[LOCKED]" dim)
+
+t=20ms   io:     observes request=0
+                 edit_mode_active := 0
+                 normal motor_cmd processing resumes
+                 (smoother walks back toward whatever dsp publishes;
+                  often that's still neutral if user hasn't started
+                  any gesture yet, so motion is minimal)
+
+t=80ms   dsp:    observes request=0
+                 edit_mode_dsp_ack := 0
+                 resumes write_motor_cmd
+```
+
+### Sequence — fault during edit mode
+
+```
+t=0      User in edit mode, banner green.
+
+t=X      Some safety fault triggers (radio drop, battery, etc.).
+         FSM transitions RUNNING → SAFE.
+
+t=X+ε    io:     SAFETY_CheckSystem() returns false.
+                 SAFE-snap branch fires:
+                 SMOOTH_Snap to neutral.
+                 PCA_SetAllNeutral.
+                 edit_mode_active := 0  (forced clear)
+
+t=X+1tick TUI:   observes active=0 + system_state=SAFE.
+                 banner switches based on edit_req still being set:
+                   if request=1 still: "[PARKING ARM...]" yellow
+                   even though arm is already at neutral, the FSM
+                   forced our hand and the user should explicitly
+                   re-press 'e' to confirm intent.
+```
+
+The user experience: a fault forces the editor closed even if you
+were mid-edit. You re-press `e` after the system recovers.
+
+---
+
+
+
+## 5. DSP UNRESPONSIVE timeout
+
+If the user presses `e` and `cpcu_dsp.py` is hung (crashed silently,
+deadlocked in scipy, whatever), then `edit_mode_dsp_ack` never goes
+to 1. The TUI's banner watches for this:
+
+```c
+if(edit_req && !edit_active && elapsed_ms > 500 && !edit_dsp_ack)
+    banner = "[DSP UNRESPONSIVE]"  // red
+```
+
+At 500 ms the TUI flips the banner red. The user sees "the DSP
+isn't acknowledging" and can investigate — usually `tail -f
+/var/log/cpcu/log_DSP.csv` or `pgrep -af cpcu_dsp.py`.
+
+**Note that `edit_mode_active` does NOT depend on `edit_mode_dsp_ack`.**
+cpcu_io's view of "ready to edit" is purely about whether the smoother
+has settled — that's the safety-relevant condition. dsp's ack is
+diagnostic. If dsp is dead but io is healthy, you can technically
+still edit (the arm is parked), you just won't have inference
+running. The banner makes that visible without blocking the editor.
+
+---
+
+
+
+---
+
+## 6. The save protocol
 
 `Ctrl+S` triggers `ed_save()`:
 
@@ -161,7 +322,7 @@ FAILED: no writable runtime.json found". Drafts stay dirty.
 
 ---
 
-## 5. The `kernel_pid` field in IPC
+## 7. The `kernel_pid` field in IPC
 
 A new field in `IPC_ControlBlock`:
 
@@ -186,7 +347,7 @@ require a rebuild — correct behavior for a contract change.
 
 ---
 
-## 6. What's NOT editable (and why)
+## 8. What's NOT editable (and why)
 
 The editor surfaces a **curated subset** of runtime.json. Several
 fields are intentionally absent:
@@ -218,11 +379,11 @@ the C parser, the dsp loader, and the JSON file. Not a runtime knob.
 
 Anything that's a `#define` rather than a runtime field — RADIO_
 TIMEOUT_MS, NRF channel, IPC layout sizes. These need a recompile.
-See [`CPCU_CONFIGURATION.md`](CPCU_CONFIGURATION.md).
+See [`CONFIGURATION.md`](CONFIGURATION.md).
 
 ---
 
-## 7. Visual layout
+## 9. Visual layout
 
 ```
 Edit mode: [EDITING - arm parked]   Press 'e' to exit, Ctrl+S to save
@@ -257,7 +418,7 @@ The status line at the bottom rotates between:
 
 ---
 
-## 8. Interaction with safety
+## 10. Interaction with safety
 
 **SAFE forces exit.** If the safety FSM trips while editing,
 `edit_mode_active` gets cleared by cpcu_io (priority over the
@@ -282,7 +443,7 @@ nothing visible. This prevents tuning while faulted.
 
 ---
 
-## 9. Testing
+## 11. Testing
 
 `test/editor_testbench.c` runs five test groups:
 
@@ -305,7 +466,7 @@ preserves it.
 
 ---
 
-## 10. Operating procedure
+## 12. Operating procedure
 
 ### First-time tuning session
 
@@ -349,19 +510,19 @@ Or use pca_testbench's `L` (reload) key after stopping the daemon.
 
 ---
 
-## 11. See also
+## 13. See also
 
-- [`EDIT_MODE.md`](EDIT_MODE.md) — the v2.3.4 handshake protocol
+- [`TUI_EDITOR.md`](TUI_EDITOR.md) §4 — the v2.3.4 handshake protocol
   the editor sits on top of. Explains banner states, DSP UNRESPONSIVE
   timeout, SAFE-has-priority semantics.
-- [`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) — schema for every field
+- [`CONFIGURATION.md`](CONFIGURATION.md) — schema for every field
   the editor surfaces. §10 covers pca_testbench round-trip (the same
   `CFG_PatchFile` infrastructure).
 - [`SOFT_GRIP.md`](SOFT_GRIP.md) — `grip_firm_us` and friends are
   the most commonly tuned values, and the editor's main use case.
 - [`VELOCITY_MODE.md`](VELOCITY_MODE.md) — explains why
   `gesture_velocity` isn't editable from the TUI.
-- [`CPCU_ARCHITECTURE.md`](CPCU_ARCHITECTURE.md) §3.3 — core
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) §3.3 — core
   allocation. The editor lives entirely on Core 0 (with the rest of
   the TUI).
 - [`cpcu_v2/include/cpcu_tui_editor.h`](../include/cpcu_tui_editor.h) —

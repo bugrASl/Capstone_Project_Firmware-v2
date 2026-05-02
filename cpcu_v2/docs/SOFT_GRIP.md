@@ -295,7 +295,7 @@ straightforward to read. Verified on hardware by:
 
 ```bash
 # Live test:
-sudo ./scripts/launch.sh release
+sudo ./launch.sh release
 
 # Hold hand_flex against an object for 3+ seconds.
 # Within 2000ms of being pinned, the LOG_W line:
@@ -349,18 +349,18 @@ Don't ship like that. The watchdog protects hardware.
 
 ## 9. See also
 
-- [`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) — schema for the four
+- [`CONFIGURATION.md`](CONFIGURATION.md) — schema for the four
   `grip_*` fields. Both the C parser and dsp loader consume them.
 - [`VELOCITY_MODE.md`](VELOCITY_MODE.md) — the integrator the soft
   clamp lives inside. The clamp runs only in velocity mode; freeze
   classes hold their target unchanged.
-- [`EDIT_MODE.md`](EDIT_MODE.md) — interaction notes (§5 above).
+- [`TUI_EDITOR.md`](TUI_EDITOR.md) §4 — interaction notes (§5 above).
 - [`JITTER_MITIGATION.md`](JITTER_MITIGATION.md) — the smoother
   whose `current[5]` and `target[5]` the watchdog observes.
-- [`CPCU_ARCHITECTURE.md`](CPCU_ARCHITECTURE.md) §3.3 — core
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) §3.3 — core
   allocation. dsp on Cores 1-2 owns soft-firm clamp; cpcu_io on
   Core 3 owns the watchdog.
-- [`cpcu_v2/scripts/cpcu_dsp.py`](../scripts/cpcu_dsp.py) v2.3.7 —
+- [`cpcu_v2/python/cpcu_dsp.py`](../python/cpcu_dsp.py) v2.3.7 —
   `GRIP_FIRM_US_DEFAULT`, the loader's 5th return value, and the
   one-sided clamp in the integrator.
 - [`cpcu_v2/src/cpcu_io.c`](../src/cpcu_io.c) v2.3.7 — the

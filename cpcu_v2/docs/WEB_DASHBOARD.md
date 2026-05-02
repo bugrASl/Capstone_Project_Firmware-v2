@@ -574,8 +574,8 @@ confidence are absent. Install `models/svm.joblib` and
 | `cpcu_v2/web/vendor/README.md` + `fetch.sh` + `mongoose_stub.h` | Mongoose vendoring |
 | `cpcu_v2/include/cpcu_ipc.h` | Region declarations (IPC_ToolPresence, IPC_DspFiltered); IPC_VERSION 0x0206 |
 | `cpcu_v2/src/cpcu_ipc.c` | New region pointers wired in `ipc_map_ptrs` |
-| `cpcu_v2/scripts/cpcu_dsp.py` | Per-window publish to `IPC_DspFiltered` |
-| `cpcu_v2/scripts/cpcu_ipc_bridge.py` | Region offsets + `write_dsp_filtered_window` method |
+| `cpcu_v2/python/cpcu_dsp.py` | Per-window publish to `IPC_DspFiltered` |
+| `cpcu_v2/python/cpcu_ipc_bridge.py` | Region offsets + `write_dsp_filtered_window` method |
 | `cpcu_v2/scripts/launch.sh` | `ws` and `install-ws-service` modes |
 | `cpcu_v2/test/signal_testbench.c` | v2.4.1: publishes to `IPC_ToolPresence` slot 1 each loop iteration |
 | `cpcu_v2/test/json_testbench.c` | 7 unit tests for the JSON serializer |
@@ -585,12 +585,12 @@ confidence are absent. Install `models/svm.joblib` and
 
 ## 11. See also
 
-- [`CPCU_ARCHITECTURE.md`](CPCU_ARCHITECTURE.md) — overall layering;
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — overall layering;
   the bridge is a Core 0 IPC consumer like the TUI.
-- [`EDIT_MODE.md`](EDIT_MODE.md) — the dashboard's edit-mode banner
+- [`TUI_EDITOR.md`](TUI_EDITOR.md) §4 — the dashboard's edit-mode banner
   reflects the v2.3.4 handshake state.
 - [`TUI_EDITOR.md`](TUI_EDITOR.md) — what edit mode is *for*. The
   dashboard shows when someone is editing; the actual editing
   happens in the TUI.
-- [`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) — where the values
+- [`CONFIGURATION.md`](CONFIGURATION.md) — where the values
   visible in the dashboard come from.

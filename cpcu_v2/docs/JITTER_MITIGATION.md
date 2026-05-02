@@ -376,7 +376,7 @@ build/smooth_testbench
 # Expected: 28 PASS, 0 FAIL
 
 # As part of Phase 1:
-./run_tests.sh 1
+./launch.sh test
 # Expected: 7 + 38 + 28 + 65 = 138 PASS
 ```
 
@@ -384,10 +384,10 @@ build/smooth_testbench
 
 ## 8. See also
 
-- **[`CPCU_ARCHITECTURE.md`](CPCU_ARCHITECTURE.md) §3.3** — runs on
+- **[`ARCHITECTURE.md`](ARCHITECTURE.md) §3.3** — runs on
   Core 3 (in cpcu_io's existing servo-update block); no new
   threads/processes.
-- **[`CPCU_CONFIGURATION.md`](CPCU_CONFIGURATION.md) §2** —
+- **[`CONFIGURATION.md`](CONFIGURATION.md) §2** —
   cpcu_smooth.h tunables including the new
   `SMOOTH_DEFAULT_DEADBAND`.
 - **[`GESTURE_MAPPING.md`](GESTURE_MAPPING.md) §8** — what the

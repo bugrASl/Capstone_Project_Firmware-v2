@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/stat.h>       /* mkdir */
 #include <ncurses.h>        /* for KEY_UP, KEY_DOWN, etc. constants */
 
@@ -82,20 +83,57 @@ static char *write_runtime_json(void)
     return g_tmp_path;
 }
 
-/* Patch the editor's path search to find our temp file. The default
- * is /opt/cpcu/config.json -> config/runtime.json; we don't want
- * either to win. Quick-and-dirty: chdir to /tmp and symlink the
- * file in as config/runtime.json so the second-tier lookup hits it. */
+/* Patch the editor's path search to find our temp file. The editor's
+ * lookup order is /opt/cpcu/config.json first, then config/runtime.json
+ * in the cwd. If /opt/cpcu/config.json exists (it does on a real Pi
+ * after `./launch.sh setup`), the first path always wins, and our
+ * symlink-in-cwd trick never gets a chance.
+ *
+ * Solution: temporarily rename /opt/cpcu/config.json to a sibling
+ * .test_backup name for the duration of the test, then restore on
+ * exit. Combined with a config/runtime.json symlink in the cwd
+ * pointing at our temp file, this guarantees the editor reads what
+ * the test wrote.
+ */
+static const char *g_opt_cfg_path        = "/opt/cpcu/config.json";
+static const char *g_opt_cfg_backup_path = "/opt/cpcu/config.json.test_backup";
+static int         g_opt_cfg_was_moved   = 0;
+
+static void restore_opt_cpcu_config(void)
+{
+    if(g_opt_cfg_was_moved)
+    {
+        if(rename(g_opt_cfg_backup_path, g_opt_cfg_path) != 0)
+            fprintf(stderr,
+                "WARNING: couldn't restore %s from %s — please check manually\n",
+                g_opt_cfg_path, g_opt_cfg_backup_path);
+        g_opt_cfg_was_moved = 0;
+    }
+}
+
 static void install_runtime_json(const char *src)
 {
-    /* Make sure neither path the editor tries by default exists. */
-    if(access("/opt/cpcu/config.json", F_OK) == 0)
+    /* Move /opt/cpcu/config.json out of the way if it exists. The
+     * symlink target stays put — we only rename the symlink itself. */
+    if(access(g_opt_cfg_path, F_OK) == 0 && !g_opt_cfg_was_moved)
     {
-        fprintf(stderr,
-            "WARNING: /opt/cpcu/config.json exists; editor will load it\n"
-            "         instead of our temp file. Tests may behave oddly.\n");
+        if(rename(g_opt_cfg_path, g_opt_cfg_backup_path) == 0)
+        {
+            g_opt_cfg_was_moved = 1;
+            atexit(restore_opt_cpcu_config);
+        }
+        else
+        {
+            fprintf(stderr,
+                "WARNING: couldn't move %s aside (errno=%d). The editor will\n"
+                "         load production config and tests may behave oddly.\n"
+                "         Try running the testbench with sufficient permissions\n"
+                "         on /opt/cpcu/, or remove the symlink temporarily.\n",
+                g_opt_cfg_path, errno);
+        }
     }
-    /* Build a config/runtime.json in CWD. */
+
+    /* Build a config/runtime.json in CWD as the second-tier lookup. */
     int rc = mkdir("config", 0755);
     (void)rc;       /* ok if exists */
     unlink("config/runtime.json");

@@ -1,5 +1,5 @@
 #
-#   Prosthetic Hand Capstone — Project Directory Structure (v2.4.1)
+#   Prosthetic Hand Capstone — Project Directory Structure (v2.7)
 #   Author: bugrASl
 #   Date:   April 2026
 #
@@ -12,7 +12,120 @@
 #   touched by that change are listed in the "v2.1 DATASET mode" section
 #   below.
 #
-#   v2.4.1 (April 2026, latest):
+#   v2.7 (April 2026, latest) — Architectural restructure:
+#     PURPOSE: launch.sh becomes the unified user API. Users only ever type
+#     `./launch.sh <command>` — every system operation routes through this
+#     one entry point. Other shell scripts moved into scripts/ as helpers
+#     called only by launch.sh. Python modules moved into a python/
+#     directory, since the old scripts/ dir had become a mix of unrelated
+#     things (Python + launch.sh + setup_pi.sh + helpers).
+#
+#     Layout changes:
+#     - cpcu_v2/launch.sh                         MOVED from scripts/launch.sh
+#                                                       to repo root.
+#                                                       Self-locating via
+#                                                       readlink. Now exposes
+#                                                       setup/configure/test*
+#                                                       as subcommands wrapping
+#                                                       the helper scripts;
+#                                                       behavioral wrappers
+#                                                       (handle reboot prompts
+#                                                       on setup, rebuild
+#                                                       prompts on configure)
+#                                                       not just pass-through.
+#                                                       Adds build/check
+#                                                       commands. ~805 lines
+#                                                       (was 629).
+#     - cpcu_v2/python/                           NEW directory. Contains
+#                                                       cpcu_dsp.py,
+#                                                       cpcu_ipc_bridge.py,
+#                                                       bsau_dataset_collector.py
+#                                                       (moved from scripts/).
+#     - cpcu_v2/scripts/                          REPURPOSED. Now holds
+#                                                       internal shell helpers
+#                                                       only: setup_pi.sh,
+#                                                       configure.sh,
+#                                                       run_tests.sh
+#                                                       (all moved here from
+#                                                       cpcu_v2/ root).
+#     - cpcu_v2/scripts/setup_pi.sh               v2.7 — exit code 10 signals
+#                                                       reboot needed; launch.sh
+#                                                       prompts the user.
+#                                                       Creates /opt/cpcu/python/
+#                                                       in addition to scripts/.
+#                                                       REPO_RUNTIME path
+#                                                       resolution climbs one
+#                                                       directory up.
+#     - cpcu_v2/scripts/configure.sh              v2.7 — exit code 11 signals
+#                                                       rebuild needed; launch.sh
+#                                                       prompts. CPCU_ROOT path
+#                                                       climbs one directory up.
+#                                                       All "next steps" prose
+#                                                       stripped (launch.sh's
+#                                                       job).
+#     - cpcu_v2/scripts/run_tests.sh              v2.7 — auto-CDs to cpcu_v2
+#                                                       root via BASH_SOURCE
+#                                                       so legacy ./binary
+#                                                       lookups still resolve.
+#     - cpcu_v2/CMakeLists.txt                    v2.7 — install rules updated:
+#                                                       launch.sh -> /opt/cpcu/
+#                                                       python/*.py -> /opt/cpcu/python/
+#                                                       scripts/*.sh -> /opt/cpcu/scripts/
+#                                                       Removed obsolete
+#                                                       scripts/cpcu.service
+#                                                       install rule (systemd
+#                                                       unit is now generated
+#                                                       dynamically by
+#                                                       launch.sh install-service).
+#     - cpcu_v2/src/cpcu_kernel.c                 v2.7 — CPCU_DSP_SCRIPT path
+#                                                       /opt/cpcu/scripts/cpcu_dsp.py
+#                                                       -> /opt/cpcu/python/cpcu_dsp.py
+#
+#     Documentation consolidation (cpcu_v2/docs/):
+#     - DELETED  SYSTEM_GUIDE.md                  (2126 lines) — superseded by
+#                                                       USER_GUIDE.md (the
+#                                                       launch.sh-as-API guide).
+#     - DELETED  CPCU_RUN_GUIDE.md                (948 lines) — superseded by
+#                                                       USER_GUIDE.md.
+#     - DELETED  EDIT_MODE.md                     (371 lines) — merged into
+#                                                       TUI_EDITOR.md as §4
+#                                                       "Edit-mode handshake
+#                                                       protocol".
+#     - MERGED   RUNTIME_CONFIG.md
+#                + CPCU_CONFIGURATION.md          → CONFIGURATION.md
+#                                                       (Part 1: architecture
+#                                                       from RUNTIME_CONFIG;
+#                                                       Part 2: per-file
+#                                                       reference from
+#                                                       CPCU_CONFIGURATION;
+#                                                       Part 3: recipes;
+#                                                       Part 4: pca_testbench
+#                                                       round-trip).
+#     - RENAMED  CPCU_ARCHITECTURE.md             → ARCHITECTURE.md
+#                                                       (CPCU_ prefix dropped;
+#                                                       all docs in cpcu_v2/docs/
+#                                                       are CPCU-related, prefix
+#                                                       was redundant).
+#     - RENAMED  CPCU_TEST_GUIDE.md               → TESTING.md (same reason).
+#     - RENAMED  InfiniTech_Launch_Guide.md       → USER_GUIDE.md (consistency
+#                                                       with other top-level
+#                                                       doc names).
+#     - REFRESHED 5 surviving topic docs           BOOT_AND_SYNC.md,
+#                                                       JITTER_MITIGATION.md,
+#                                                       VELOCITY_MODE.md,
+#                                                       SOFT_GRIP.md,
+#                                                       WEB_DASHBOARD.md
+#                                                       had paths and command
+#                                                       references updated to
+#                                                       v2.7 form (./launch.sh
+#                                                       <cmd>, /opt/cpcu/python/
+#                                                       for Python helpers).
+#
+#     Net: 13 docs, 9550 lines  →  10 docs, ~6965 lines (~27% reduction;
+#     no information lost — all unique content preserved in surviving docs
+#     or appended to merged docs).
+#
+#   v2.4.1 (April 2026):
 #     - cpcu_v2/src/cpcu_ws.c                     v2.4.1 — added raw_full
 #                                                       field to wave
 #                                                       frames (256 raw

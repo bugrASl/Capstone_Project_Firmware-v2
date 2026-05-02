@@ -108,14 +108,14 @@ config can't escape the safety envelope.
 
 **The integrator runs only outside edit mode.** While
 `edit_mode_request` is set, dsp commits to "rest", clears the target
-to neutral, and stops publishing — see EDIT_MODE.md §1.
+to neutral, and stops publishing — see TUI_EDITOR.md §4.
 
 ---
 
 ## 3. Configuration shape
 
 The schema is documented in
-[`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) §2. The relevant subset:
+[`CONFIGURATION.md`](CONFIGURATION.md) §2. The relevant subset:
 
 ```json
 {
@@ -251,7 +251,7 @@ mid-gesture target it had at fault time, which is surprising.
 **Edit mode.** While `edit_mode_request` is set, dsp commits state
 to "rest", suspends publishing, and clears `current_target_us` to
 neutral so the next exit doesn't snap to a held pose. cpcu_io's
-edit-mode handshake (see EDIT_MODE.md) parks the arm at neutral
+edit-mode handshake (see TUI_EDITOR.md §4) parks the arm at neutral
 in parallel.
 
 **Combination cases:**
@@ -279,7 +279,7 @@ config loader (TB-DSP11..TB-DSP16, 18 individual checks):
 | TB-DSP16 | JSONC line comments + trailing commas tolerated |
 
 ```bash
-./run_tests.sh 1
+./launch.sh test
 # RESULTS: 186 PASS in Phase 1 (was 168)
 #   7 codec + 38 safety + 28 smoother + 30 config + 83 DSP
 ```
@@ -292,7 +292,7 @@ input — the test would have to mock `time.monotonic()` and
 For end-to-end verification, the live system on hardware:
 
 ```bash
-sudo ./scripts/launch.sh release
+sudo ./launch.sh release
 
 # Hold biceps_flex for 1 second, watch elbow servo position
 # (any servo monitor or scope on the PCA output) — should ramp
@@ -368,18 +368,18 @@ velocity/accel limits are probably too low — try raising
 
 ## 9. See also
 
-- [`RUNTIME_CONFIG.md`](RUNTIME_CONFIG.md) — full schema for
+- [`CONFIGURATION.md`](CONFIGURATION.md) — full schema for
   `runtime.json`, including `gesture_velocity`. The runtime/compile
   split this builds on.
-- [`EDIT_MODE.md`](EDIT_MODE.md) — handshake that pauses dsp's
+- [`TUI_EDITOR.md`](TUI_EDITOR.md) §4 — handshake that pauses dsp's
   velocity integration during calibration.
 - [`JITTER_MITIGATION.md`](JITTER_MITIGATION.md) — the smoother
   whose `SMOOTH_AllSettled()` cpcu_io uses; same smoother absorbs
   velocity-mode targets.
-- [`CPCU_ARCHITECTURE.md`](CPCU_ARCHITECTURE.md) §3.3 — core
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) §3.3 — core
   allocation. dsp on Cores 1-2 owns the integrator; cpcu_io on
   Core 3 reads the published targets.
-- [`cpcu_v2/scripts/cpcu_dsp.py`](../scripts/cpcu_dsp.py) v2.3.5 —
+- [`cpcu_v2/python/cpcu_dsp.py`](../python/cpcu_dsp.py) v2.3.5 —
   `load_dsp_runtime_config()`, the velocity integrator block in
   `run_inference()`.
 - [`cpcu_v2/config/runtime.json`](../config/runtime.json) — the

@@ -270,7 +270,7 @@ build/safety_testbench
 
 Or via the full Phase 1:
 ```bash
-./run_tests.sh 1
+./launch.sh test
 # Expected: 7 + 38 + 65 = 110 PASS
 ```
 
@@ -338,7 +338,7 @@ Reasonable.
 
 ## See also
 
-- [`CPCU_ARCHITECTURE.md`](CPCU_ARCHITECTURE.md) §6 — full safety FSM
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) §6 — full safety FSM
 - [`cpcu_safety.h`](../include/cpcu_safety.h) — header with the new constant
 - [`cpcu_safety.c`](../src/cpcu_safety.c) — `SAFETY_CheckTimeout` and `SAFETY_FeedPacket`
 - [`safety_testbench.c`](../test/safety_testbench.c) — TB-SAF09
