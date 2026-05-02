@@ -40,6 +40,7 @@
 ##      ./launch.sh tui                    Interactive: kernel + TUI dashboard
 ##      ./launch.sh signal                 Interactive: kernel + signal_testbench
 ##      ./launch.sh collect                Interactive: kernel + TUI for dataset capture
+##      ./launch.sh smoother               Servo motion profile exerciser (needs kernel)
 ##      ./launch.sh pca                    Direct PCA9685 calibration (no kernel)
 ##      ./launch.sh kernel                 Kernel only, foreground (for systemd)
 ##      ./launch.sh ws                     Web dashboard (browser-accessible)
@@ -755,6 +756,26 @@ run_pca() {
     fi
 }
 
+run_smoother() {
+    # Resolve the Python script — prefer installed, fall back to repo
+    local script=""
+    if [ -f "${PYTHON_INSTALL_DIR}/smoother_scenario.py" ]; then
+        script="${PYTHON_INSTALL_DIR}/smoother_scenario.py"
+    elif [ -f "${PYTHON_DIR}/smoother_scenario.py" ]; then
+        script="${PYTHON_DIR}/smoother_scenario.py"
+    else
+        fatal "smoother_scenario.py not found in ${PYTHON_INSTALL_DIR} or ${PYTHON_DIR}"
+    fi
+
+    # Require a running kernel (motor commands go through IPC)
+    if [ ! -e /dev/shm/cpcu_ipc ]; then
+        fatal "cpcu_kernel is not running. Start with: ./launch.sh tui (in another terminal)"
+    fi
+
+    log "Mode: SMOOTHER (servo motion profile exerciser)"
+    exec python3 "${script}" "$@"
+}
+
 # ───── Fallbacks (no tmux installed) ─────
 
 run_tui_fallback() {
@@ -1095,18 +1116,20 @@ show_menu() {
   │  4) signal    tmux: [KERNEL][SIGNAL] — signal-integrity testbench│
   │  5) pca       PCA9685 servo calibration only  (no kernel)        │
   │  6) ws        Web dashboard (browser-accessible)                 │
+  │  7) smoother  Servo motion profile exerciser  (needs kernel)     │
   │  q) quit                                                         │
   └──────────────────────────────────────────────────────────────────┘
 EOF
     while true; do
-        read -p "  Choice [1-6/q]: " choice
+        read -p "  Choice [1-7/q]: " choice
         case "${choice}" in
-            1|kernel)  run_kernel_only;  return $? ;;
-            2|tui)     run_tui;          return $? ;;
-            3|collect) run_collect;      return $? ;;
-            4|signal)  run_signal;       return $? ;;
-            5|pca)     run_pca;          return $? ;;
-            6|ws)      cmd_ws;           return $? ;;
+            1|kernel)   run_kernel_only;  return $? ;;
+            2|tui)      run_tui;          return $? ;;
+            3|collect)  run_collect;      return $? ;;
+            4|signal)   run_signal;       return $? ;;
+            5|pca)      run_pca;          return $? ;;
+            6|ws)       cmd_ws;           return $? ;;
+            7|smoother) run_smoother;     return $? ;;
             q|Q|quit)  log "Exiting without launching."; return 0 ;;
             *)         echo "  Invalid choice." ;;
         esac
@@ -1361,6 +1384,36 @@ Inside the TUI:
   - q quit (prompts if dirty)
 EOF
                     ;;
+                smoother)
+                    cat <<'EOF'
+Servo motion profile exerciser. Sends motor commands through IPC so
+cpcu_io's trapezoidal smoother handles the interpolation — you see
+the REAL servo motion with your current runtime.json settings.
+
+Requires cpcu_kernel + cpcu_io to be running (start with ./launch.sh tui
+in another terminal).
+
+Usage:
+  ./launch.sh smoother                            Interactive menu
+  ./launch.sh smoother --servo 0 --scenario step  One-shot
+  ./launch.sh smoother --servo all --scenario sweep
+  ./launch.sh smoother --list                     Show all scenarios
+
+Scenarios:
+  step        Step response (neutral → max → neutral)
+  sweep       Full sweep (neutral → min → max → neutral)
+  triangle    Triangle wave (two full cycles)
+  small_step  ±50 µs around neutral (deadband test)
+  burst       Rapid min↔max toggles (stress test)
+  slow_creep  Neutral → neutral+200 (see the accel ramp)
+
+Tuning workflow:
+  1. Run a scenario, watch the servo
+  2. In TUI CONFIG page: e → edit vel/accel/deadband → Ctrl+S
+  3. Re-run the same scenario — motion changes immediately
+  4. Repeat until the feel is right
+EOF
+                    ;;
                 kernel)
                     cat <<'EOF'
 Run cpcu_kernel only, in the foreground. This is the path systemd
@@ -1533,6 +1586,7 @@ case "${MODE}" in
     collect)                run_collect ;;
     signal)                 run_signal ;;
     pca)                    run_pca ;;
+    smoother)               run_smoother "$@" ;;
     menu)                   show_menu ;;
     ws)                     cmd_ws "$@" ;;
 
