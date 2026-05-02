@@ -620,9 +620,18 @@ run_tui_tmux() {
     preflight_kernel
     preflight_tui
     local tui_bin="${RESOLVED_BIN}"
-    log "Mode: TUI (tmux: KERNEL + TUI)"
+    if [ "${WITH_WS:-0}" = "1" ]; then
+        with_ws_preflight    || fatal "WS preflight failed"
+        log "Mode: TUI + WS (tmux: KERNEL + TUI + WS)"
+    else
+        log "Mode: TUI (tmux: KERNEL + TUI)"
+    fi
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
     tmux_add_window "TUI" "${tui_bin}"
+    if [ "${WITH_WS:-0}" = "1" ]; then
+        tmux_add_window "WS" "$(ws_window_cmd)"
+        log "Web dashboard at http://$(hostname -I | awk '{print $1}'):8765"
+    fi
     tmux_attach_at "TUI"
 }
 
@@ -630,9 +639,18 @@ run_collect_tmux() {
     preflight_kernel
     preflight_tui
     local tui_bin="${RESOLVED_BIN}"
-    log "Mode: COLLECT (tmux: KERNEL + TUI, capture-focused)"
+    if [ "${WITH_WS:-0}" = "1" ]; then
+        with_ws_preflight    || fatal "WS preflight failed"
+        log "Mode: COLLECT + WS (tmux: KERNEL + TUI + WS, capture-focused)"
+    else
+        log "Mode: COLLECT (tmux: KERNEL + TUI, capture-focused)"
+    fi
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
     tmux_add_window "TUI" "${tui_bin}"
+    if [ "${WITH_WS:-0}" = "1" ]; then
+        tmux_add_window "WS" "$(ws_window_cmd)"
+        log "Web dashboard at http://$(hostname -I | awk '{print $1}'):8765"
+    fi
 
     echo
     log "${C_BLD}Capture workflow:${C_RST}"
@@ -651,10 +669,53 @@ run_signal_tmux() {
     preflight_kernel
     preflight_signal
     local sig_bin="${RESOLVED_BIN}"
-    log "Mode: SIGNAL (tmux: KERNEL + SIGNAL)"
+    if [ "${WITH_WS:-0}" = "1" ]; then
+        with_ws_preflight    || fatal "WS preflight failed"
+        log "Mode: SIGNAL + WS (tmux: KERNEL + SIGNAL + WS)"
+    else
+        log "Mode: SIGNAL (tmux: KERNEL + SIGNAL)"
+    fi
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
     tmux_add_window "SIGNAL" "${sig_bin}"
+    if [ "${WITH_WS:-0}" = "1" ]; then
+        tmux_add_window "WS" "$(ws_window_cmd)"
+        log "Web dashboard at http://$(hostname -I | awk '{print $1}'):8765"
+    fi
     tmux_attach_at "SIGNAL"
+}
+
+# Helpers for --with-ws composition. Both invoked from the run_*_tmux
+# functions above. Kept as separate functions so they're visible at the
+# top of this section and easy to find.
+ws_static_dir() {
+    if [ -d /opt/cpcu/ws_static ]; then
+        echo "/opt/cpcu/ws_static"
+    elif [ -d "${CPCU_ROOT}/web/static" ]; then
+        echo "${CPCU_ROOT}/web/static"
+    else
+        return 1
+    fi
+}
+
+# Run before adding the WS window — abort early on missing binary or
+# stub builds so we don't bring up the whole tmux session only to have
+# the WS window die immediately.
+with_ws_preflight() {
+    [ -x "${BIN_DIR}/cpcu_ws" ] \
+        || { err "${BIN_DIR}/cpcu_ws not found — run './launch.sh build'"; return 1; }
+    if cpcu_ws_is_stub; then
+        err "cpcu_ws is a STUB build — run './launch.sh vendor' first."
+        return 1
+    fi
+    ws_static_dir >/dev/null \
+        || { err "Web static dir not found (looked at /opt/cpcu/ws_static and ${CPCU_ROOT}/web/static)"; return 1; }
+    return 0
+}
+
+ws_window_cmd() {
+    local sd
+    sd="$(ws_static_dir)"
+    echo "${BIN_DIR}/cpcu_ws --static ${sd}"
 }
 
 # Demo variant: signal_testbench --demo. Generates synthetic 100 Hz
@@ -720,11 +781,96 @@ run_signal() { if require_tmux; then run_signal_tmux; else warn "tmux not instal
 
 
 # ════════════════════════════════════════════════════════════════════════
+#  COMMAND: vendor (fetch third-party deps, currently just Mongoose)
+# ════════════════════════════════════════════════════════════════════════
+
+cmd_vendor() {
+    local fetcher="${CPCU_ROOT}/web/vendor/fetch.sh"
+    local mongoose_c="${CPCU_ROOT}/web/vendor/mongoose.c"
+    local mongoose_h="${CPCU_ROOT}/web/vendor/mongoose.h"
+
+    if [ ! -f "${fetcher}" ]; then
+        fatal "${fetcher} not found — is this a CPCU source tree?"
+    fi
+
+    # Self-heal +x bit. Files freshly written by web upload, scp, or
+    # tar without -p commonly lose the executable bit.
+    if [ ! -x "${fetcher}" ]; then
+        warn "${fetcher} is missing the executable bit — fixing..."
+        chmod +x "${fetcher}" || fatal "couldn't chmod +x ${fetcher}"
+    fi
+
+    # Skip the network round-trip if the files are already there
+    # AND the user hasn't asked for --force. Mongoose is version-pinned
+    # in the script itself, so a re-fetch only matters when the script
+    # gets bumped.
+    if [ -f "${mongoose_c}" ] && [ -f "${mongoose_h}" ] && [ "${1:-}" != "--force" ]; then
+        ok "Mongoose already vendored at web/vendor/mongoose.{c,h}."
+        log "  Pass --force to re-download."
+    else
+        log "Fetching Mongoose source into web/vendor/..."
+        ( cd "${CPCU_ROOT}/web/vendor" && bash "${fetcher}" ) \
+            || fatal "fetch.sh failed — check network or web/vendor/ permissions"
+        ok "Mongoose fetched."
+    fi
+
+    # CMake's WS_HAS_MONGOOSE branch is decided at configure-time, not
+    # build-time. So even though the files are now in place, the
+    # cached install plan still says "build cpcu_ws as a stub". Force
+    # a clean reconfigure so cpcu_ws picks up the real source.
+    log "Triggering a clean rebuild so cpcu_ws picks up Mongoose..."
+    cmd_build --clean
+}
+
+
+# ════════════════════════════════════════════════════════════════════════
 #  COMMAND: ws (web dashboard)
 # ════════════════════════════════════════════════════════════════════════
 
+# Detects whether the installed cpcu_ws is the "stub" build (no
+# Mongoose, no real HTTP server). The stub prints a recognisable line
+# in its startup banner; we grep for it here. Returns 0 if it's a stub.
+cpcu_ws_is_stub() {
+    [ -x "${BIN_DIR}/cpcu_ws" ] || return 1
+    "${BIN_DIR}/cpcu_ws" --version 2>&1 | grep -q "BUILT WITHOUT MONGOOSE" && return 0
+    # Older builds that don't support --version: fall back to checking
+    # whether mongoose.c was vendored at build time. Heuristic — if
+    # it's not in the source tree, the binary almost certainly is a
+    # stub.
+    [ ! -f "${CPCU_ROOT}/web/vendor/mongoose.c" ] && return 0
+    return 1
+}
+
 cmd_ws() {
     [ -x "${BIN_DIR}/cpcu_ws" ] || fatal "${BIN_DIR}/cpcu_ws not found — run './launch.sh build'"
+
+    # If the installed cpcu_ws is a stub (built without Mongoose), it
+    # won't actually serve HTTP. Catch this here instead of letting
+    # the user wait, point a browser at it, and discover that the
+    # banner printed "BUILT WITHOUT MONGOOSE" while nothing bound to
+    # the port. Offer to fix it in one prompt.
+    if cpcu_ws_is_stub; then
+        warn "cpcu_ws is a STUB build — Mongoose was not vendored when this was compiled."
+        warn "  As a stub it prints diagnostics but does NOT serve HTTP/WS."
+        log "  Fix it with: ${C_BLD}./launch.sh vendor${C_RST}"
+        log "    (downloads Mongoose, then does a clean rebuild — ~30 sec total)"
+        if [ -t 0 ] && [ -t 1 ]; then
+            read -rp "  Run vendor + rebuild now? [Y/n] " ans
+            case "${ans}" in
+                ""|y|Y|yes)
+                    cmd_vendor
+                    log "Continuing with the freshly-built cpcu_ws..."
+                    ;;
+                *)
+                    err "Aborting. Run './launch.sh vendor' when you're ready."
+                    exit 1
+                    ;;
+            esac
+        else
+            err "Non-interactive shell — can't prompt. Run './launch.sh vendor' manually."
+            exit 1
+        fi
+    fi
 
     local static_dir
     if [ -d /opt/cpcu/ws_static ]; then
@@ -1117,7 +1263,7 @@ on the CONFIG page).
 
 EOF
             ;;
-        tui|signal|collect|pca|kernel|ws|menu|attach|stop|install-service|install-ws-service|grant-caps)
+        tui|signal|collect|pca|kernel|ws|vendor|menu|attach|stop|install-service|install-ws-service|grant-caps)
             cat <<EOF
 
 ./launch.sh ${topic}
@@ -1137,6 +1283,12 @@ Press 'e' on the Config page to enter live edit mode (arm parks).
 Press 'q' to quit the TUI (kernel keeps running).
 
 Detach with Ctrl-b d. Re-attach later with './launch.sh attach'.
+
+Combine with the web dashboard:
+  ./launch.sh tui --with-ws
+This adds a third tmux window (WS) running cpcu_ws so others can
+watch from a browser at http://<pi-ip>:8765 while you work in the
+TUI. Both views share one kernel and one IPC region — no duplication.
 EOF
                     ;;
                 signal)
@@ -1152,6 +1304,11 @@ Pass criteria when a function generator drives PA0 with a 100 Hz sine,
   - Packet rate ≈ 1000/s, loss < 0.1%
 
 Press TAB for all-channel view, q to quit.
+
+Combine with the web dashboard:
+  ./launch.sh signal --with-ws
+This adds a third tmux window (WS). Useful for showing the live
+signal stream to someone in a browser while you watch it locally.
 EOF
                     ;;
                 collect)
@@ -1167,6 +1324,11 @@ Inside the TUI:
   - s or SPACE to start, again to stop and save
   - r to cancel and delete a partial capture
   - q to quit. Files land in /opt/cpcu/bin/datasets/.
+
+Combine with the web dashboard:
+  ./launch.sh collect --with-ws
+The browser dashboard mirrors the data being captured, useful when
+recording with someone watching remotely.
 EOF
                     ;;
                 pca)
@@ -1209,6 +1371,33 @@ Tabs in the dashboard:
 
 Default bind is 0.0.0.0 — anyone on your LAN can view. To restrict
 to localhost only, run: ./launch.sh ws --bind ws://127.0.0.1:8765
+
+If cpcu_ws was built without Mongoose (the embedded HTTP/WS library),
+this command will detect that and offer to fix it for you in one
+prompt — the alternative is './launch.sh vendor' run manually.
+EOF
+                    ;;
+                vendor)
+                    cat <<'EOF'
+Fetch third-party dependencies into the source tree. Currently this
+means downloading Mongoose (the embedded HTTP+WebSocket library used
+by cpcu_ws) into web/vendor/, then doing a clean rebuild so cpcu_ws
+links the real library instead of the no-network stub.
+
+Why this is a separate command:
+  - Mongoose is ~26k lines of vendored source. Keeping it out of the
+    main source tree makes git history cleaner and lets us version-
+    pin via web/vendor/fetch.sh (currently 7.14).
+  - The fetch is a one-time step per checkout. Once vendored, the
+    files persist until you delete them.
+
+Options:
+  --force    re-download even if web/vendor/mongoose.{c,h} exist
+             (use after editing fetch.sh to bump the pinned version)
+
+Network: needs internet access to raw.githubusercontent.com. If your
+Pi is on an air-gapped network, fetch on a connected machine, copy
+web/vendor/mongoose.{c,h} over, then run './launch.sh build --clean'.
 EOF
                     ;;
                 menu)
@@ -1280,12 +1469,30 @@ cmd_version() { echo "InfiniTech CPCU launch.sh v2.7 (April 2026)"; }
 MODE="${1:-}"
 shift || true
 
+# Composable flag: --with-ws (or --ws) appended to a kernel-aware
+# command makes the tmux session also include a WS window. Examples:
+#   ./launch.sh tui --with-ws
+#   ./launch.sh signal --with-ws
+#   ./launch.sh collect --with-ws
+# We strip the flag here from $@ so the remaining args pass cleanly
+# through to the underlying command.
+WITH_WS=0
+NEW_ARGS=()
+for arg in "$@"; do
+    case "${arg}" in
+        --with-ws|--ws) WITH_WS=1 ;;
+        *)              NEW_ARGS+=("${arg}") ;;
+    esac
+done
+set -- "${NEW_ARGS[@]+"${NEW_ARGS[@]}"}"
+
 case "${MODE}" in
     -h|--help|help)         cmd_help "$@" ;;
     -v|--version|version)   cmd_version ;;
 
     setup)                  cmd_setup "$@" ;;
     build)                  cmd_build "$@" ;;
+    vendor)                 cmd_vendor "$@" ;;
     check)                  cmd_check ;;
     configure)              cmd_configure "$@" ;;
 
