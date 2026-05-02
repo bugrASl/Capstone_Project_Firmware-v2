@@ -22,53 +22,25 @@ import sys
 import os
 import time
 import argparse
-import struct
-import mmap
 import signal
 
-# ── IPC constants (must match cpcu_ipc.h) ─────────────────────────────
+# ── Path setup (same pattern as cpcu_dsp.py) ──────────────────────────
+_SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+_ALT_DIR     = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "python"))
+for _p in (_SCRIPT_DIR, _ALT_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-SHM_NAME            = "/cpcu_ipc"
-SHM_PATH            = "/dev/shm/cpcu_ipc"
+from cpcu_ipc_bridge import (
+    IPCBridge, NUM_SERVOS, OFF_CTRL, CTRL_STATE,
+)
 
-IPC_MAGIC           = 0x494E4654
-NUM_SERVOS          = 6
-TICK_HZ             = 50           # motor command rate (matches cpcu_io servo tick)
-TICK_S              = 1.0 / TICK_HZ
+# ── Constants ─────────────────────────────────────────────────────────
 
-# Section offsets (from cpcu_ipc.h)
-OFF_CTRL            = 0
-SZ_CTRL             = 192
-SZ_ENTRY            = 64
-RING_SIZE           = 1024
-OFF_RING            = SZ_CTRL
-OFF_MOTOR           = OFF_RING + SZ_ENTRY * RING_SIZE     # 65728
-SZ_MOTOR            = 128
-OFF_DIAG            = OFF_MOTOR + SZ_MOTOR
-SZ_DIAG             = 128
-OFF_EXPORT          = OFF_DIAG + SZ_DIAG
-SZ_EXPORT           = 256
-OFF_CONFIG          = OFF_EXPORT + SZ_EXPORT
-SZ_CONFIG           = 1024          # >= 512, padded
-OFF_TOOL            = OFF_CONFIG + SZ_CONFIG
-SZ_TOOL             = 64 * 8
-OFF_FILT            = OFF_TOOL + SZ_TOOL
-SZ_FILT             = 6464
+TICK_HZ  = 50           # motor command rate (matches cpcu_io servo tick)
+TICK_S   = 1.0 / TICK_HZ
 
-SHM_TOTAL           = OFF_FILT + SZ_FILT
-
-# ControlBlock field offsets
-CTRL_MAGIC          = 0
-CTRL_STATE          = 8
-CTRL_HEAD           = 64
-CTRL_TAIL           = 128
-
-# MotorCommand field offsets (within OFF_MOTOR)
-MOTOR_SEQ           = 0
-MOTOR_SERVO         = 4         # 6 × uint16 = 12 bytes
-MOTOR_GESTURE       = 16
-MOTOR_CONF          = 17
-MOTOR_TIMESTAMP     = 24
+IPC_STATE_RUNNING = 1
 
 # ── Servo definitions ─────────────────────────────────────────────────
 
@@ -82,15 +54,13 @@ SERVOS = [
 ]
 
 # ── Scenarios ─────────────────────────────────────────────────────────
-# Each scenario is a list of (hold_seconds, target_us_or_callable).
-# A callable receives the servo dict and returns the target.
 
 def _mid(s):
     return (s["min"] + s["max"]) // 2
 
 SCENARIOS = {
     "step": {
-        "desc": "Step response: neutral → max → neutral (classic control test)",
+        "desc": "Step response: neutral -> max -> neutral (classic control test)",
         "waypoints": lambda s: [
             (1.0, s["neutral"]),
             (2.5, s["max"]),
@@ -98,7 +68,7 @@ SCENARIOS = {
         ],
     },
     "sweep": {
-        "desc": "Full sweep: neutral → min → max → neutral",
+        "desc": "Full sweep: neutral -> min -> max -> neutral",
         "waypoints": lambda s: [
             (1.0, s["neutral"]),
             (2.0, s["min"]),
@@ -107,7 +77,7 @@ SCENARIOS = {
         ],
     },
     "triangle": {
-        "desc": "Triangle wave: mid → max → min → max → mid (2 cycles)",
+        "desc": "Triangle wave: mid -> max -> min -> max -> mid (2 cycles)",
         "waypoints": lambda s: [
             (0.5, _mid(s)),
             (1.5, s["max"]),
@@ -117,7 +87,7 @@ SCENARIOS = {
         ],
     },
     "small_step": {
-        "desc": "Small step: ±50 µs around neutral (tests deadband)",
+        "desc": "Small step: +/-50 us around neutral (tests deadband)",
         "waypoints": lambda s: [
             (1.0, s["neutral"]),
             (2.0, s["neutral"] + 50),
@@ -126,7 +96,7 @@ SCENARIOS = {
         ],
     },
     "burst": {
-        "desc": "Rapid burst: fast min↔max toggles (stress test)",
+        "desc": "Rapid burst: fast min/max toggles (stress test)",
         "waypoints": lambda s: [
             (0.5, s["neutral"]),
             (0.8, s["max"]),
@@ -137,7 +107,7 @@ SCENARIOS = {
         ],
     },
     "slow_creep": {
-        "desc": "Slow creep: neutral → neutral+200 (see acceleration ramp)",
+        "desc": "Slow creep: neutral -> neutral+200 (see acceleration ramp)",
         "waypoints": lambda s: [
             (1.0, s["neutral"]),
             (4.0, min(s["neutral"] + 200, s["max"])),
@@ -145,49 +115,6 @@ SCENARIOS = {
         ],
     },
 }
-
-# ── IPC access ────────────────────────────────────────────────────────
-
-class IPCMotor:
-    """Minimal IPC writer — just the motor command SeqLock."""
-
-    def __init__(self):
-        fd = os.open(SHM_PATH, os.O_RDWR)
-        self.mm = mmap.mmap(fd, SHM_TOTAL, mmap.MAP_SHARED,
-                            mmap.PROT_READ | mmap.PROT_WRITE)
-        os.close(fd)
-
-        magic = struct.unpack_from("<I", self.mm, OFF_CTRL + CTRL_MAGIC)[0]
-        if magic != IPC_MAGIC:
-            raise RuntimeError(
-                f"IPC magic mismatch: got 0x{magic:08X}, expected 0x{IPC_MAGIC:08X}. "
-                f"Is cpcu_kernel running?")
-
-    def read_state(self):
-        return struct.unpack_from("<B", self.mm, OFF_CTRL + CTRL_STATE)[0]
-
-    def write_motor_cmd(self, servo_us, gesture_id=0, confidence=0):
-        """SeqLock write — mirrors IPC_WriteMotorCmd in cpcu_ipc.c."""
-        base = OFF_MOTOR
-
-        # Step 1: seq → odd
-        seq = struct.unpack_from("<I", self.mm, base + MOTOR_SEQ)[0]
-        struct.pack_into("<I", self.mm, base + MOTOR_SEQ, seq + 1)
-
-        # Step 2: write data
-        for i in range(NUM_SERVOS):
-            struct.pack_into("<H", self.mm, base + MOTOR_SERVO + i * 2,
-                             servo_us[i])
-        struct.pack_into("<B", self.mm, base + MOTOR_GESTURE, gesture_id)
-        struct.pack_into("<B", self.mm, base + MOTOR_CONF, confidence)
-        ts = int(time.monotonic() * 1_000_000) & 0xFFFFFFFFFFFFFFFF
-        struct.pack_into("<Q", self.mm, base + MOTOR_TIMESTAMP, ts)
-
-        # Step 3: seq → even
-        struct.pack_into("<I", self.mm, base + MOTOR_SEQ, seq + 2)
-
-    def close(self):
-        self.mm.close()
 
 # ── Runner ────────────────────────────────────────────────────────────
 
@@ -208,7 +135,7 @@ def run_scenario(ipc, servo_idx, scenario_name, quiet=False):
     if not quiet:
         print(f"\n{'─' * 60}")
         print(f"  Servo:    {s['name']} ({s['type']})")
-        print(f"  Range:    {s['min']} – {s['max']} µs")
+        print(f"  Range:    {s['min']} – {s['max']} us")
         print(f"  Scenario: {scenario_name} — {sc['desc']}")
         print(f"  Duration: {total_time:.1f} s  ({len(wps)} waypoints)")
         print(f"  Tick:     {TICK_HZ} Hz (matching cpcu_io servo tick)")
@@ -245,13 +172,12 @@ def run_scenario(ipc, servo_idx, scenario_name, quiet=False):
         current_target = timeline[wp_idx][1]
         targets[servo_idx] = current_target
 
-        # Write motor command
+        # Write motor command through IPC bridge
         ipc.write_motor_cmd(targets, gesture_id=0, confidence=99)
 
         # Print at ~4 Hz
         if not quiet and (t_now - last_print) >= 0.25:
             last_print = t_now
-            # Determine phase name
             phase = f"wp {wp_idx}/{len(timeline)-1}"
             if wp_idx < len(timeline) - 1:
                 remaining = timeline[wp_idx + 1][0] - elapsed
@@ -260,10 +186,11 @@ def run_scenario(ipc, servo_idx, scenario_name, quiet=False):
 
             bar_len = 30
             frac = (current_target - s["min"]) / max(1, s["max"] - s["min"])
+            frac = max(0.0, min(1.0, frac))
             filled = int(frac * bar_len)
-            bar = "█" * filled + "░" * (bar_len - filled)
+            bar = "#" * filled + "." * (bar_len - filled)
 
-            print(f"  {elapsed:6.2f}  {current_target:5d}µs  {bar} {phase}")
+            print(f"  {elapsed:6.2f}  {current_target:5d}us  [{bar}] {phase}")
 
         # Sleep until next tick
         tick += 1
@@ -274,44 +201,43 @@ def run_scenario(ipc, servo_idx, scenario_name, quiet=False):
 
     # Return to neutral
     targets[servo_idx] = s["neutral"]
-    for _ in range(10):     # hold neutral for 200 ms to ensure smoother catches it
+    for _ in range(10):
         ipc.write_motor_cmd(targets, gesture_id=0, confidence=99)
         time.sleep(TICK_S)
 
     if not quiet:
-        print(f"  {'DONE':>6s}  {s['neutral']:5d}µs  (returned to neutral)")
+        print(f"  {'DONE':>6s}  {s['neutral']:5d}us  (returned to neutral)")
         print()
 
 # ── Interactive menu ──────────────────────────────────────────────────
 
 def interactive(ipc):
     print()
-    print("╔══════════════════════════════════════════════════════════╗")
-    print("║     SMOOTHER SCENARIO RUNNER — on-hardware profiler     ║")
-    print("╚══════════════════════════════════════════════════════════╝")
+    print("+" + "=" * 58 + "+")
+    print("|     SMOOTHER SCENARIO RUNNER — on-hardware profiler     |")
+    print("+" + "=" * 58 + "+")
     print()
     print("  This tool writes motor commands through IPC so cpcu_io's")
     print("  smoother handles the interpolation. You see the REAL")
     print("  servo motion with your current runtime.json settings.")
     print()
     print("  To tune: edit velocity/accel/deadband in the TUI editor")
-    print("  (CONFIG page → 'e'), Ctrl+S to save, then re-run a")
+    print("  (CONFIG page -> 'e'), Ctrl+S to save, then re-run a")
     print("  scenario here to see the difference.")
     print()
 
-    state = ipc.read_state()
+    state = ipc._r8(OFF_CTRL + CTRL_STATE)
     state_str = {0: "INIT", 1: "RUNNING", 2: "SAFE"}.get(state, f"?({state})")
-    if state != 1:
-        print(f"  ⚠  System state is {state_str} (expected RUNNING).")
-        print(f"     Servo commands may be ignored by cpcu_io.")
+    if state != IPC_STATE_RUNNING:
+        print(f"  WARNING: System state is {state_str} (expected RUNNING).")
+        print(f"           Servo commands may be ignored by cpcu_io.")
         print()
 
     while g_run:
-        # Pick servo
         print("  SERVOS:")
         for s in SERVOS:
             print(f"    {s['id']}) {s['name']:14s}  {s['type']}  "
-                  f"({s['min']}–{s['max']} µs)")
+                  f"({s['min']}-{s['max']} us)")
         print(f"    a) ALL servos (one at a time)")
         print(f"    q) quit")
         print()
@@ -319,7 +245,6 @@ def interactive(ipc):
         choice = input("  Select servo [0-5/a/q]: ").strip().lower()
         if choice == "q":
             break
-
         if choice == "a":
             servo_list = list(range(NUM_SERVOS))
         elif choice.isdigit() and 0 <= int(choice) < NUM_SERVOS:
@@ -328,16 +253,15 @@ def interactive(ipc):
             print("  Invalid choice.\n")
             continue
 
-        # Pick scenario
         print()
         print("  SCENARIOS:")
         sc_names = list(SCENARIOS.keys())
         for i, name in enumerate(sc_names):
-            print(f"    {i}) {name:14s} — {SCENARIOS[name]['desc']}")
+            print(f"    {i}) {name:14s} -- {SCENARIOS[name]['desc']}")
         print(f"    a) ALL scenarios (sequential)")
         print()
 
-        sc_choice = input("  Select scenario [0-{}/a]: ".format(len(sc_names)-1)).strip().lower()
+        sc_choice = input(f"  Select scenario [0-{len(sc_names)-1}/a]: ").strip().lower()
         if sc_choice == "a":
             sc_list = sc_names
         elif sc_choice.isdigit() and 0 <= int(sc_choice) < len(sc_names):
@@ -346,7 +270,6 @@ def interactive(ipc):
             print("  Invalid choice.\n")
             continue
 
-        # Run
         print()
         input("  Press ENTER to start (Ctrl+C to abort)...")
 
@@ -378,20 +301,17 @@ def main():
     if args.list:
         print("\nAvailable scenarios:\n")
         for name, sc in SCENARIOS.items():
-            print(f"  {name:14s} — {sc['desc']}")
+            print(f"  {name:14s} -- {sc['desc']}")
         print()
         return 0
 
-    # Open IPC
-    if not os.path.exists(SHM_PATH):
-        print(f"ERROR: {SHM_PATH} not found. Is cpcu_kernel running?",
-              file=sys.stderr)
-        print(f"  Start with: ./launch.sh tui", file=sys.stderr)
-        return 1
-
     try:
-        ipc = IPCMotor()
-    except Exception as e:
+        ipc = IPCBridge()
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"  Start the system with: ./launch.sh tui", file=sys.stderr)
+        return 1
+    except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
@@ -400,7 +320,6 @@ def main():
 
     try:
         if args.servo is not None and args.scenario is not None:
-            # Non-interactive
             if args.servo.lower() == "all":
                 servo_list = list(range(NUM_SERVOS))
             else:
@@ -418,7 +337,6 @@ def main():
         else:
             interactive(ipc)
     finally:
-        # Always return to neutral on exit
         neutrals = [sv["neutral"] for sv in SERVOS]
         for _ in range(5):
             ipc.write_motor_cmd(neutrals, gesture_id=0, confidence=99)
