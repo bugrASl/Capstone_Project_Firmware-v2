@@ -18,27 +18,23 @@
 ##    SETUP / BUILD (once-per-Pi, then once-per-source-change):
 ##      ./launch.sh setup                  Configure the Pi (one-time)
 ##      ./launch.sh build                  Compile + install the project
-##      ./launch.sh build --clean          Force a fresh build (wipes build/)
-##      ./launch.sh vendor                 Fetch Mongoose for the web dashboard
 ##      ./launch.sh check                  Verify everything is ready
 ##
 ##    TESTING (verify subsystems before running live):
 ##      ./launch.sh test-sw                Software-only tests (233 PASS)
-##      ./launch.sh test-ipc               + IPC validation (kernel auto-spawns)
+##      ./launch.sh test-ipc               + IPC validation (kernel needed)
 ##      ./launch.sh test-hw                + Pi hardware probes
 ##      ./launch.sh test-pca               Interactive servo motion check
 ##      ./launch.sh test-signal            Live signal-integrity TUI (needs BSAU)
 ##      ./launch.sh test-signal-demo       Same TUI with synthetic data
 ##      ./launch.sh test-safety-demo       Fault-injection demo (no hardware)
 ##
-##    TUNING:
-##      ./launch.sh configure              Interactive (compile-time safety knobs)
+##    RUNTIME / COMPILE-TIME TUNING:
+##      ./launch.sh configure              Interactive (compile-time)
 ##      ./launch.sh configure --show       Show all values
 ##      ./launch.sh configure --diff       Show changes from defaults
-##      ./launch.sh configure --reset      Restore compile-time defaults
-##      ./launch.sh configure --reset --runtime
-##                                         Also regenerate config/runtime.json
-##      ./launch.sh configure --<name> <value>   Set one compile-time knob
+##      ./launch.sh configure --reset      Restore defaults
+##      ./launch.sh configure --<name> <value>   Set one knob
 ##
 ##    OPERATING THE LIVE SYSTEM:
 ##      ./launch.sh tui                    Interactive: kernel + TUI dashboard
@@ -50,11 +46,6 @@
 ##      ./launch.sh menu                   Interactive picker (default on TTY)
 ##      ./launch.sh attach                 Re-attach to a running session
 ##      ./launch.sh stop                   Stop the running session
-##
-##    COMBINED MODES (append --with-ws to add the web dashboard):
-##      ./launch.sh tui --with-ws          KERNEL + TUI + WS in one tmux session
-##      ./launch.sh signal --with-ws       KERNEL + SIGNAL + WS
-##      ./launch.sh collect --with-ws      KERNEL + TUI + WS, capture-focused
 ##
 ##    SERVICES (start at boot):
 ##      ./launch.sh install-service        systemd unit for the kernel
@@ -132,37 +123,6 @@ ensure_helper_executable() {
         fatal "Couldn't chmod +x ${helper}. Try: chmod +x scripts/*.sh"
     fi
     fatal "Missing ${helper} — is your source tree complete?"
-}
-
-# v2.7 self-heal: makes sure config/runtime.json exists. The file is
-# either gitignored or otherwise prone to being absent on a fresh
-# clone, so we materialize it here from the embedded defaults if
-# missing. Idempotent: a no-op when the file is already present.
-#
-# Called from cmd_setup, cmd_build, and cmd_check so the user never
-# has to remember to git checkout the file or run a manual fix-up
-# command. Build/setup/check all naturally happen during normal
-# workflow on a fresh Pi.
-ensure_runtime_json() {
-    local target="${CPCU_ROOT}/config/runtime.json"
-    if [ -f "${target}" ]; then
-        return 0
-    fi
-    warn "config/runtime.json missing — creating from embedded defaults..."
-
-    # Source the shared emitter (used by setup_pi.sh and configure.sh
-    # too — single source of truth for the default schema).
-    local emitter="${SCRIPTS_DIR}/_default_runtime_json.sh"
-    if [ ! -f "${emitter}" ]; then
-        fatal "${emitter} missing — can't generate runtime.json. Source tree incomplete?"
-    fi
-    # shellcheck source=/dev/null
-    . "${emitter}"
-    if ! emit_default_runtime_json "${target}"; then
-        fatal "Couldn't write ${target}. Permission problem?"
-    fi
-    ok "Wrote default ${target}"
-    log "  (Operator can edit it later via the TUI editor or directly)"
 }
 
 # Prompt-yes-or-no (default depends on second arg)
@@ -482,11 +442,6 @@ cmd_build() {
         fatal "/opt/cpcu doesn't exist. Run './launch.sh setup' first."
     fi
 
-    # v2.7: self-heal config/runtime.json if it's missing. This is the
-    # single biggest source of "kernel won't start" friction on fresh
-    # clones, so build always checks. Cheap idempotent check.
-    ensure_runtime_json
-
     # --clean forces a fresh build directory. Use this if you've
     # changed CMakeLists.txt in a way that requires regenerating the
     # install plan (added/removed targets), or if the cached config
@@ -564,20 +519,9 @@ cmd_check() {
         warn_count=$((warn_count+1))
     fi
 
-    # /opt/cpcu/config.json should be a symlink to config/runtime.json.
-    # Three failure modes to catch:
-    #   1. Symlink doesn't exist at all (setup never ran).
-    #   2. Symlink exists but its target (config/runtime.json) is gone.
-    #      `[ -f link ]` follows the link and returns false in this case.
-    #   3. Both exist — the happy path.
-    # On case 2, self-heal by regenerating runtime.json from defaults.
-    if [ ! -e /opt/cpcu/config.json ]; then
-        err "No /opt/cpcu/config.json symlink — run './launch.sh setup' (it creates the symlink)"
+    if [ ! -f "/opt/cpcu/config.json" ]; then
+        err "No /opt/cpcu/config.json — symlink missing (re-run './launch.sh setup')"
         fatal_count=$((fatal_count+1))
-    elif [ ! -f /opt/cpcu/config.json ]; then
-        warn "/opt/cpcu/config.json is a broken symlink — config/runtime.json target is missing. Self-healing..."
-        ensure_runtime_json
-        warn_count=$((warn_count+1))
     fi
 
     local isolated
@@ -797,7 +741,18 @@ run_pca() {
     sleep 0.5
     trap - EXIT INT TERM
     cd "$(dirname "${pca_bin}")"
-    exec "${pca_bin}"
+    # Resolve config path explicitly — the cd above breaks the relative
+    # fallback ("config/runtime.json") inside pca_testbench, and the
+    # /opt/cpcu/config.json symlink may be stale. CPCU_ROOT is always
+    # the repo root, so this is the most reliable source.
+    if [ -r "${CPCU_ROOT}/config/runtime.json" ]; then
+        exec "${pca_bin}" --config "${CPCU_ROOT}/config/runtime.json"
+    elif [ -r "/opt/cpcu/config.json" ]; then
+        exec "${pca_bin}" --config "/opt/cpcu/config.json"
+    else
+        warn "No runtime.json found — pca_testbench will use compile-time defaults"
+        exec "${pca_bin}"
+    fi
 }
 
 # ───── Fallbacks (no tmux installed) ─────
@@ -1167,7 +1122,7 @@ cmd_help() {
     local topic="${1:-}"
     case "${topic}" in
         ""|main)
-            sed -n '2,66p' "$0" | sed 's/^##  \?//; s/^##$//'
+            sed -n '2,55p' "$0" | sed 's/^##  \?//; s/^##$//'
             ;;
         setup)
             cat <<'EOF'
