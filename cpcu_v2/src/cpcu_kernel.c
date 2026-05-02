@@ -41,6 +41,7 @@
 #include <time.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sched.h>
 #include <linux/watchdog.h>
 
 #include "cpcu_ipc.h"
@@ -128,9 +129,55 @@ static bool g_forward_log_flag = false;
 /*============= PROCESS SPAWNING ===========================================================*/
 /**
  *  Spawn a C binary with CPU affinity and real-time priority.
+ *
+ *  v2.3.9: Uses sched_setscheduler() and sched_setaffinity() in the
+ *  parent process (cpcu_kernel) BEFORE exec, instead of going through
+ *  `taskset → chrt → bin`. The reason is capability inheritance.
+ *
+ *  Linux file capabilities (set with `setcap cap_sys_nice+ep
+ *  /opt/cpcu/bin/cpcu_kernel`) are dropped across exec() unless the
+ *  caps are explicitly inheritable AND in the ambient set. The default
+ *  +ep mode is effective+permitted only, so `taskset` runs without
+ *  CAP_SYS_NICE, and `chrt`'s eventual sched_setscheduler() call gets
+ *  EPERM. That's the root cause of the long-running "cpcu_io fails to
+ *  achieve RT priority" issue.
+ *
+ *  The fix: do the schedAffinity work in the parent, where CAP_SYS_NICE
+ *  is still in effect (no exec boundary has been crossed yet). Then
+ *  exec() the binary directly. The scheduling attributes carry through
+ *  exec because they're per-task, not per-binary.
+ *
  *  If --log was passed to the kernel, pass it through to the child so
  *  both cpcu_kernel and cpcu_io write CSV logs in /var/log/cpcu/.
  */
+
+static int parse_cpu_list(const char *cores, cpu_set_t *set)
+{
+    CPU_ZERO(set);
+    const char *p                   =   cores;
+    while(*p)
+    {
+        char *end                   =   NULL;
+        long start                  =   strtol(p, &end, 10);
+        if(end == p) return -1;
+        long stop                   =   start;
+        if(*end == '-')
+        {
+            p                       =   end + 1;
+            stop                    =   strtol(p, &end, 10);
+            if(end == p) return -1;
+        }
+        for(long c = start; c <= stop; c++)
+        {
+            if(c < 0 || c >= CPU_SETSIZE) return -1;
+            CPU_SET((int)c, set);
+        }
+        if(*end == ',') { p = end + 1; continue; }
+        if(*end == '\0') break;
+        return -1;
+    }
+    return 0;
+}
 
 static pid_t spawn_native(const char *label, const char *bin,
                            const char *cores, int prio)
@@ -138,19 +185,47 @@ static pid_t spawn_native(const char *label, const char *bin,
     pid_t pid                       =   fork();
     if(pid == 0)
     {
-        char p[8];
-        snprintf(p, sizeof(p), "%d", prio);
+        /* === Child: parent's caps still in effect until exec() === */
+
+        /* 1. Pin to CPU set */
+        cpu_set_t set;
+        if(parse_cpu_list(cores, &set) != 0)
+        {
+            fprintf(stderr, "[KERNEL] %s: bad cpu list '%s'\n", label, cores);
+            _exit(1);
+        }
+        if(sched_setaffinity(0, sizeof(set), &set) != 0)
+        {
+            fprintf(stderr, "[KERNEL] %s: sched_setaffinity(%s) failed: %s\n",
+                    label, cores, strerror(errno));
+            /* Non-fatal: the kernel will run on whatever CPUs are available */
+        }
+
+        /* 2. Set SCHED_FIFO priority. This is the key step that needs
+         *    CAP_SYS_NICE — and because we haven't exec'd yet, the
+         *    parent's file caps are still our caps. */
+        struct sched_param sp        =   { .sched_priority = prio };
+        if(sched_setscheduler(0, SCHED_FIFO, &sp) != 0)
+        {
+            fprintf(stderr, "[KERNEL] %s: sched_setscheduler(FIFO,%d) failed: %s\n",
+                    label, prio, strerror(errno));
+            /* Hard fail — RT priority is required for the IO process to
+             * meet its 1 ms deadline */
+            _exit(2);
+        }
+
+        /* 3. Now exec the actual binary. Scheduling attributes are
+         *    per-task and survive exec; file caps don't matter on the
+         *    child binary. */
         if(g_forward_log_flag)
         {
-            execlp("taskset", "taskset", "-c", cores,
-                   "chrt", "-f", p, bin, "--log", NULL);
+            execl(bin, bin, "--log", NULL);
         }
         else
         {
-            execlp("taskset", "taskset", "-c", cores,
-                   "chrt", "-f", p, bin, NULL);
+            execl(bin, bin, NULL);
         }
-        /* execlp returned -> error */
+        /* execl returned -> error */
         fprintf(stderr, "[KERNEL] exec %s failed: %s\n", label, strerror(errno));
         _exit(1);
     }
@@ -186,11 +261,29 @@ static pid_t spawn_python(const char *label, const char *script,
     pid_t pid                       =   fork();
     if(pid == 0)
     {
-        char p[8];
-        snprintf(p, sizeof(p), "%d", prio);
-        execlp("taskset", "taskset", "-c", cores,
-               "chrt", "-f", p,
-               PYTHON3_BIN, actual_script, NULL);
+        /* Same parent-side scheduling setup as spawn_native — see the
+         * detailed comment there. The python binary itself doesn't need
+         * any caps; the scheduling attributes carry through exec. */
+        cpu_set_t set;
+        if(parse_cpu_list(cores, &set) != 0)
+        {
+            fprintf(stderr, "[KERNEL] %s: bad cpu list '%s'\n", label, cores);
+            _exit(1);
+        }
+        if(sched_setaffinity(0, sizeof(set), &set) != 0)
+        {
+            fprintf(stderr, "[KERNEL] %s: sched_setaffinity(%s) failed: %s\n",
+                    label, cores, strerror(errno));
+        }
+        struct sched_param sp        =   { .sched_priority = prio };
+        if(sched_setscheduler(0, SCHED_FIFO, &sp) != 0)
+        {
+            fprintf(stderr, "[KERNEL] %s: sched_setscheduler(FIFO,%d) failed: %s\n",
+                    label, prio, strerror(errno));
+            _exit(2);
+        }
+
+        execl(PYTHON3_BIN, PYTHON3_BIN, actual_script, NULL);
         fprintf(stderr, "[KERNEL] exec %s failed: %s\n", label, strerror(errno));
         _exit(1);
     }
