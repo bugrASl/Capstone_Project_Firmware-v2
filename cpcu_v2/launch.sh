@@ -134,6 +134,37 @@ ensure_helper_executable() {
     fatal "Missing ${helper} — is your source tree complete?"
 }
 
+# v2.7 self-heal: makes sure config/runtime.json exists. The file is
+# either gitignored or otherwise prone to being absent on a fresh
+# clone, so we materialize it here from the embedded defaults if
+# missing. Idempotent: a no-op when the file is already present.
+#
+# Called from cmd_setup, cmd_build, and cmd_check so the user never
+# has to remember to git checkout the file or run a manual fix-up
+# command. Build/setup/check all naturally happen during normal
+# workflow on a fresh Pi.
+ensure_runtime_json() {
+    local target="${CPCU_ROOT}/config/runtime.json"
+    if [ -f "${target}" ]; then
+        return 0
+    fi
+    warn "config/runtime.json missing — creating from embedded defaults..."
+
+    # Source the shared emitter (used by setup_pi.sh and configure.sh
+    # too — single source of truth for the default schema).
+    local emitter="${SCRIPTS_DIR}/_default_runtime_json.sh"
+    if [ ! -f "${emitter}" ]; then
+        fatal "${emitter} missing — can't generate runtime.json. Source tree incomplete?"
+    fi
+    # shellcheck source=/dev/null
+    . "${emitter}"
+    if ! emit_default_runtime_json "${target}"; then
+        fatal "Couldn't write ${target}. Permission problem?"
+    fi
+    ok "Wrote default ${target}"
+    log "  (Operator can edit it later via the TUI editor or directly)"
+}
+
 # Prompt-yes-or-no (default depends on second arg)
 prompt_yn() {
     local msg="$1" default="${2:-n}" reply
@@ -451,6 +482,11 @@ cmd_build() {
         fatal "/opt/cpcu doesn't exist. Run './launch.sh setup' first."
     fi
 
+    # v2.7: self-heal config/runtime.json if it's missing. This is the
+    # single biggest source of "kernel won't start" friction on fresh
+    # clones, so build always checks. Cheap idempotent check.
+    ensure_runtime_json
+
     # --clean forces a fresh build directory. Use this if you've
     # changed CMakeLists.txt in a way that requires regenerating the
     # install plan (added/removed targets), or if the cached config
@@ -528,9 +564,20 @@ cmd_check() {
         warn_count=$((warn_count+1))
     fi
 
-    if [ ! -f "/opt/cpcu/config.json" ]; then
-        err "No /opt/cpcu/config.json — symlink missing (re-run './launch.sh setup')"
+    # /opt/cpcu/config.json should be a symlink to config/runtime.json.
+    # Three failure modes to catch:
+    #   1. Symlink doesn't exist at all (setup never ran).
+    #   2. Symlink exists but its target (config/runtime.json) is gone.
+    #      `[ -f link ]` follows the link and returns false in this case.
+    #   3. Both exist — the happy path.
+    # On case 2, self-heal by regenerating runtime.json from defaults.
+    if [ ! -e /opt/cpcu/config.json ]; then
+        err "No /opt/cpcu/config.json symlink — run './launch.sh setup' (it creates the symlink)"
         fatal_count=$((fatal_count+1))
+    elif [ ! -f /opt/cpcu/config.json ]; then
+        warn "/opt/cpcu/config.json is a broken symlink — config/runtime.json target is missing. Self-healing..."
+        ensure_runtime_json
+        warn_count=$((warn_count+1))
     fi
 
     local isolated
