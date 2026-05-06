@@ -337,6 +337,9 @@ static SC_Waypoint  sc_wps[SC_MAX_WAYPOINTS];
 static float        sc_total_time   = 0.0f;
 static struct timespec sc_start_ts;
 
+/* Forward declaration — defined after sc_tick, called from within it. */
+static void clamp_servo(int idx);
+
 static float sc_elapsed(void)
 {
     struct timespec now;
