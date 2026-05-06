@@ -327,10 +327,11 @@ int main(int argc, char *argv[])
     SMOOTH_Context smooth;
     SMOOTH_Init(&smooth, PCA_SERVO_NEUTRAL);
 
-    /* Per-channel slew-rate override: gripper wants a gentler profile because
-     * SG90 is lightweight and overshoots when commanded full-range instantly.
-     * This exercises SMOOTH_SetSpeed, which was previously unused. */
-    SMOOTH_SetSpeed(&smooth, 5, 1200);      /* Gripper: slower, 1200 us/s */
+    /* Gripper (S5) bypasses the smoother entirely — grip/release must be
+     * immediate so objects don't slip during the ramp delay. The PCA
+     * write still goes through SMOOTH_ShouldWrite for deadband, but the
+     * position snaps to target on the next Update tick instead of ramping. */
+    SMOOTH_SetEnabled(&smooth, 5, false);
 
     /* Signal ready */
     atomic_store(&ipc.ctrl->io_ready, 1);
@@ -413,12 +414,13 @@ int main(int argc, char *argv[])
             {
                 WL_Unpack(raw, &pkt);
 
-                uint32_t gap    =   SAFETY_FeedPacket(&safety, &pkt, t);
+                uint32_t gap    =   SAFETY_SeqGap(&safety, pkt.seq);
                 if(gap > 0)
                 {
                     atomic_fetch_add(&ipc.diag->io_seq_gaps, gap);
                 }
 
+                SAFETY_FeedPacket(&safety, &pkt, t);
                 IPC_PushSensor(&ipc, &pkt, t);
                 atomic_fetch_add(&ipc.diag->io_pkts_received, 1);
             }

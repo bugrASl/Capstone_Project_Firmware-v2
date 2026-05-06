@@ -1813,6 +1813,11 @@ int main(int argc, char *argv[])
 
     /* Init smoother (used only if --smooth) */
     SMOOTH_Init(&smooth, PCA_SERVO_NEUTRAL);
+
+    /* Gripper (S5) bypasses the smoother — grip/release must be
+     * immediate so objects don't slip during the ramp delay. */
+    SMOOTH_SetEnabled(&smooth, 5, false);
+
     /* v2.3.6: apply per-channel smoother values loaded from
      * runtime.json (or the defaults if no JSON was loaded). The
      * 'v'/'a'/'d' keys cycle these at runtime; 'S' saves them back. */
