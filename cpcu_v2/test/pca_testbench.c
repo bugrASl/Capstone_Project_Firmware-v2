@@ -170,6 +170,18 @@ static bool             cal_dirty                   = false;
 static char             status_line[256]            = {0};
 static time_t           status_until                = 0;
 
+/* Snapshot of the last-saved (on-disk) config values. Updated on
+ * startup load, 'S' (save), and 'L' (reload). The detail panel
+ * renders these alongside the in-memory values so the user can see
+ * what's saved vs what's been changed but not yet persisted. */
+static uint16_t         saved_min[PCA_SERVO_COUNT]  = {0};
+static uint16_t         saved_max[PCA_SERVO_COUNT]  = {0};
+static int16_t          saved_bias[PCA_SERVO_COUNT] = {0};
+static uint16_t         saved_vel[PCA_SERVO_COUNT]  = {0};
+static uint16_t         saved_acc[PCA_SERVO_COUNT]  = {0};
+static uint16_t         saved_dead[PCA_SERVO_COUNT] = {0};
+static bool             saved_valid                 = false;
+
 /* Help-overlay toggle. '?' or 'h' flips this; when true, draw_screen
  * renders a full-screen explanation instead of the normal layout. */
 static bool             g_help_visible              = false;
@@ -188,17 +200,22 @@ static uint16_t         smooth_vel[PCA_SERVO_COUNT];      /* us/s */
 static uint16_t         smooth_acc[PCA_SERVO_COUNT];      /* us/s^2 */
 static uint16_t         smooth_dead[PCA_SERVO_COUNT];     /* us */
 
-/* Presets cycled by v/a/d. First entry is the default (the value
- * SMOOTH_Init applies). Cycling wraps. Chosen to span the useful
- * tuning range for typical hobby servos: very slow for delicate
- * manipulation, very fast for "is this the smoother that's slow or
- * the SVM that's slow?" diagnosis. */
-static const uint16_t   VEL_PRESETS[]  = { 2000, 500, 1000, 1500, 3000, 5000 };
-static const uint16_t   ACC_PRESETS[]  = { 8000, 2000, 4000, 6000, 12000, 20000 };
-static const uint16_t   DEAD_PRESETS[] = { 10, 0, 5, 15, 25, 50 };
+/* Presets cycled by v/a/d. Sorted ascending — each press of 'v'
+ * makes the servo faster, each press of 'a' makes ramp-up sharper,
+ * each press of 'd' widens the hold deadband. Wraps around from
+ * the highest back to the lowest. The initial value comes from
+ * runtime.json; find_preset_idx locates the starting position. */
+static const uint16_t   VEL_PRESETS[]  = { 500, 1000, 1500, 2000, 3000, 5000 };
+static const uint16_t   ACC_PRESETS[]  = { 2000, 4000, 6000, 8000, 12000, 20000 };
+static const uint16_t   DEAD_PRESETS[] = { 0, 5, 10, 15, 25, 50 };
 #define VEL_PRESET_COUNT  (int)(sizeof(VEL_PRESETS)  / sizeof(VEL_PRESETS[0]))
 #define ACC_PRESET_COUNT  (int)(sizeof(ACC_PRESETS)  / sizeof(ACC_PRESETS[0]))
 #define DEAD_PRESET_COUNT (int)(sizeof(DEAD_PRESETS) / sizeof(DEAD_PRESETS[0]))
+
+/* Default values when runtime.json has a zero (= "not set"). These
+ * match the compile-time defaults from SMOOTH_Init / CFG_Defaults. */
+#define VEL_DEFAULT       2000
+#define ACC_DEFAULT       8000
 
 /* Find current preset index (or -1 if the value isn't a preset).
  * On cycle, we step from this index to the next, or to index 0 if
@@ -867,6 +884,73 @@ static void draw_screen(void)
     attroff(COLOR_PAIR(CP_CYAN));
     r++;
 
+    /* On-disk (saved) config for the selected servo. Differences from
+     * the in-memory values are highlighted in yellow so the user can
+     * see at a glance what's unsaved. */
+    if(saved_valid)
+    {
+        int s = selected;
+        bool min_diff  = pca.servo_min[s] != saved_min[s];
+        bool max_diff  = pca.servo_max[s] != saved_max[s];
+        bool bias_diff = servo_bias[s]    != saved_bias[s];
+        bool vel_diff  = smooth_vel[s]    != saved_vel[s];
+        bool acc_diff  = smooth_acc[s]    != saved_acc[s];
+        bool dead_diff = smooth_dead[s]   != saved_dead[s];
+
+        mvprintw(r, 3, "On disk: ");
+        attron(COLOR_PAIR(CP_DIM));
+        printw("min=");
+        attroff(COLOR_PAIR(CP_DIM));
+        attron(COLOR_PAIR(min_diff ? CP_WARN : CP_DIM));
+        printw("%u", saved_min[s]);
+        attroff(COLOR_PAIR(min_diff ? CP_WARN : CP_DIM));
+
+        attron(COLOR_PAIR(CP_DIM));
+        printw("  max=");
+        attroff(COLOR_PAIR(CP_DIM));
+        attron(COLOR_PAIR(max_diff ? CP_WARN : CP_DIM));
+        printw("%u", saved_max[s]);
+        attroff(COLOR_PAIR(max_diff ? CP_WARN : CP_DIM));
+
+        attron(COLOR_PAIR(CP_DIM));
+        printw("  bias=");
+        attroff(COLOR_PAIR(CP_DIM));
+        attron(COLOR_PAIR(bias_diff ? CP_WARN : CP_DIM));
+        printw("%+d", (int)saved_bias[s]);
+        attroff(COLOR_PAIR(bias_diff ? CP_WARN : CP_DIM));
+
+        attron(COLOR_PAIR(CP_DIM));
+        printw("  vel=");
+        attroff(COLOR_PAIR(CP_DIM));
+        attron(COLOR_PAIR(vel_diff ? CP_WARN : CP_DIM));
+        printw("%u", saved_vel[s]);
+        attroff(COLOR_PAIR(vel_diff ? CP_WARN : CP_DIM));
+
+        attron(COLOR_PAIR(CP_DIM));
+        printw("  acc=");
+        attroff(COLOR_PAIR(CP_DIM));
+        attron(COLOR_PAIR(acc_diff ? CP_WARN : CP_DIM));
+        printw("%u", saved_acc[s]);
+        attroff(COLOR_PAIR(acc_diff ? CP_WARN : CP_DIM));
+
+        attron(COLOR_PAIR(CP_DIM));
+        printw("  dead=");
+        attroff(COLOR_PAIR(CP_DIM));
+        attron(COLOR_PAIR(dead_diff ? CP_WARN : CP_DIM));
+        printw("%u", saved_dead[s]);
+        attroff(COLOR_PAIR(dead_diff ? CP_WARN : CP_DIM));
+
+        r++;
+    }
+    else
+    {
+        mvprintw(r, 3, "On disk: ");
+        attron(COLOR_PAIR(CP_BAD));
+        printw("no config loaded (use --config)");
+        attroff(COLOR_PAIR(CP_BAD));
+        r++;
+    }
+
     /* Scenario progress line (only when running on this servo) */
     if(sc_active && sc_servo == selected)
     {
@@ -1168,14 +1252,25 @@ int main(int argc, char *argv[])
                      * UI shows a real number rather than 0. */
                     smooth_vel[i]  = cfg.smooth_velocity_us_per_s[i]
                                      ? cfg.smooth_velocity_us_per_s[i]
-                                     : VEL_PRESETS[0];
+                                     : VEL_DEFAULT;
                     smooth_acc[i]  = cfg.smooth_accel_us_per_s2[i]
                                      ? cfg.smooth_accel_us_per_s2[i]
-                                     : ACC_PRESETS[0];
+                                     : ACC_DEFAULT;
                     smooth_dead[i] = cfg.smooth_deadband_us[i];
                 }
                 strncpy(cfg_path_used, paths[p], sizeof(cfg_path_used) - 1);
                 cfg_loaded = true;
+                /* Snapshot the on-disk values for the detail panel. */
+                for(int i = 0; i < PCA_SERVO_COUNT; i++)
+                {
+                    saved_min[i]  = pca.servo_min[i];
+                    saved_max[i]  = pca.servo_max[i];
+                    saved_bias[i] = servo_bias[i];
+                    saved_vel[i]  = smooth_vel[i];
+                    saved_acc[i]  = smooth_acc[i];
+                    saved_dead[i] = smooth_dead[i];
+                }
+                saved_valid = true;
                 fprintf(stderr,
                         "[TESTBENCH] Loaded calibration from %s\n", paths[p]);
                 break;
@@ -1189,8 +1284,8 @@ int main(int argc, char *argv[])
             /* Defaults so the UI shows real numbers either way. */
             for(int i = 0; i < PCA_SERVO_COUNT; i++)
             {
-                smooth_vel[i]  = VEL_PRESETS[0];
-                smooth_acc[i]  = ACC_PRESETS[0];
+                smooth_vel[i]  = VEL_DEFAULT;
+                smooth_acc[i]  = ACC_DEFAULT;
                 smooth_dead[i] = DEAD_PRESETS[0];
             }
         }
@@ -1556,6 +1651,16 @@ int main(int argc, char *argv[])
                     if(sst == CFG_OK)
                     {
                         cal_dirty = false;
+                        for(int i = 0; i < PCA_SERVO_COUNT; i++)
+                        {
+                            saved_min[i]  = pca.servo_min[i];
+                            saved_max[i]  = pca.servo_max[i];
+                            saved_bias[i] = servo_bias[i];
+                            saved_vel[i]  = smooth_vel[i];
+                            saved_acc[i]  = smooth_acc[i];
+                            saved_dead[i] = smooth_dead[i];
+                        }
+                        saved_valid = true;
                         snprintf(status_line, sizeof(status_line),
                                  "SAVED to %s — kill -HUP cpcu_kernel "
                                  "to reload live", cfg_path_used);
@@ -1597,16 +1702,26 @@ int main(int argc, char *argv[])
                              * user can compare against unsaved). */
                             smooth_vel[i]  = cfg.smooth_velocity_us_per_s[i]
                                              ? cfg.smooth_velocity_us_per_s[i]
-                                             : VEL_PRESETS[0];
+                                             : VEL_DEFAULT;
                             smooth_acc[i]  = cfg.smooth_accel_us_per_s2[i]
                                              ? cfg.smooth_accel_us_per_s2[i]
-                                             : ACC_PRESETS[0];
+                                             : ACC_DEFAULT;
                             smooth_dead[i] = cfg.smooth_deadband_us[i];
                             SMOOTH_SetSpeed(&smooth, i, smooth_vel[i]);
                             SMOOTH_SetAccel(&smooth, i, smooth_acc[i]);
                             SMOOTH_SetDeadband(&smooth, i, smooth_dead[i]);
                         }
                         cal_dirty = false;
+                        for(int i = 0; i < PCA_SERVO_COUNT; i++)
+                        {
+                            saved_min[i]  = pca.servo_min[i];
+                            saved_max[i]  = pca.servo_max[i];
+                            saved_bias[i] = servo_bias[i];
+                            saved_vel[i]  = smooth_vel[i];
+                            saved_acc[i]  = smooth_acc[i];
+                            saved_dead[i] = smooth_dead[i];
+                        }
+                        saved_valid = true;
                         snprintf(status_line, sizeof(status_line),
                                  "Reloaded calibration from %s",
                                  cfg_path_used);
