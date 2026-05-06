@@ -53,6 +53,8 @@ void CFG_Defaults(IPC_RuntimeConfig *out)
         out->smooth_velocity_us_per_s[i]  = 2000;       /* SMOOTH_DEFAULT_VELOCITY */
         out->smooth_accel_us_per_s2[i]    = 8000;       /* SMOOTH_DEFAULT_ACCEL */
         out->smooth_deadband_us[i]        = 10;         /* SMOOTH_DEFAULT_DEADBAND */
+        out->gravity_dir[i]              = 0;
+        out->gravity_scale_pct[i]        = 100;
     }
 
     /* Gesture velocities: zero everywhere by default (i.e. rest = freeze).
@@ -388,6 +390,14 @@ CFG_Status CFG_LoadFromFile(const char *path, IPC_RuntimeConfig *out,
     (void)read_u16_array(j, "smooth_deadband_us",
                          out->smooth_deadband_us, IPC_CFG_NUM_SERVOS,
                          0, 50);
+
+    /* v2.2: gravity compensation */
+    (void)read_i16_array(j, "gravity_dir",
+                         out->gravity_dir, IPC_CFG_NUM_SERVOS,
+                         -1, 1);
+    (void)read_i16_array(j, "gravity_scale_pct",
+                         out->gravity_scale_pct, IPC_CFG_NUM_SERVOS,
+                         10, 100);
 
     long tmp;
     if(read_uint(j, "interp_conf_floor_pct", &tmp, 0, 100))

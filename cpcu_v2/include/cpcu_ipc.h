@@ -235,6 +235,12 @@ typedef struct __attribute__((aligned(64)))
     uint16_t            smooth_accel_us_per_s2[IPC_CFG_NUM_SERVOS];
     uint16_t            smooth_deadband_us[IPC_CFG_NUM_SERVOS];
 
+    /* v2.2: per-servo gravity compensation.
+     *   gravity_dir:       -1 = gravity helps negative, +1 = positive, 0 = off.
+     *   gravity_scale_pct: 10-100, velocity multiplier for gravity direction. */
+    int16_t             gravity_dir[IPC_CFG_NUM_SERVOS];
+    int16_t             gravity_scale_pct[IPC_CFG_NUM_SERVOS];
+
     /* Gesture velocities (us/s, signed) — v2.3.5 consumer.
      * Indexed by [class_id][servo_id]. class_id 0 == rest. */
     int16_t             gesture_velocity[IPC_MAX_CLASSES][IPC_CFG_NUM_SERVOS];

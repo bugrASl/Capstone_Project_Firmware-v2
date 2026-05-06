@@ -20,6 +20,11 @@
     "// smooth_deadband_us": "OPTIONAL. Per-servo hold-pose deadband. 0 = disabled. Default 10 us. See JITTER_MITIGATION.md.",
     "smooth_deadband_us": [ 10, 10, 10, 10, 10, 10 ],
 
+    "// gravity_dir": "OPTIONAL. Per-servo gravity direction. -1 = gravity helps negative motion, +1 = positive, 0 = off. Default [0,0,0,0,0,0].",
+    "gravity_dir": [ 0, -1, 1, 0, 0, 0 ],
+    "// gravity_scale_pct": "OPTIONAL. Per-servo gravity velocity reduction (10-100%). When moving in gravity_dir, max_velocity *= scale/100. Default 100 (no reduction).",
+    "gravity_scale_pct": [ 100, 30, 30, 100, 100, 100 ],
+
     "// interp_conf_floor_pct": "OPTIONAL. SVM probability below which 'rest' weight is 1.0. Default 40.",
     "interp_conf_floor_pct": 40,
 

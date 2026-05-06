@@ -1786,6 +1786,12 @@ int main(int argc, char *argv[])
                                      ? cfg.smooth_accel_us_per_s2[i]
                                      : ACC_DEFAULT;
                     smooth_dead[i] = cfg.smooth_deadband_us[i];
+                    /* v2.2: gravity from config (0 = use testbench default) */
+                    if(cfg.gravity_dir[i] != 0)
+                    {
+                        gravity_dir[i]   = (int8_t)cfg.gravity_dir[i];
+                        gravity_scale[i] = (float)cfg.gravity_scale_pct[i] / 100.0f;
+                    }
                 }
                 strncpy(cfg_path_used, paths[p], sizeof(cfg_path_used) - 1);
                 cfg_loaded = true;
@@ -1833,6 +1839,16 @@ int main(int argc, char *argv[])
     /* Gripper (S5) bypasses the smoother — grip/release must be
      * immediate so objects don't slip during the ramp delay. */
     SMOOTH_SetEnabled(&smooth, 5, false);
+
+    /* Default gravity compensation for joints affected by arm weight.
+     * S1 (Upper): gravity pulls DOWN = negative direction (decreasing us).
+     * S2 (Last):  gravity pulls DOWN = positive direction (increasing us).
+     * Scale 0.30 = 30% of normal velocity when moving with gravity.
+     * Tune with G key, then ',' / '.' to adjust scale. */
+    gravity_dir[1]   = -1;    gravity_scale[1] = 0.30f;
+    gravity_dir[2]   =  1;    gravity_scale[2] = 0.30f;
+    SMOOTH_SetGravity(&smooth, 1, gravity_dir[1], gravity_scale[1]);
+    SMOOTH_SetGravity(&smooth, 2, gravity_dir[2], gravity_scale[2]);
 
     /* v2.3.6: apply per-channel smoother values loaded from
      * runtime.json (or the defaults if no JSON was loaded). The
@@ -2273,6 +2289,14 @@ int main(int argc, char *argv[])
                         acc_i16[i]  = (int16_t)smooth_acc[i];
                         dead_i16[i] = (int16_t)smooth_dead[i];
                     }
+                    /* Gravity: convert to int16 for JSON patcher */
+                    int16_t gdir_i16[PCA_SERVO_COUNT];
+                    int16_t gscl_i16[PCA_SERVO_COUNT];
+                    for(int i = 0; i < PCA_SERVO_COUNT; i++)
+                    {
+                        gdir_i16[i] = (int16_t)gravity_dir[i];
+                        gscl_i16[i] = (int16_t)(gravity_scale[i] * 100.0f + 0.5f);
+                    }
                     CFG_PatchEntry patches[] = {
                         { "servo_min_us",             mins_i16,    PCA_SERVO_COUNT },
                         { "servo_max_us",             maxs_i16,    PCA_SERVO_COUNT },
@@ -2280,6 +2304,8 @@ int main(int argc, char *argv[])
                         { "smooth_velocity_us_per_s", vel_i16,     PCA_SERVO_COUNT },
                         { "smooth_accel_us_per_s2",   acc_i16,     PCA_SERVO_COUNT },
                         { "smooth_deadband_us",       dead_i16,    PCA_SERVO_COUNT },
+                        { "gravity_dir",              gdir_i16,    PCA_SERVO_COUNT },
+                        { "gravity_scale_pct",        gscl_i16,    PCA_SERVO_COUNT },
                     };
                     char err[256] = {0};
                     CFG_Status sst = CFG_PatchFile(cfg_path_used, patches,
