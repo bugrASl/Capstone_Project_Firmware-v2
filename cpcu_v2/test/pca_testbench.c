@@ -3,10 +3,19 @@
  *  @brief      Standalone PCA9685 servo testbench with ncurses TUI
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    1.1
+ *  @version    1.2
  *
  *  @details    Interactive servo calibration and testing tool. Talks
  *              directly to the PCA9685 over I2C — no kernel or IPC needed.
+ *
+ *              v1.2 changes:
+ *                  - Scenario engine: F1-F6 run predefined motion profiles
+ *                    (step, sweep, triangle, small_step, burst, slow_creep)
+ *                    on the selected servo. Auto-enables the smoother.
+ *                    Tune velocity/accel/deadband with v/a/d keys, then
+ *                    re-run the same scenario to feel the difference.
+ *                  - Esc aborts a running scenario (returns to neutral).
+ *                  - Live progress bar in the detail panel during scenarios.
  *
  *              v1.1 changes:
  *                  - Full-screen dynamic layout via getmaxyx().
@@ -223,6 +232,197 @@ static SmoothKnob        last_smoother_knob = SMK_NONE;
 #define ACC_HI      50000
 #define DEAD_LO     0
 #define DEAD_HI     50
+
+/*============= SCENARIO ENGINE ============================================================*/
+/*
+ *  Predefined motion profiles that exercise the selected servo through
+ *  the smoother. Triggered by F1-F6, runs on the currently selected
+ *  servo. The smoother is auto-enabled if off. Other servos hold their
+ *  current position during the scenario.
+ *
+ *  Each waypoint is (hold_seconds, target_us). The engine builds an
+ *  absolute timeline on start, then sets the smoother target each tick.
+ *  The existing smoother update in the main loop drives the PCA.
+ */
+
+#define SC_MAX_WAYPOINTS    8
+#define SC_COUNT            6
+
+typedef struct {
+    float       t;              /* absolute time (seconds) */
+    uint16_t    target;         /* target pulse width */
+} SC_Waypoint;
+
+typedef struct {
+    const char *name;
+    const char *key_label;      /* F1, F2, etc. */
+    int         wp_count;       /* filled at start time (servo-dependent) */
+} SC_Def;
+
+static const SC_Def SC_DEFS[SC_COUNT] = {
+    { "step",       "F1" },
+    { "sweep",      "F2" },
+    { "triangle",   "F3" },
+    { "small_step", "F4" },
+    { "burst",      "F5" },
+    { "slow_creep", "F6" },
+};
+
+/* Build waypoints for a scenario + servo. Returns waypoint count. */
+static int sc_build(int sc_idx, int servo_idx,
+                    SC_Waypoint out[SC_MAX_WAYPOINTS])
+{
+    uint16_t mn  = pca.servo_min[servo_idx];
+    uint16_t mx  = pca.servo_max[servo_idx];
+    uint16_t mid = (mn + mx) / 2;
+    uint16_t neu = PCA_SERVO_NEUTRAL;
+    int n = 0;
+
+    switch(sc_idx)
+    {
+        case 0: /* step: neutral -> max -> neutral */
+            out[n++] = (SC_Waypoint){ 0.0f, neu };
+            out[n++] = (SC_Waypoint){ 1.0f, mx  };
+            out[n++] = (SC_Waypoint){ 3.5f, neu };
+            break;
+        case 1: /* sweep: neutral -> min -> max -> neutral */
+            out[n++] = (SC_Waypoint){ 0.0f, neu };
+            out[n++] = (SC_Waypoint){ 1.0f, mn  };
+            out[n++] = (SC_Waypoint){ 3.0f, mx  };
+            out[n++] = (SC_Waypoint){ 5.0f, neu };
+            break;
+        case 2: /* triangle: mid -> max -> min -> max -> mid */
+            out[n++] = (SC_Waypoint){ 0.0f, mid };
+            out[n++] = (SC_Waypoint){ 0.5f, mx  };
+            out[n++] = (SC_Waypoint){ 2.0f, mn  };
+            out[n++] = (SC_Waypoint){ 3.5f, mx  };
+            out[n++] = (SC_Waypoint){ 5.0f, mid };
+            break;
+        case 3: /* small_step: ±50 around neutral */
+        {
+            uint16_t lo = (neu >= mn + 50) ? neu - 50 : mn;
+            uint16_t hi = (neu + 50 <= mx) ? neu + 50 : mx;
+            out[n++] = (SC_Waypoint){ 0.0f, neu };
+            out[n++] = (SC_Waypoint){ 1.0f, hi  };
+            out[n++] = (SC_Waypoint){ 3.0f, lo  };
+            out[n++] = (SC_Waypoint){ 5.0f, neu };
+            break;
+        }
+        case 4: /* burst: rapid min/max */
+            out[n++] = (SC_Waypoint){ 0.0f, neu };
+            out[n++] = (SC_Waypoint){ 0.3f, mx  };
+            out[n++] = (SC_Waypoint){ 1.1f, mn  };
+            out[n++] = (SC_Waypoint){ 1.9f, mx  };
+            out[n++] = (SC_Waypoint){ 2.7f, mn  };
+            out[n++] = (SC_Waypoint){ 3.5f, neu };
+            break;
+        case 5: /* slow_creep: neutral -> neutral+200 */
+        {
+            uint16_t hi = (neu + 200 <= mx) ? neu + 200 : mx;
+            out[n++] = (SC_Waypoint){ 0.0f, neu };
+            out[n++] = (SC_Waypoint){ 1.0f, hi  };
+            out[n++] = (SC_Waypoint){ 5.0f, neu };
+            break;
+        }
+    }
+    return n;
+}
+
+/* Runtime state */
+static bool         sc_active       = false;
+static int          sc_index        = -1;       /* which scenario (0-5) */
+static int          sc_servo        = -1;       /* which servo it's running on */
+static int          sc_wp_count     = 0;
+static SC_Waypoint  sc_wps[SC_MAX_WAYPOINTS];
+static float        sc_total_time   = 0.0f;
+static struct timespec sc_start_ts;
+
+static float sc_elapsed(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (float)(now.tv_sec - sc_start_ts.tv_sec)
+         + (float)(now.tv_nsec - sc_start_ts.tv_nsec) * 1e-9f;
+}
+
+static void sc_start(int scenario, int servo)
+{
+    sc_wp_count = sc_build(scenario, servo, sc_wps);
+    if(sc_wp_count < 2) return;
+
+    sc_active     = true;
+    sc_index      = scenario;
+    sc_servo      = servo;
+    sc_total_time = sc_wps[sc_wp_count - 1].t + 1.5f;  /* +1.5s settle */
+    clock_gettime(CLOCK_MONOTONIC, &sc_start_ts);
+
+    /* Auto-enable smoother — the whole point of scenarios */
+    if(!smooth_enabled)
+    {
+        smooth_enabled = true;
+        for(int i = 0; i < PCA_SERVO_COUNT; i++)
+        {
+            smooth.target[i]    = servo_us[i];
+            smooth.current[i]   = servo_us[i];
+            smooth.current_f[i] = (float)servo_us[i];
+        }
+    }
+
+    snprintf(status_line, sizeof(status_line),
+             "SCENARIO: %s on %s — running...",
+             SC_DEFS[scenario].name, SERVO_NAMES[servo]);
+    status_until = time(NULL) + (long)sc_total_time + 2;
+}
+
+/* Called every main-loop tick while sc_active. Sets the smoother target
+ * based on elapsed time, then the existing smoother update drives PCA. */
+static void sc_tick(void)
+{
+    if(!sc_active) return;
+
+    float elapsed = sc_elapsed();
+    if(elapsed >= sc_total_time)
+    {
+        /* Done — return to neutral */
+        servo_us[sc_servo] = PCA_SERVO_NEUTRAL;
+        clamp_servo(sc_servo);
+        SMOOTH_SetTarget(&smooth, sc_servo, servo_us[sc_servo]);
+
+        snprintf(status_line, sizeof(status_line),
+                 "SCENARIO: %s on %s — done (%.1fs)",
+                 SC_DEFS[sc_index].name, SERVO_NAMES[sc_servo], elapsed);
+        status_until = time(NULL) + 4;
+        sc_active = false;
+        return;
+    }
+
+    /* Find current waypoint */
+    int wp = 0;
+    for(int i = sc_wp_count - 1; i >= 0; i--)
+    {
+        if(elapsed >= sc_wps[i].t) { wp = i; break; }
+    }
+
+    uint16_t target = sc_wps[wp].target;
+    servo_us[sc_servo] = target;
+    SMOOTH_SetTarget(&smooth, sc_servo, target);
+
+    /* Update status with progress bar */
+    float pct = elapsed / sc_total_time * 100.0f;
+    int bar_w = 20;
+    int filled = (int)(pct / 100.0f * bar_w);
+    if(filled > bar_w) filled = bar_w;
+    char bar[32];
+    for(int i = 0; i < bar_w; i++)
+        bar[i] = (i < filled) ? '#' : '.';
+    bar[bar_w] = '\0';
+
+    snprintf(status_line, sizeof(status_line),
+             "RUN %s [%s] %3.0f%%  tgt=%uus  wp=%d/%d",
+             SC_DEFS[sc_index].name, bar, pct,
+             target, wp + 1, sc_wp_count);
+    status_until = time(NULL) + 2;
+}
 
 /*============= HELPERS ====================================================================*/
 
@@ -521,6 +721,22 @@ static void draw_help(void)
     mvprintw(rr++, RIGHT_COL, "  ?  h toggle this help");
     mvprintw(rr++, RIGHT_COL, "  q  Q quit (warns on unsaved)");
     attroff(COLOR_PAIR(CP_DIM));
+    rr++;
+
+    attron(A_BOLD);
+    mvprintw(rr++, RIGHT_COL, "MOTION SCENARIOS (smoother auto-ON)");
+    attroff(A_BOLD);
+    attron(COLOR_PAIR(CP_DIM));
+    mvprintw(rr++, RIGHT_COL, "  F1   step     neu->max->neu");
+    mvprintw(rr++, RIGHT_COL, "  F2   sweep    neu->min->max->neu");
+    mvprintw(rr++, RIGHT_COL, "  F3   triangle mid->max->min->max");
+    mvprintw(rr++, RIGHT_COL, "  F4   small    +/-50us (deadband)");
+    mvprintw(rr++, RIGHT_COL, "  F5   burst    rapid min/max toggle");
+    mvprintw(rr++, RIGHT_COL, "  F6   creep    neu->neu+200 (ramp)");
+    mvprintw(rr++, RIGHT_COL, "  Esc  abort running scenario");
+    mvprintw(rr++, RIGHT_COL, "  Runs on the UP/DOWN-selected servo.");
+    mvprintw(rr++, RIGHT_COL, "  Tune v/a/d then re-run to compare.");
+    attroff(COLOR_PAIR(CP_DIM));
 
     /* ─── Footer ─── */
     if(g_term_h >= 4)
@@ -549,7 +765,7 @@ static void draw_screen(void)
 
     /* HEADER */
     attron(COLOR_PAIR(CP_HEADER) | A_BOLD);
-    mvprintw(r, 0, "%-*s", g_tui_w, "  PCA9685 SERVO TESTBENCH - InfiniTech v1.1");
+    mvprintw(r, 0, "%-*s", g_tui_w, "  PCA9685 SERVO TESTBENCH - InfiniTech v1.2");
     attroff(COLOR_PAIR(CP_HEADER) | A_BOLD);
     r += 2;
 
@@ -644,6 +860,38 @@ static void draw_screen(void)
     attroff(COLOR_PAIR(CP_CYAN));
     r++;
 
+    /* Scenario progress line (only when running on this servo) */
+    if(sc_active && sc_servo == selected)
+    {
+        float elapsed = sc_elapsed();
+        float pct = elapsed / sc_total_time * 100.0f;
+        if(pct > 100.0f) pct = 100.0f;
+        int bar_w = 25;
+        int filled = (int)(pct / 100.0f * bar_w);
+
+        mvprintw(r, 3, "Scenario:");
+        attron(COLOR_PAIR(CP_WARN) | A_BOLD);
+        printw(" %s ", SC_DEFS[sc_index].name);
+        attroff(COLOR_PAIR(CP_WARN) | A_BOLD);
+        attron(COLOR_PAIR(CP_GOOD));
+        printw("[");
+        for(int i = 0; i < bar_w; i++)
+            addch(i < filled ? '#' : '.');
+        printw("] %3.0f%%", pct);
+        attroff(COLOR_PAIR(CP_GOOD));
+
+        /* Show smoother chasing indicator */
+        uint16_t live = smooth.current[selected];
+        uint16_t tgt  = servo_us[selected];
+        if(live != tgt)
+        {
+            attron(COLOR_PAIR(CP_CYAN));
+            printw("  %u->%u", live, tgt);
+            attroff(COLOR_PAIR(CP_CYAN));
+        }
+        r++;
+    }
+
     /* Live register read-back */
     if(show_regs && hw_connected)
     {
@@ -713,8 +961,16 @@ static void draw_screen(void)
              "0",           "all servos OFF (PWM disabled)",
              "s",           smooth_enabled ? "ON " : "OFF");
 
+    /* Row 8 — scenario keys */
+    mvprintw(r + 8, 1, "  %-12s %-32s   %-12s %s",
+             "F1-F6",      "run scenario on selected servo",
+             "Esc",        sc_active ? "ABORT scenario" : "");
+
+    /* Row 9 — scenario names */
+    mvprintw(r + 9, 1, "   F1=step F2=sweep F3=triangle F4=small_step F5=burst F6=slow_creep");
+
     attroff(COLOR_PAIR(CP_DIM));
-    r += 8;
+    r += 10;
 
     /* v2.3.6: status line for save/load/calibration feedback. Shown
      * for ~3-5 seconds (set per action). The dirty marker shows
@@ -1008,6 +1264,12 @@ int main(int argc, char *argv[])
             for(int s = 0; s < PCA_SERVO_COUNT; s++)
                 PCA_SetServo(&pca, (uint8_t)s, smooth.current[s]);
         }
+
+        /* Scenario engine tick — advances waypoints, sets targets.
+         * Must run BEFORE getch() so the scenario progresses even
+         * when no key is pressed. The smoother update above drives
+         * the PCA from the targets we set here. */
+        sc_tick();
 
         int ch = getch();
         switch(ch)
@@ -1379,6 +1641,46 @@ int main(int argc, char *argv[])
 
             case '0':
                 if(hw_connected) PCA_AllOff(&pca);
+                break;
+
+            /* Scenario keys: F1-F6 start predefined motions on selected servo */
+            case KEY_F(1): case KEY_F(2): case KEY_F(3):
+            case KEY_F(4): case KEY_F(5): case KEY_F(6):
+            {
+                int sc_num = ch - KEY_F(1);  /* 0-5 */
+                if(sc_active)
+                {
+                    /* Abort current, start new */
+                    servo_us[sc_servo] = PCA_SERVO_NEUTRAL;
+                    clamp_servo(sc_servo);
+                    SMOOTH_SetTarget(&smooth, sc_servo, servo_us[sc_servo]);
+                    sc_active = false;
+                }
+                if(hw_connected)
+                {
+                    sc_start(sc_num, selected);
+                }
+                else
+                {
+                    snprintf(status_line, sizeof(status_line),
+                             "Cannot run scenario — PCA9685 not connected");
+                    status_until = time(NULL) + 3;
+                }
+                break;
+            }
+
+            case 27: /* Esc — abort running scenario */
+                if(sc_active)
+                {
+                    servo_us[sc_servo] = PCA_SERVO_NEUTRAL;
+                    clamp_servo(sc_servo);
+                    SMOOTH_SetTarget(&smooth, sc_servo, servo_us[sc_servo]);
+                    snprintf(status_line, sizeof(status_line),
+                             "SCENARIO: %s ABORTED — returning to neutral",
+                             SC_DEFS[sc_index].name);
+                    status_until = time(NULL) + 3;
+                    sc_active = false;
+                }
                 break;
 
             case '?':

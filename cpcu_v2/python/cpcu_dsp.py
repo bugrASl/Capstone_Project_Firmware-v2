@@ -265,8 +265,8 @@ GRIP_FIRM_US_DEFAULT    =   1100
 GESTURE_SERVO_MAP       =   {
     "rest":         [1500, 1500, 1500, 1500, 1500, 1500],
     "biceps_flex":  [1500, 1700, 1500, 1500, 1500, 1500],
-    "hand_flex":    [1700, 1500, 1500, 1700, 1700, 1700],
-    "hand_open":    [1300, 1500, 1500, 1300, 1300, 1300],
+    "hand_flex":    [1500, 1500, 1500, 1500, 1500, 1100],
+    "hand_open":    [1500, 1500, 1500, 1500, 1500, 1700],
 }
 
 # v2.3.5: gesture-behaviour map. Keys are class names, values are
@@ -281,8 +281,8 @@ GESTURE_SERVO_MAP       =   {
 # Loaded from runtime.json's "gesture_velocity" object on startup.
 # Format in JSON:
 #   "gesture_velocity": {
-#       "biceps_flex": [0, 200, 0, 0, 0, 0],     // close elbow
-#       "hand_flex":   [200, 0, 0, 200, 200, 200] // close hand
+#       "biceps_flex": [0, 200, 0, 0, 0, 0],       // close elbow
+#       "hand_flex":   [0, 0, 0, 0, 0, -200]        // close gripper
 #   }
 # Negative values reverse direction. Zero rates effectively disable
 # velocity mode for that channel (target += 0 = unchanged).
