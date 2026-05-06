@@ -291,12 +291,12 @@ static int sc_build(int sc_idx, int servo_idx,
             out[n++] = (SC_Waypoint){ 3.0f, mx  };
             out[n++] = (SC_Waypoint){ 5.0f, neu };
             break;
-        case 2: /* triangle: mid -> max -> min -> max -> mid */
-            out[n++] = (SC_Waypoint){ 0.0f, mid };
+        case 2: /* triangle: neu -> max -> min -> max -> neutral */
+            out[n++] = (SC_Waypoint){ 0.0f, neu };
             out[n++] = (SC_Waypoint){ 0.5f, mx  };
             out[n++] = (SC_Waypoint){ 2.0f, mn  };
             out[n++] = (SC_Waypoint){ 3.5f, mx  };
-            out[n++] = (SC_Waypoint){ 5.0f, mid };
+            out[n++] = (SC_Waypoint){ 5.0f, neu };
             break;
         case 3: /* small_step: ±50 around neutral */
         {
@@ -386,10 +386,14 @@ static void sc_tick(void)
     float elapsed = sc_elapsed();
     if(elapsed >= sc_total_time)
     {
-        /* Done — return to neutral */
-        servo_us[sc_servo] = PCA_SERVO_NEUTRAL;
-        clamp_servo(sc_servo);
-        SMOOTH_SetTarget(&smooth, sc_servo, servo_us[sc_servo]);
+        /* Done — return ALL servos to neutral (not just the test servo)
+         * so the arm is in a guaranteed safe pose after every scenario. */
+        for(int s = 0; s < PCA_SERVO_COUNT; s++)
+        {
+            servo_us[s] = PCA_SERVO_NEUTRAL;
+            clamp_servo(s);
+            SMOOTH_SetTarget(&smooth, s, servo_us[s]);
+        }
 
         snprintf(status_line, sizeof(status_line),
                  "SCENARIO: %s on %s — done (%.1fs)",
@@ -1675,11 +1679,14 @@ int main(int argc, char *argv[])
             case 27: /* Esc — abort running scenario */
                 if(sc_active)
                 {
-                    servo_us[sc_servo] = PCA_SERVO_NEUTRAL;
-                    clamp_servo(sc_servo);
-                    SMOOTH_SetTarget(&smooth, sc_servo, servo_us[sc_servo]);
+                    for(int s = 0; s < PCA_SERVO_COUNT; s++)
+                    {
+                        servo_us[s] = PCA_SERVO_NEUTRAL;
+                        clamp_servo(s);
+                        SMOOTH_SetTarget(&smooth, s, servo_us[s]);
+                    }
                     snprintf(status_line, sizeof(status_line),
-                             "SCENARIO: %s ABORTED — returning to neutral",
+                             "SCENARIO: %s ABORTED — all servos to neutral",
                              SC_DEFS[sc_index].name);
                     status_until = time(NULL) + 3;
                     sc_active = false;
