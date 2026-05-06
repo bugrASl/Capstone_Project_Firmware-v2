@@ -9,7 +9,7 @@
  *              directly to the PCA9685 over I2C — no kernel or IPC needed.
  *
  *              v1.2 changes:
- *                  - Scenario engine: F1-F5 run predefined motion profiles
+ *                  - Scenario engine: F1-F6 run predefined motion profiles
  *                    (step, sweep, triangle)
  *                    on the selected servo. Auto-enables the smoother.
  *                    Tune velocity/accel/deadband with v/a/d keys, then
@@ -314,7 +314,7 @@ static SmoothKnob        last_smoother_knob = SMK_NONE;
 /*============= SCENARIO ENGINE ============================================================*/
 /*
  *  Predefined motion profiles that exercise the selected servo through
- *  the smoother. Triggered by F1-F3 (single servo), F4-F5 (full arm), runs on the currently selected
+ *  the smoother. Triggered by F1-F3 (single servo), F4-F6 (full arm), runs on the currently selected
  *  servo. The smoother is auto-enabled if off. Other servos hold their
  *  current position during the scenario.
  *
@@ -354,8 +354,8 @@ static const SC_Def SC_DEFS[SC_COUNT] = {
  *      S3 = Joint-1            S4 = Joint-2           S5 = Gripper
  */
 
-#define ARM_MAX_WAYPOINTS   12
-#define ARM_SC_COUNT        2
+#define ARM_MAX_WAYPOINTS   14
+#define ARM_SC_COUNT        3
 
 typedef struct {
     float       t;
@@ -370,6 +370,7 @@ typedef struct {
 static const ARM_Def ARM_DEFS[ARM_SC_COUNT] = {
     { "reach_grab",  "F4" },
     { "pick_place",  "F5" },
+    { "wave",        "F6" },
 };
 
 /* Build arm waypoints. Uses NEU (neutral) as safe home and stays within
@@ -425,6 +426,29 @@ static int arm_build(int sc_idx, ARM_Waypoint out[ARM_MAX_WAYPOINTS])
             out[n++] = (ARM_Waypoint){ 12.5f, {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
             break;
 
+        case 2: /* wave: raise arm → wave base back and forth → home */
+            /*                           S0    S1    S2    S3    S4    S5    */
+            out[n++] = (ARM_Waypoint){ 0.0f,  {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
+            /* Raise arm: elbow up, wrist angled, gripper open (greeting) */
+            out[n++] = (ARM_Waypoint){ 1.5f,  {NEU,  1250, 1700, 1300, 1300, GRIP_OPEN }};
+            /* Wave left */
+            out[n++] = (ARM_Waypoint){ 2.5f,  {1250, 1250, 1700, 1300, 1300, GRIP_OPEN }};
+            /* Wave right */
+            out[n++] = (ARM_Waypoint){ 3.5f,  {1750, 1250, 1700, 1300, 1300, GRIP_OPEN }};
+            /* Wave left again */
+            out[n++] = (ARM_Waypoint){ 4.5f,  {1250, 1250, 1700, 1300, 1300, GRIP_OPEN }};
+            /* Wave right again */
+            out[n++] = (ARM_Waypoint){ 5.5f,  {1750, 1250, 1700, 1300, 1300, GRIP_OPEN }};
+            /* Center */
+            out[n++] = (ARM_Waypoint){ 6.5f,  {NEU,  1250, 1700, 1300, 1300, GRIP_OPEN }};
+            /* Close gripper (thumbs up) */
+            out[n++] = (ARM_Waypoint){ 7.5f,  {NEU,  1250, 1700, 1300, 1300, GRIP_CLOSE}};
+            /* Hold pose */
+            out[n++] = (ARM_Waypoint){ 8.5f,  {NEU,  1250, 1700, 1300, 1300, GRIP_CLOSE}};
+            /* Lower and home */
+            out[n++] = (ARM_Waypoint){ 10.0f, {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
+            break;
+
         default:
             break;
     }
@@ -477,7 +501,7 @@ static SC_Waypoint  sc_wps[SC_MAX_WAYPOINTS];
 static float        sc_total_time   = 0.0f;
 static struct timespec sc_start_ts;
 
-/* Runtime state — arm-wide scenarios (F4-F5) */
+/* Runtime state — arm-wide scenarios (F4-F6) */
 static bool         arm_active      = false;
 static int          arm_index       = -1;
 static int          arm_wp_count    = 0;
@@ -1068,6 +1092,7 @@ static void draw_help(void)
     mvprintw(rr++, RIGHT_COL, "  F3   triangle neu->max->min->max->neu");
     mvprintw(rr++, RIGHT_COL, "  F4   reach    extend->grab->retract");
     mvprintw(rr++, RIGHT_COL, "  F5   pick     rotate->grab->place");
+    mvprintw(rr++, RIGHT_COL, "  F6   wave     raise->wave->thumbsup");
     mvprintw(rr++, RIGHT_COL, "  Esc  abort running scenario");
     mvprintw(rr++, RIGHT_COL, "  Runs on the UP/DOWN-selected servo.");
     mvprintw(rr++, RIGHT_COL, "  Tune v/a/d then re-run to compare.");
@@ -1426,7 +1451,7 @@ static void draw_screen(void)
     /* Row 8 — scenario keys */
     mvprintw(r + 8, 1, "  %-12s %-32s   %-12s %s",
              "F1-F3",      "scenario on selected servo",
-             "F4-F5",      "full arm motion sequence");
+             "F4-F6",      "full arm motion sequence");
 
     /* Row 9 — gesture sim + scenario names */
     mvprintw(r + 9, 1, "  %-12s %-32s   %-12s %s",
@@ -1434,7 +1459,7 @@ static void draw_screen(void)
              "Esc",        (sc_active || arm_active) ? "ABORT scenario"
                            : gsim_active ? "exit gesture sim" : "");
 
-    mvprintw(r + 10, 1, "   F1=step  F2=sweep  F3=triangle  F4=reach_grab  F5=pick_place");
+    mvprintw(r + 10, 1, "   F1=step  F2=sweep  F3=triangle  F4=reach  F5=pick  F6=wave");
 
     attroff(COLOR_PAIR(CP_DIM));
     r += 11;
@@ -2221,9 +2246,9 @@ int main(int argc, char *argv[])
             }
 
             /* Arm-wide scenario keys: F4/F5 run full-arm motion sequences */
-            case KEY_F(4): case KEY_F(5):
+            case KEY_F(4): case KEY_F(5): case KEY_F(6):
             {
-                int arm_num = ch - KEY_F(4);  /* 0-1 */
+                int arm_num = ch - KEY_F(4);  /* 0-2 */
                 /* Abort any running scenario */
                 sc_active  = false;
                 arm_active = false;
