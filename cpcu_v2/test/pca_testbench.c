@@ -253,12 +253,12 @@ static const GestureDef GESTURES[GESTURE_COUNT] = {
     { "elbow DOWN",    '2',      {  0, -200,    0,    0,    0,    0  }},
     { "grip CLOSE",    '3',      {  0,    0,    0,    0,    0, -200  }},
     { "grip OPEN",     '4',      {  0,    0,    0,    0,    0,  200  }},
-    { "wrist UP",      '5',      {  0,    0,  200,    0,    0,    0  }},
-    { "wrist DOWN",    '6',      {  0,    0, -200,    0,    0,    0  }},
+    { "wrist UP",      '5',      {  0,    0, -200,    0,    0,    0  }},
+    { "wrist DOWN",    '6',      {  0,    0,  200,    0,    0,    0  }},
     { "base LEFT",     '7',      {-200,   0,    0,    0,    0,    0  }},
     { "base RIGHT",    '8',      {200,    0,    0,    0,    0,    0  }},
     /* Combinations */
-    { "REACH DOWN",    '9',      {  0, -200, -200,    0,    0,  200  }},
+    { "REACH DOWN",    '9',      {  0, -200,  200,    0,    0,  200  }},
     { "GRAB",          'w',      {  0, -200,    0,    0,    0, -200  }},
     { "LIFT",          'e',      {  0,  200,    0,    0,    0, -200  }},
     { "PLACE",         'r',      {  0, -200,    0,    0,    0,  200  }},
@@ -426,11 +426,11 @@ static int arm_build(int sc_idx, ARM_Waypoint out[ARM_MAX_WAYPOINTS])
             /*                          S0    S1    S2    S3    S4    S5    */
             out[n++] = (ARM_Waypoint){ 0.0f, {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
             /* Lower arm: elbow down, wrist forward */
-            out[n++] = (ARM_Waypoint){ 1.5f, {NEU,  1250, 1300, NEU,  NEU,  GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 1.5f, {NEU,  1250, 1700, NEU,  NEU,  GRIP_OPEN }};
             /* Open gripper (already open but hold the pose) */
-            out[n++] = (ARM_Waypoint){ 2.5f, {NEU,  1250, 1300, NEU,  NEU,  GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 2.5f, {NEU,  1250, 1700, NEU,  NEU,  GRIP_OPEN }};
             /* Close gripper — grab */
-            out[n++] = (ARM_Waypoint){ 3.5f, {NEU,  1250, 1300, NEU,  NEU,  GRIP_CLOSE}};
+            out[n++] = (ARM_Waypoint){ 3.5f, {NEU,  1250, 1700, NEU,  NEU,  GRIP_CLOSE}};
             /* Lift with object */
             out[n++] = (ARM_Waypoint){ 5.0f, {NEU,  NEU,  NEU,  NEU,  NEU,  GRIP_CLOSE}};
             /* Release */
@@ -445,17 +445,17 @@ static int arm_build(int sc_idx, ARM_Waypoint out[ARM_MAX_WAYPOINTS])
             /* Rotate base to pickup side, open gripper */
             out[n++] = (ARM_Waypoint){ 1.5f,  {1200, NEU,  NEU,  NEU,  NEU,  GRIP_OPEN }};
             /* Lower arm to object */
-            out[n++] = (ARM_Waypoint){ 3.0f,  {1200, 1250, 1300, NEU,  NEU,  GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 3.0f,  {1200, 1250, 1700, NEU,  NEU,  GRIP_OPEN }};
             /* Grab */
-            out[n++] = (ARM_Waypoint){ 4.0f,  {1200, 1250, 1300, NEU,  NEU,  GRIP_CLOSE}};
+            out[n++] = (ARM_Waypoint){ 4.0f,  {1200, 1250, 1700, NEU,  NEU,  GRIP_CLOSE}};
             /* Lift */
             out[n++] = (ARM_Waypoint){ 5.5f,  {1200, NEU,  NEU,  NEU,  NEU,  GRIP_CLOSE}};
             /* Rotate base to place side */
             out[n++] = (ARM_Waypoint){ 7.0f,  {1800, NEU,  NEU,  NEU,  NEU,  GRIP_CLOSE}};
             /* Lower to place position */
-            out[n++] = (ARM_Waypoint){ 8.5f,  {1800, 1250, 1300, NEU,  NEU,  GRIP_CLOSE}};
+            out[n++] = (ARM_Waypoint){ 8.5f,  {1800, 1250, 1700, NEU,  NEU,  GRIP_CLOSE}};
             /* Release */
-            out[n++] = (ARM_Waypoint){ 9.5f,  {1800, 1250, 1300, NEU,  NEU,  GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 9.5f,  {1800, 1250, 1700, NEU,  NEU,  GRIP_OPEN }};
             /* Retract */
             out[n++] = (ARM_Waypoint){ 11.0f, {1800, NEU,  NEU,  NEU,  NEU,  GRIP_OPEN }};
             /* Home */
@@ -466,21 +466,21 @@ static int arm_build(int sc_idx, ARM_Waypoint out[ARM_MAX_WAYPOINTS])
             /*                           S0    S1    S2    S3    S4    S5    */
             out[n++] = (ARM_Waypoint){ 0.0f,  {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
             /* Raise arm: elbow up, wrist angled, gripper open (greeting) */
-            out[n++] = (ARM_Waypoint){ 1.5f,  {NEU,  1750, 1700, 1300, 1300, GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 1.5f,  {NEU,  1750, 1300, 1300, 1300, GRIP_OPEN }};
             /* Wave left */
-            out[n++] = (ARM_Waypoint){ 2.5f,  {1250, 1750, 1700, 1300, 1300, GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 2.5f,  {1250, 1750, 1300, 1300, 1300, GRIP_OPEN }};
             /* Wave right */
-            out[n++] = (ARM_Waypoint){ 3.5f,  {1750, 1750, 1700, 1300, 1300, GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 3.5f,  {1750, 1750, 1300, 1300, 1300, GRIP_OPEN }};
             /* Wave left again */
-            out[n++] = (ARM_Waypoint){ 4.5f,  {1250, 1750, 1700, 1300, 1300, GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 4.5f,  {1250, 1750, 1300, 1300, 1300, GRIP_OPEN }};
             /* Wave right again */
-            out[n++] = (ARM_Waypoint){ 5.5f,  {1750, 1750, 1700, 1300, 1300, GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 5.5f,  {1750, 1750, 1300, 1300, 1300, GRIP_OPEN }};
             /* Center */
-            out[n++] = (ARM_Waypoint){ 6.5f,  {NEU,  1750, 1700, 1300, 1300, GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 6.5f,  {NEU,  1750, 1300, 1300, 1300, GRIP_OPEN }};
             /* Close gripper (thumbs up) */
-            out[n++] = (ARM_Waypoint){ 7.5f,  {NEU,  1750, 1700, 1300, 1300, GRIP_CLOSE}};
+            out[n++] = (ARM_Waypoint){ 7.5f,  {NEU,  1750, 1300, 1300, 1300, GRIP_CLOSE}};
             /* Hold pose */
-            out[n++] = (ARM_Waypoint){ 8.5f,  {NEU,  1750, 1700, 1300, 1300, GRIP_CLOSE}};
+            out[n++] = (ARM_Waypoint){ 8.5f,  {NEU,  1750, 1300, 1300, 1300, GRIP_CLOSE}};
             /* Lower and home */
             out[n++] = (ARM_Waypoint){ 10.0f, {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
             break;
@@ -489,15 +489,15 @@ static int arm_build(int sc_idx, ARM_Waypoint out[ARM_MAX_WAYPOINTS])
             /*                           S0    S1    S2    S3    S4    S5    */
             out[n++] = (ARM_Waypoint){ 0.0f,  {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
             /* Extend arm forward, open hand */
-            out[n++] = (ARM_Waypoint){ 1.5f,  {NEU,  1250, 1300, NEU,  NEU,  GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 1.5f,  {NEU,  1250, 1700, NEU,  NEU,  GRIP_OPEN }};
             /* Grip (shake 1) */
-            out[n++] = (ARM_Waypoint){ 2.5f,  {NEU,  1250, 1300, NEU,  NEU,  GRIP_CLOSE}};
+            out[n++] = (ARM_Waypoint){ 2.5f,  {NEU,  1250, 1700, NEU,  NEU,  GRIP_CLOSE}};
             /* Release (shake 2) */
-            out[n++] = (ARM_Waypoint){ 3.5f,  {NEU,  1250, 1300, NEU,  NEU,  GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 3.5f,  {NEU,  1250, 1700, NEU,  NEU,  GRIP_OPEN }};
             /* Grip (shake 3) */
-            out[n++] = (ARM_Waypoint){ 4.5f,  {NEU,  1250, 1300, NEU,  NEU,  GRIP_CLOSE}};
+            out[n++] = (ARM_Waypoint){ 4.5f,  {NEU,  1250, 1700, NEU,  NEU,  GRIP_CLOSE}};
             /* Release */
-            out[n++] = (ARM_Waypoint){ 5.5f,  {NEU,  1250, 1300, NEU,  NEU,  GRIP_OPEN }};
+            out[n++] = (ARM_Waypoint){ 5.5f,  {NEU,  1250, 1700, NEU,  NEU,  GRIP_OPEN }};
             /* Retract */
             out[n++] = (ARM_Waypoint){ 7.0f,  {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
             break;
@@ -510,9 +510,9 @@ static int arm_build(int sc_idx, ARM_Waypoint out[ARM_MAX_WAYPOINTS])
             /* Lift */
             out[n++] = (ARM_Waypoint){ 3.0f,  {NEU,  1750, NEU,  NEU,  NEU,  GRIP_CLOSE}};
             /* Tilt wrist to pour */
-            out[n++] = (ARM_Waypoint){ 4.5f,  {NEU,  1750, 1200, NEU,  NEU,  GRIP_CLOSE}};
+            out[n++] = (ARM_Waypoint){ 4.5f,  {NEU,  1750, 1800, NEU,  NEU,  GRIP_CLOSE}};
             /* Hold pour */
-            out[n++] = (ARM_Waypoint){ 6.0f,  {NEU,  1750, 1200, NEU,  NEU,  GRIP_CLOSE}};
+            out[n++] = (ARM_Waypoint){ 6.0f,  {NEU,  1750, 1800, NEU,  NEU,  GRIP_CLOSE}};
             /* Upright */
             out[n++] = (ARM_Waypoint){ 7.5f,  {NEU,  1750, NEU,  NEU,  NEU,  GRIP_CLOSE}};
             /* Lower and release */
