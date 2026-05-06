@@ -3,7 +3,16 @@
  *  @brief      Per-servo trapezoidal motion profile smoother.
  *  @author     bugrASl
  *  @date       April 2026
- *  @version    2.1
+ *  @version    2.2
+ *
+ *  v2.2 (2026-05, CPCU v2.3.8):
+ *      - Fixed end-of-travel spike. The position integrator was using
+ *        plain Euler (pos += new_vel * dt), which under-counts distance
+ *        during decel, causing the decel_dist check to oscillate between
+ *        decel and accel phases near the target — then overshoot and snap.
+ *        Switched to trapezoidal integration (average of old and new
+ *        velocity), which makes the discrete decel distance match the
+ *        continuous v²/(2a) formula exactly. No more spike.
  *
  *  v2.1 (2026-04, CPCU v2.3.2):
  *      - Hold-pose deadband. SMOOTH_ShouldWrite() and SMOOTH_MarkWritten()
@@ -144,7 +153,10 @@ void SMOOTH_Update(SMOOTH_Context *ctx, uint32_t dt_us)
             continue;
         }
 
-        /* Distance needed to stop from current velocity */
+        /* Distance needed to stop from current velocity.
+         * This must match the actual discrete decel distance, which
+         * depends on using trapezoidal integration below. With the
+         * midpoint rule, discrete decel distance = v²/(2a) exactly. */
         float decel_dist = (vel_abs * vel_abs) / (2.0f * a);
 
         /* Phase decision */
@@ -181,8 +193,14 @@ void SMOOTH_Update(SMOOTH_Context *ctx, uint32_t dt_us)
             dir = (vel > 0.0f) ? 1.0f : -1.0f;   /* keep current direction while braking */
         }
 
+        /* Trapezoidal integration: use average of old and new velocity
+         * for the position step. Plain Euler (pos += new_vel * dt)
+         * over-steps during decel because it applies the reduced
+         * velocity for the full tick, causing overshoot → snap. The
+         * midpoint rule matches the continuous trapezoidal profile. */
+        float avg_vel = (vel_abs + new_vel_abs) * 0.5f;
         float new_vel = new_vel_abs * dir;
-        float new_pos = pos + new_vel * dt_s;
+        float new_pos = pos + avg_vel * dir * dt_s;
 
         /* Overshoot guard */
         if((dist > 0.0f && new_pos > tgt) || (dist < 0.0f && new_pos < tgt))
