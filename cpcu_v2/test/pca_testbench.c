@@ -9,8 +9,8 @@
  *              directly to the PCA9685 over I2C — no kernel or IPC needed.
  *
  *              v1.2 changes:
- *                  - Scenario engine: F1-F6 run predefined motion profiles
- *                    (step, sweep, triangle, small_step, burst, slow_creep)
+ *                  - Scenario engine: F1-F5 run predefined motion profiles
+ *                    (step, sweep, triangle)
  *                    on the selected servo. Auto-enables the smoother.
  *                    Tune velocity/accel/deadband with v/a/d keys, then
  *                    re-run the same scenario to feel the difference.
@@ -205,8 +205,8 @@ static uint16_t         smooth_dead[PCA_SERVO_COUNT];     /* us */
  * each press of 'd' widens the hold deadband. Wraps around from
  * the highest back to the lowest. The initial value comes from
  * runtime.json; find_preset_idx locates the starting position. */
-static const uint16_t   VEL_PRESETS[]  = { 500, 1000, 1500, 2000, 3000, 5000 };
-static const uint16_t   ACC_PRESETS[]  = { 2000, 4000, 6000, 8000, 12000, 20000 };
+static const uint16_t   VEL_PRESETS[]  = { 250, 500, 1000, 1500, 2000, 3000, 5000 };
+static const uint16_t   ACC_PRESETS[]  = { 250, 500, 1000, 2000, 4000, 8000, 20000 };
 static const uint16_t   DEAD_PRESETS[] = { 0, 5, 10, 15, 25, 50 };
 #define VEL_PRESET_COUNT  (int)(sizeof(VEL_PRESETS)  / sizeof(VEL_PRESETS[0]))
 #define ACC_PRESET_COUNT  (int)(sizeof(ACC_PRESETS)  / sizeof(ACC_PRESETS[0]))
@@ -225,6 +225,30 @@ static int find_preset_idx(uint16_t value, const uint16_t *list, int n)
 {
     for(int i = 0; i < n; i++) if(list[i] == value) return i;
     return -1;
+}
+
+/* Enforce a sane vel/acc ratio so the user can't create a profile where
+ * the ramp phase is invisibly short (high acc, low vel) or absurdly long
+ * (low acc, high vel). Constraint: acc ∈ [vel/2, vel*4].
+ *
+ *   vel/acc  ramp_time  profile shape
+ *   ──────  ─────────  ─────────────
+ *    0.25     0.25 s   barely any ramp (limit)
+ *    0.50     0.50 s   short ramp
+ *    1.00     1.00 s   balanced
+ *    2.00     2.00 s   mostly ramp, little cruise (limit)
+ *
+ * Returns true if acc was clamped (caller can warn the user). */
+static bool clamp_acc_to_vel(uint16_t vel, uint16_t *acc)
+{
+    uint16_t lo = (vel >= 2) ? vel / 2 : 1;
+    uint16_t hi = (vel <= 5000) ? vel * 4 : 20000;
+    if(hi > 20000) hi = 20000;
+    if(lo < 100) lo = 100;
+    bool clamped = false;
+    if(*acc < lo) { *acc = lo; clamped = true; }
+    if(*acc > hi) { *acc = hi; clamped = true; }
+    return clamped;
 }
 
 /* Fine-step adjustment: ',' and '.' nudge the most-recently-touched
@@ -253,7 +277,7 @@ static SmoothKnob        last_smoother_knob = SMK_NONE;
 /*============= SCENARIO ENGINE ============================================================*/
 /*
  *  Predefined motion profiles that exercise the selected servo through
- *  the smoother. Triggered by F1-F6, runs on the currently selected
+ *  the smoother. Triggered by F1-F3 (single servo), F4-F5 (full arm), runs on the currently selected
  *  servo. The smoother is auto-enabled if off. Other servos hold their
  *  current position during the scenario.
  *
@@ -263,7 +287,7 @@ static SmoothKnob        last_smoother_knob = SMK_NONE;
  */
 
 #define SC_MAX_WAYPOINTS    8
-#define SC_COUNT            6
+#define SC_COUNT            3
 
 typedef struct {
     float       t;              /* absolute time (seconds) */
@@ -280,10 +304,95 @@ static const SC_Def SC_DEFS[SC_COUNT] = {
     { "step",       "F1" },
     { "sweep",      "F2" },
     { "triangle",   "F3" },
-    { "small_step", "F4" },
-    { "burst",      "F5" },
-    { "slow_creep", "F6" },
 };
+
+/*============= ARM-WIDE SCENARIOS =========================================================*/
+/*
+ *  F4/F5 run predefined multi-servo motion sequences that exercise the
+ *  entire arm. Each waypoint specifies all 6 servo targets at once.
+ *  The smoother ramps all channels simultaneously.
+ *
+ *  Joint mapping:
+ *      S0 = Base (rotation)    S1 = Upper (elbow)     S2 = Last (wrist)
+ *      S3 = Joint-1            S4 = Joint-2           S5 = Gripper
+ */
+
+#define ARM_MAX_WAYPOINTS   12
+#define ARM_SC_COUNT        2
+
+typedef struct {
+    float       t;
+    uint16_t    targets[PCA_SERVO_COUNT];
+} ARM_Waypoint;
+
+typedef struct {
+    const char *name;
+    const char *key_label;
+} ARM_Def;
+
+static const ARM_Def ARM_DEFS[ARM_SC_COUNT] = {
+    { "reach_grab",  "F4" },
+    { "pick_place",  "F5" },
+};
+
+/* Build arm waypoints. Uses NEU (neutral) as safe home and stays within
+ * a conservative ±300 us envelope to avoid hitting limits on uncalibrated
+ * setups. Gripper uses grip_open/firm from runtime.json defaults. */
+static int arm_build(int sc_idx, ARM_Waypoint out[ARM_MAX_WAYPOINTS])
+{
+    const uint16_t NEU = PCA_SERVO_NEUTRAL;  /* 1500 */
+    /* Conservative joint offsets — stay well inside typical min/max */
+    const uint16_t GRIP_OPEN = 1700;
+    const uint16_t GRIP_CLOSE = 1100;
+    int n = 0;
+
+    switch(sc_idx)
+    {
+        case 0: /* reach_grab: extend → open → close → retract */
+            /*                          S0    S1    S2    S3    S4    S5    */
+            out[n++] = (ARM_Waypoint){ 0.0f, {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
+            /* Extend: elbow forward, wrist down */
+            out[n++] = (ARM_Waypoint){ 1.5f, {NEU,  1750, 1300, NEU,  NEU,  GRIP_OPEN }};
+            /* Open gripper (already open but hold the pose) */
+            out[n++] = (ARM_Waypoint){ 2.5f, {NEU,  1750, 1300, NEU,  NEU,  GRIP_OPEN }};
+            /* Close gripper — grab */
+            out[n++] = (ARM_Waypoint){ 3.5f, {NEU,  1750, 1300, NEU,  NEU,  GRIP_CLOSE}};
+            /* Retract: lift with object */
+            out[n++] = (ARM_Waypoint){ 5.0f, {NEU,  NEU,  NEU,  NEU,  NEU,  GRIP_CLOSE}};
+            /* Release */
+            out[n++] = (ARM_Waypoint){ 6.5f, {NEU,  NEU,  NEU,  NEU,  NEU,  GRIP_OPEN }};
+            /* Home */
+            out[n++] = (ARM_Waypoint){ 8.0f, {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
+            break;
+
+        case 1: /* pick_place: rotate → lower → grab → lift → rotate → drop → home */
+            /*                          S0    S1    S2    S3    S4    S5    */
+            out[n++] = (ARM_Waypoint){ 0.0f,  {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
+            /* Rotate base to pickup side, open gripper */
+            out[n++] = (ARM_Waypoint){ 1.5f,  {1200, NEU,  NEU,  NEU,  NEU,  GRIP_OPEN }};
+            /* Lower arm to object */
+            out[n++] = (ARM_Waypoint){ 3.0f,  {1200, 1750, 1300, NEU,  NEU,  GRIP_OPEN }};
+            /* Grab */
+            out[n++] = (ARM_Waypoint){ 4.0f,  {1200, 1750, 1300, NEU,  NEU,  GRIP_CLOSE}};
+            /* Lift */
+            out[n++] = (ARM_Waypoint){ 5.5f,  {1200, NEU,  NEU,  NEU,  NEU,  GRIP_CLOSE}};
+            /* Rotate base to place side */
+            out[n++] = (ARM_Waypoint){ 7.0f,  {1800, NEU,  NEU,  NEU,  NEU,  GRIP_CLOSE}};
+            /* Lower to place position */
+            out[n++] = (ARM_Waypoint){ 8.5f,  {1800, 1750, 1300, NEU,  NEU,  GRIP_CLOSE}};
+            /* Release */
+            out[n++] = (ARM_Waypoint){ 9.5f,  {1800, 1750, 1300, NEU,  NEU,  GRIP_OPEN }};
+            /* Retract */
+            out[n++] = (ARM_Waypoint){ 11.0f, {1800, NEU,  NEU,  NEU,  NEU,  GRIP_OPEN }};
+            /* Home */
+            out[n++] = (ARM_Waypoint){ 12.5f, {NEU,  NEU,  NEU,  NEU,  NEU,  NEU       }};
+            break;
+
+        default:
+            break;
+    }
+    return n;
+}
 
 /* Build waypoints for a scenario + servo. Returns waypoint count. */
 static int sc_build(int sc_idx, int servo_idx,
@@ -315,44 +424,28 @@ static int sc_build(int sc_idx, int servo_idx,
             out[n++] = (SC_Waypoint){ 3.5f, mx  };
             out[n++] = (SC_Waypoint){ 5.0f, neu };
             break;
-        case 3: /* small_step: ±50 around neutral */
-        {
-            uint16_t lo = (neu >= mn + 50) ? neu - 50 : mn;
-            uint16_t hi = (neu + 50 <= mx) ? neu + 50 : mx;
-            out[n++] = (SC_Waypoint){ 0.0f, neu };
-            out[n++] = (SC_Waypoint){ 1.0f, hi  };
-            out[n++] = (SC_Waypoint){ 3.0f, lo  };
-            out[n++] = (SC_Waypoint){ 5.0f, neu };
-            break;
-        }
-        case 4: /* burst: rapid min/max */
-            out[n++] = (SC_Waypoint){ 0.0f, neu };
-            out[n++] = (SC_Waypoint){ 0.3f, mx  };
-            out[n++] = (SC_Waypoint){ 1.1f, mn  };
-            out[n++] = (SC_Waypoint){ 1.9f, mx  };
-            out[n++] = (SC_Waypoint){ 2.7f, mn  };
-            out[n++] = (SC_Waypoint){ 3.5f, neu };
-            break;
-        case 5: /* slow_creep: neutral -> neutral+200 */
-        {
-            uint16_t hi = (neu + 200 <= mx) ? neu + 200 : mx;
-            out[n++] = (SC_Waypoint){ 0.0f, neu };
-            out[n++] = (SC_Waypoint){ 1.0f, hi  };
-            out[n++] = (SC_Waypoint){ 5.0f, neu };
+        default:
             break;
         }
     }
     return n;
 }
 
-/* Runtime state */
+/* Runtime state — single-servo scenarios (F1-F3) */
 static bool         sc_active       = false;
-static int          sc_index        = -1;       /* which scenario (0-5) */
+static int          sc_index        = -1;       /* which scenario (0-2) */
 static int          sc_servo        = -1;       /* which servo it's running on */
 static int          sc_wp_count     = 0;
 static SC_Waypoint  sc_wps[SC_MAX_WAYPOINTS];
 static float        sc_total_time   = 0.0f;
 static struct timespec sc_start_ts;
+
+/* Runtime state — arm-wide scenarios (F4-F5) */
+static bool         arm_active      = false;
+static int          arm_index       = -1;
+static int          arm_wp_count    = 0;
+static ARM_Waypoint arm_wps[ARM_MAX_WAYPOINTS];
+static float        arm_total_time  = 0.0f;
 
 /* Forward declaration — defined after sc_tick, called from within it. */
 static void clamp_servo(int idx);
@@ -445,6 +538,93 @@ static void sc_tick(void)
              "RUN %s [%s] %3.0f%%  tgt=%uus  wp=%d/%d",
              SC_DEFS[sc_index].name, bar, pct,
              target, wp + 1, sc_wp_count);
+    status_until = time(NULL) + 2;
+}
+
+/*============= ARM-WIDE SCENARIO ENGINE ===================================================*/
+
+static void arm_start(int scenario)
+{
+    arm_wp_count = arm_build(scenario, arm_wps);
+    if(arm_wp_count < 2) return;
+
+    /* Abort any running single-servo scenario */
+    sc_active = false;
+
+    arm_active     = true;
+    arm_index      = scenario;
+    arm_total_time = arm_wps[arm_wp_count - 1].t + 2.0f;  /* +2s settle */
+    clock_gettime(CLOCK_MONOTONIC, &sc_start_ts);   /* reuse same clock */
+
+    /* Auto-enable smoother */
+    if(!smooth_enabled)
+    {
+        smooth_enabled = true;
+        for(int i = 0; i < PCA_SERVO_COUNT; i++)
+        {
+            smooth.target[i]    = servo_us[i];
+            smooth.current[i]   = servo_us[i];
+            smooth.current_f[i] = (float)servo_us[i];
+        }
+    }
+
+    snprintf(status_line, sizeof(status_line),
+             "ARM SCENARIO: %s — running (all servos)...",
+             ARM_DEFS[scenario].name);
+    status_until = time(NULL) + (long)arm_total_time + 2;
+}
+
+static void arm_tick(void)
+{
+    if(!arm_active) return;
+
+    float elapsed = sc_elapsed();  /* reuses same start timestamp */
+    if(elapsed >= arm_total_time)
+    {
+        /* Done — park all at neutral */
+        for(int s = 0; s < PCA_SERVO_COUNT; s++)
+        {
+            servo_us[s] = PCA_SERVO_NEUTRAL;
+            clamp_servo(s);
+            SMOOTH_SetTarget(&smooth, s, servo_us[s]);
+        }
+        snprintf(status_line, sizeof(status_line),
+                 "ARM SCENARIO: %s — done (%.1fs)",
+                 ARM_DEFS[arm_index].name, elapsed);
+        status_until = time(NULL) + 4;
+        arm_active = false;
+        return;
+    }
+
+    /* Find current waypoint */
+    int wp = 0;
+    for(int i = arm_wp_count - 1; i >= 0; i--)
+    {
+        if(elapsed >= arm_wps[i].t) { wp = i; break; }
+    }
+
+    /* Set all 6 servo targets */
+    for(int s = 0; s < PCA_SERVO_COUNT; s++)
+    {
+        servo_us[s] = arm_wps[wp].targets[s];
+        clamp_servo(s);
+        SMOOTH_SetTarget(&smooth, s, servo_us[s]);
+    }
+
+    /* Progress bar */
+    float pct = elapsed / arm_total_time * 100.0f;
+    int bar_w = 20;
+    int filled = (int)(pct / 100.0f * bar_w);
+    if(filled > bar_w) filled = bar_w;
+    char bar[32];
+    for(int i = 0; i < bar_w; i++)
+        bar[i] = (i < filled) ? '#' : '.';
+    bar[bar_w] = '\0';
+
+    snprintf(status_line, sizeof(status_line),
+             "ARM %s [%s] %3.0f%%  wp=%d/%d",
+             ARM_DEFS[arm_index].name, bar, pct,
+             wp + 1, arm_wp_count);
     status_until = time(NULL) + 2;
 }
 
@@ -753,10 +933,9 @@ static void draw_help(void)
     attron(COLOR_PAIR(CP_DIM));
     mvprintw(rr++, RIGHT_COL, "  F1   step     neu->max->neu");
     mvprintw(rr++, RIGHT_COL, "  F2   sweep    neu->min->max->neu");
-    mvprintw(rr++, RIGHT_COL, "  F3   triangle mid->max->min->max");
-    mvprintw(rr++, RIGHT_COL, "  F4   small    +/-50us (deadband)");
-    mvprintw(rr++, RIGHT_COL, "  F5   burst    rapid min/max toggle");
-    mvprintw(rr++, RIGHT_COL, "  F6   creep    neu->neu+200 (ramp)");
+    mvprintw(rr++, RIGHT_COL, "  F3   triangle neu->max->min->max->neu");
+    mvprintw(rr++, RIGHT_COL, "  F4   reach    extend->grab->retract");
+    mvprintw(rr++, RIGHT_COL, "  F5   pick     rotate->grab->place");
     mvprintw(rr++, RIGHT_COL, "  Esc  abort running scenario");
     mvprintw(rr++, RIGHT_COL, "  Runs on the UP/DOWN-selected servo.");
     mvprintw(rr++, RIGHT_COL, "  Tune v/a/d then re-run to compare.");
@@ -983,6 +1162,28 @@ static void draw_screen(void)
         r++;
     }
 
+    /* Arm scenario progress (always visible — affects all servos) */
+    if(arm_active)
+    {
+        float elapsed = sc_elapsed();
+        float pct = elapsed / arm_total_time * 100.0f;
+        if(pct > 100.0f) pct = 100.0f;
+        int bar_w = 25;
+        int filled = (int)(pct / 100.0f * bar_w);
+
+        mvprintw(r, 3, "Arm:     ");
+        attron(COLOR_PAIR(CP_WARN) | A_BOLD);
+        printw(" %s ", ARM_DEFS[arm_index].name);
+        attroff(COLOR_PAIR(CP_WARN) | A_BOLD);
+        attron(COLOR_PAIR(CP_GOOD));
+        printw("[");
+        for(int i = 0; i < bar_w; i++)
+            addch(i < filled ? '#' : '.');
+        printw("] %3.0f%%", pct);
+        attroff(COLOR_PAIR(CP_GOOD));
+        r++;
+    }
+
     /* Live register read-back */
     if(show_regs && hw_connected)
     {
@@ -1054,11 +1255,12 @@ static void draw_screen(void)
 
     /* Row 8 — scenario keys */
     mvprintw(r + 8, 1, "  %-12s %-32s   %-12s %s",
-             "F1-F6",      "run scenario on selected servo",
+             "F1-F3",      "scenario on selected servo",
+             "F4-F5",      "full arm motion sequence",
              "Esc",        sc_active ? "ABORT scenario" : "");
 
     /* Row 9 — scenario names */
-    mvprintw(r + 9, 1, "   F1=step F2=sweep F3=triangle F4=small_step F5=burst F6=slow_creep");
+    mvprintw(r + 9, 1, "   F1=step  F2=sweep  F3=triangle  F4=reach_grab  F5=pick_place");
 
     attroff(COLOR_PAIR(CP_DIM));
     r += 10;
@@ -1353,8 +1555,16 @@ int main(int argc, char *argv[])
         layout_update();
         draw_screen();
 
+        /* Scenario engine tick — advances waypoints, sets targets.
+         * Runs BEFORE the smoother so that new targets are picked up
+         * on the same frame they're set (no 1-frame lag). */
+        sc_tick();
+        arm_tick();
+
         /* Smoother step (if enabled) — it's the testbench's equivalent of
-         * the 50 Hz servo tick inside cpcu_io. */
+         * the 50 Hz servo tick inside cpcu_io. Targets from sc_tick and
+         * from keypress handlers are already in the smoother by the time
+         * we step; Update ramps toward them and we write the result. */
         if(smooth_enabled && hw_connected)
         {
             clock_gettime(CLOCK_MONOTONIC, &t_now);
@@ -1366,12 +1576,6 @@ int main(int argc, char *argv[])
             for(int s = 0; s < PCA_SERVO_COUNT; s++)
                 PCA_SetServo(&pca, (uint8_t)s, smooth.current[s]);
         }
-
-        /* Scenario engine tick — advances waypoints, sets targets.
-         * Must run BEFORE getch() so the scenario progresses even
-         * when no key is pressed. The smoother update above drives
-         * the PCA from the targets we set here. */
-        sc_tick();
 
         int ch = getch();
         switch(ch)
@@ -1504,11 +1708,20 @@ int main(int argc, char *argv[])
                     int next = (idx < 0) ? 0 : ((idx + 1) % VEL_PRESET_COUNT);
                     smooth_vel[selected] = VEL_PRESETS[next];
                     SMOOTH_SetSpeed(&smooth, selected, smooth_vel[selected]);
+
+                    /* Auto-clamp acc to maintain a sane profile shape */
+                    bool acc_clamped = clamp_acc_to_vel(
+                            smooth_vel[selected], &smooth_acc[selected]);
+                    if(acc_clamped)
+                        SMOOTH_SetAccel(&smooth, selected, smooth_acc[selected]);
+
                     last_smoother_knob = SMK_VEL;
                     cal_dirty = true;
                     snprintf(status_line, sizeof(status_line),
-                             "Servo %d VEL = %u us/s (unsaved, ',' / '.' to fine-adjust)",
-                             selected, smooth_vel[selected]);
+                             "Servo %d VEL = %u us/s  ACC %s %u us/s^2",
+                             selected, smooth_vel[selected],
+                             acc_clamped ? "auto-adjusted to" : "=",
+                             smooth_acc[selected]);
                     status_until = time(NULL) + 3;
                 }
                 break;
@@ -1518,12 +1731,19 @@ int main(int argc, char *argv[])
                                               ACC_PRESETS, ACC_PRESET_COUNT);
                     int next = (idx < 0) ? 0 : ((idx + 1) % ACC_PRESET_COUNT);
                     smooth_acc[selected] = ACC_PRESETS[next];
+
+                    /* Enforce ratio constraint against current velocity */
+                    clamp_acc_to_vel(smooth_vel[selected], &smooth_acc[selected]);
                     SMOOTH_SetAccel(&smooth, selected, smooth_acc[selected]);
+
                     last_smoother_knob = SMK_ACC;
                     cal_dirty = true;
                     snprintf(status_line, sizeof(status_line),
-                             "Servo %d ACC = %u us/s^2 (unsaved, ',' / '.' to fine-adjust)",
-                             selected, smooth_acc[selected]);
+                             "Servo %d ACC = %u us/s^2  (vel=%u, ratio=%.1f)",
+                             selected, smooth_acc[selected],
+                             smooth_vel[selected],
+                             (float)smooth_vel[selected] /
+                             (float)smooth_acc[selected]);
                     status_until = time(NULL) + 3;
                 }
                 break;
@@ -1567,10 +1787,15 @@ int main(int argc, char *argv[])
                         if(v > VEL_HI) v = VEL_HI;
                         smooth_vel[selected] = (uint16_t)v;
                         SMOOTH_SetSpeed(&smooth, selected, smooth_vel[selected]);
+                        bool acc_clamped = clamp_acc_to_vel(
+                                smooth_vel[selected], &smooth_acc[selected]);
+                        if(acc_clamped)
+                            SMOOTH_SetAccel(&smooth, selected, smooth_acc[selected]);
                         cal_dirty = true;
                         snprintf(status_line, sizeof(status_line),
-                                 "Servo %d VEL = %u us/s (unsaved)",
-                                 selected, smooth_vel[selected]);
+                                 "Servo %d VEL = %u us/s%s",
+                                 selected, smooth_vel[selected],
+                                 acc_clamped ? " (acc auto-adjusted)" : "");
                     }
                     else if(last_smoother_knob == SMK_ACC)
                     {
@@ -1579,10 +1804,11 @@ int main(int argc, char *argv[])
                         if(v < ACC_LO) v = ACC_LO;
                         if(v > ACC_HI) v = ACC_HI;
                         smooth_acc[selected] = (uint16_t)v;
+                        clamp_acc_to_vel(smooth_vel[selected], &smooth_acc[selected]);
                         SMOOTH_SetAccel(&smooth, selected, smooth_acc[selected]);
                         cal_dirty = true;
                         snprintf(status_line, sizeof(status_line),
-                                 "Servo %d ACC = %u us/s^2 (unsaved)",
+                                 "Servo %d ACC = %u us/s^2",
                                  selected, smooth_acc[selected]);
                     }
                     else /* SMK_DEAD */
@@ -1765,19 +1991,19 @@ int main(int argc, char *argv[])
                 if(hw_connected) PCA_AllOff(&pca);
                 break;
 
-            /* Scenario keys: F1-F6 start predefined motions on selected servo */
+            /* Scenario keys: F1-F3 start predefined motions on selected servo */
             case KEY_F(1): case KEY_F(2): case KEY_F(3):
-            case KEY_F(4): case KEY_F(5): case KEY_F(6):
             {
-                int sc_num = ch - KEY_F(1);  /* 0-5 */
+                int sc_num = ch - KEY_F(1);  /* 0-2 */
+                /* Abort any running scenario */
                 if(sc_active)
                 {
-                    /* Abort current, start new */
                     servo_us[sc_servo] = PCA_SERVO_NEUTRAL;
                     clamp_servo(sc_servo);
                     SMOOTH_SetTarget(&smooth, sc_servo, servo_us[sc_servo]);
                     sc_active = false;
                 }
+                arm_active = false;
                 if(hw_connected)
                 {
                     sc_start(sc_num, selected);
@@ -1791,8 +2017,28 @@ int main(int argc, char *argv[])
                 break;
             }
 
+            /* Arm-wide scenario keys: F4/F5 run full-arm motion sequences */
+            case KEY_F(4): case KEY_F(5):
+            {
+                int arm_num = ch - KEY_F(4);  /* 0-1 */
+                /* Abort any running scenario */
+                sc_active  = false;
+                arm_active = false;
+                if(hw_connected)
+                {
+                    arm_start(arm_num);
+                }
+                else
+                {
+                    snprintf(status_line, sizeof(status_line),
+                             "Cannot run arm scenario — PCA9685 not connected");
+                    status_until = time(NULL) + 3;
+                }
+                break;
+            }
+
             case 27: /* Esc — abort running scenario */
-                if(sc_active)
+                if(sc_active || arm_active)
                 {
                     for(int s = 0; s < PCA_SERVO_COUNT; s++)
                     {
@@ -1801,10 +2047,12 @@ int main(int argc, char *argv[])
                         SMOOTH_SetTarget(&smooth, s, servo_us[s]);
                     }
                     snprintf(status_line, sizeof(status_line),
-                             "SCENARIO: %s ABORTED — all servos to neutral",
-                             SC_DEFS[sc_index].name);
+                             "%s ABORTED — all servos to neutral",
+                             arm_active ? ARM_DEFS[arm_index].name
+                                        : SC_DEFS[sc_index].name);
                     status_until = time(NULL) + 3;
-                    sc_active = false;
+                    sc_active  = false;
+                    arm_active = false;
                 }
                 break;
 
