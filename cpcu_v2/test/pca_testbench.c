@@ -200,6 +200,43 @@ static uint16_t         smooth_vel[PCA_SERVO_COUNT];      /* us/s */
 static uint16_t         smooth_acc[PCA_SERVO_COUNT];      /* us/s^2 */
 static uint16_t         smooth_dead[PCA_SERVO_COUNT];     /* us */
 
+/*============= GESTURE SIMULATION =========================================================*/
+/*
+ *  Press 'g' to enter gesture-sim mode. This replaces the DSP pipeline:
+ *  keys 0-3 select a gesture class, and the testbench integrates servo
+ *  targets at the gesture_velocity rates from runtime.json — exactly like
+ *  cpcu_dsp.py's velocity mode. The smoother then ramps toward the
+ *  integrated targets, and you see the real arm respond.
+ *
+ *  Key mapping while in gesture-sim mode:
+ *      0 = rest (hold current position)
+ *      1 = biceps_flex
+ *      2 = hand_flex (close gripper)
+ *      3 = hand_open (open gripper)
+ *      g or Esc = exit sim mode, park at neutral
+ */
+
+#define GESTURE_COUNT  4
+
+static const char *GESTURE_NAMES[GESTURE_COUNT] = {
+    "rest", "biceps_flex", "hand_flex", "hand_open"
+};
+
+/* Velocity rates in us/s per servo — must match runtime.json gesture_velocity.
+ * Edit these if you change the rates in runtime.json. Signed: positive =
+ * toward servo_max, negative = toward servo_min. */
+static const int16_t GESTURE_RATES[GESTURE_COUNT][PCA_SERVO_COUNT] = {
+    /*             S0    S1    S2    S3    S4    S5   */
+    /* rest    */ { 0,    0,    0,    0,    0,    0   },
+    /* bi_flex */ { 0,  200,    0,    0,    0,    0   },
+    /* hd_flex */ { 0,    0,    0,    0,    0, -200   },
+    /* hd_open */ { 0,    0,    0,    0,    0,  200   },
+};
+
+static bool     gsim_active         = false;
+static int      gsim_gesture        = 0;       /* 0=rest, 1-3=gestures */
+static float    gsim_targets_f[PCA_SERVO_COUNT];  /* float accumulators */
+
 /* Presets cycled by v/a/d. Sorted ascending — each press of 'v'
  * makes the servo faster, each press of 'a' makes ramp-up sharper,
  * each press of 'd' widens the hold deadband. Wraps around from
@@ -628,6 +665,101 @@ static void arm_tick(void)
     status_until = time(NULL) + 2;
 }
 
+/*============= GESTURE SIMULATION TICK ====================================================*/
+
+static struct timespec gsim_last_ts;
+
+static void gsim_enter(void)
+{
+    gsim_active  = true;
+    gsim_gesture = 0;  /* start at rest */
+    sc_active    = false;
+    arm_active   = false;
+
+    /* Snapshot current positions as float accumulators */
+    for(int s = 0; s < PCA_SERVO_COUNT; s++)
+        gsim_targets_f[s] = (float)servo_us[s];
+
+    clock_gettime(CLOCK_MONOTONIC, &gsim_last_ts);
+
+    /* Auto-enable smoother */
+    if(!smooth_enabled)
+    {
+        smooth_enabled = true;
+        for(int i = 0; i < PCA_SERVO_COUNT; i++)
+        {
+            smooth.target[i]    = servo_us[i];
+            smooth.current[i]   = servo_us[i];
+            smooth.current_f[i] = (float)servo_us[i];
+        }
+    }
+
+    snprintf(status_line, sizeof(status_line),
+             "GESTURE SIM: active (0=rest, 1=biceps, 2=flex, 3=open, g/Esc=exit)");
+    status_until = time(NULL) + 5;
+}
+
+static void gsim_exit(void)
+{
+    gsim_active  = false;
+    gsim_gesture = 0;
+
+    /* Park all servos at neutral */
+    for(int s = 0; s < PCA_SERVO_COUNT; s++)
+    {
+        servo_us[s] = PCA_SERVO_NEUTRAL;
+        clamp_servo(s);
+        SMOOTH_SetTarget(&smooth, s, servo_us[s]);
+    }
+
+    snprintf(status_line, sizeof(status_line),
+             "GESTURE SIM: exited — all servos to neutral");
+    status_until = time(NULL) + 3;
+}
+
+/* Called every main-loop tick while gsim_active. Integrates servo targets
+ * at the rate defined by the current gesture — exactly what cpcu_dsp.py
+ * does in velocity mode. Rest gesture = hold current position. */
+static void gsim_tick(void)
+{
+    if(!gsim_active) return;
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    float dt_s = (float)(now.tv_sec - gsim_last_ts.tv_sec)
+               + (float)(now.tv_nsec - gsim_last_ts.tv_nsec) * 1e-9f;
+    gsim_last_ts = now;
+
+    /* Clamp dt to avoid jumps after a stall */
+    if(dt_s > 0.2f) dt_s = 0.2f;
+
+    /* Integrate: target += rate * dt (only for non-rest gestures) */
+    if(gsim_gesture > 0 && gsim_gesture < GESTURE_COUNT)
+    {
+        const int16_t *rates = GESTURE_RATES[gsim_gesture];
+        for(int s = 0; s < PCA_SERVO_COUNT; s++)
+        {
+            gsim_targets_f[s] += (float)rates[s] * dt_s;
+
+            /* Clamp to hardware limits */
+            if(gsim_targets_f[s] < (float)pca.servo_min[s])
+                gsim_targets_f[s] = (float)pca.servo_min[s];
+            if(gsim_targets_f[s] > (float)pca.servo_max[s])
+                gsim_targets_f[s] = (float)pca.servo_max[s];
+
+            servo_us[s] = (uint16_t)(gsim_targets_f[s] + 0.5f);
+            SMOOTH_SetTarget(&smooth, s, servo_us[s]);
+        }
+    }
+    /* rest: don't touch targets — arm holds where it is */
+
+    snprintf(status_line, sizeof(status_line),
+             "GESTURE SIM: [%s]  S1=%u S5=%u  (0-3=gesture, g/Esc=exit)",
+             GESTURE_NAMES[gsim_gesture],
+             servo_us[1], servo_us[5]);
+    status_until = time(NULL) + 2;
+}
+
 /*============= HELPERS ====================================================================*/
 
 static void clamp_servo(int idx)
@@ -939,6 +1071,16 @@ static void draw_help(void)
     mvprintw(rr++, RIGHT_COL, "  Esc  abort running scenario");
     mvprintw(rr++, RIGHT_COL, "  Runs on the UP/DOWN-selected servo.");
     mvprintw(rr++, RIGHT_COL, "  Tune v/a/d then re-run to compare.");
+    rr++;
+    attron(A_BOLD);
+    mvprintw(rr++, RIGHT_COL, "GESTURE SIMULATION");
+    attroff(A_BOLD);
+    mvprintw(rr++, RIGHT_COL, "  g      toggle gesture-sim mode");
+    mvprintw(rr++, RIGHT_COL, "  0      rest (hold position)");
+    mvprintw(rr++, RIGHT_COL, "  1      biceps_flex (elbow)");
+    mvprintw(rr++, RIGHT_COL, "  2      hand_flex (close gripper)");
+    mvprintw(rr++, RIGHT_COL, "  3      hand_open (open gripper)");
+    mvprintw(rr++, RIGHT_COL, "  Simulates cpcu_dsp.py velocity mode");
     attroff(COLOR_PAIR(CP_DIM));
 
     /* ─── Footer ─── */
@@ -1184,6 +1326,34 @@ static void draw_screen(void)
         r++;
     }
 
+    /* Gesture simulation display */
+    if(gsim_active)
+    {
+        mvprintw(r, 3, "GestSim: ");
+        attron(COLOR_PAIR(CP_WARN) | A_BOLD);
+        printw("[%s]", GESTURE_NAMES[gsim_gesture]);
+        attroff(COLOR_PAIR(CP_WARN) | A_BOLD);
+
+        if(gsim_gesture > 0)
+        {
+            attron(COLOR_PAIR(CP_CYAN));
+            printw("  rates:");
+            for(int s = 0; s < PCA_SERVO_COUNT; s++)
+            {
+                int16_t rate = GESTURE_RATES[gsim_gesture][s];
+                if(rate != 0) printw(" S%d=%+d", s, rate);
+            }
+            attroff(COLOR_PAIR(CP_CYAN));
+        }
+        else
+        {
+            attron(COLOR_PAIR(CP_DIM));
+            printw("  holding position (press 1-3 for gesture)");
+            attroff(COLOR_PAIR(CP_DIM));
+        }
+        r++;
+    }
+
     /* Live register read-back */
     if(show_regs && hw_connected)
     {
@@ -1256,14 +1426,18 @@ static void draw_screen(void)
     /* Row 8 — scenario keys */
     mvprintw(r + 8, 1, "  %-12s %-32s   %-12s %s",
              "F1-F3",      "scenario on selected servo",
-             "F4-F5",      "full arm motion sequence",
-             "Esc",        sc_active ? "ABORT scenario" : "");
+             "F4-F5",      "full arm motion sequence");
 
-    /* Row 9 — scenario names */
-    mvprintw(r + 9, 1, "   F1=step  F2=sweep  F3=triangle  F4=reach_grab  F5=pick_place");
+    /* Row 9 — gesture sim + scenario names */
+    mvprintw(r + 9, 1, "  %-12s %-32s   %-12s %s",
+             "g",          gsim_active ? "EXIT gesture sim" : "ENTER gesture sim",
+             "Esc",        (sc_active || arm_active) ? "ABORT scenario"
+                           : gsim_active ? "exit gesture sim" : "");
+
+    mvprintw(r + 10, 1, "   F1=step  F2=sweep  F3=triangle  F4=reach_grab  F5=pick_place");
 
     attroff(COLOR_PAIR(CP_DIM));
-    r += 10;
+    r += 11;
 
     /* v2.3.6: status line for save/load/calibration feedback. Shown
      * for ~3-5 seconds (set per action). The dirty marker shows
@@ -1560,6 +1734,7 @@ int main(int argc, char *argv[])
          * on the same frame they're set (no 1-frame lag). */
         sc_tick();
         arm_tick();
+        gsim_tick();
 
         /* Smoother step (if enabled) — it's the testbench's equivalent of
          * the 50 Hz servo tick inside cpcu_io. Targets from sc_tick and
@@ -1578,6 +1753,34 @@ int main(int argc, char *argv[])
         }
 
         int ch = getch();
+
+        /* Gesture-sim mode intercepts 0-3 for gesture selection.
+         * 'g' toggles sim mode on/off. Esc also exits. */
+        if(gsim_active && ch >= '0' && ch <= '3')
+        {
+            gsim_gesture = ch - '0';
+            snprintf(status_line, sizeof(status_line),
+                     "GESTURE: %s%s",
+                     GESTURE_NAMES[gsim_gesture],
+                     gsim_gesture == 0 ? " (holding position)" : " (integrating...)");
+            status_until = time(NULL) + 3;
+            continue;  /* don't fall through to normal key handling */
+        }
+        if(ch == 'g')
+        {
+            if(gsim_active)
+                gsim_exit();
+            else if(hw_connected)
+                gsim_enter();
+            else
+            {
+                snprintf(status_line, sizeof(status_line),
+                         "Cannot start gesture sim — PCA9685 not connected");
+                status_until = time(NULL) + 3;
+            }
+            continue;
+        }
+
         switch(ch)
         {
             case KEY_UP:
@@ -2037,8 +2240,12 @@ int main(int argc, char *argv[])
                 break;
             }
 
-            case 27: /* Esc — abort running scenario */
-                if(sc_active || arm_active)
+            case 27: /* Esc — abort running scenario or exit gesture sim */
+                if(gsim_active)
+                {
+                    gsim_exit();
+                }
+                else if(sc_active || arm_active)
                 {
                     for(int s = 0; s < PCA_SERVO_COUNT; s++)
                     {
