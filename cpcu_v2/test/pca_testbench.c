@@ -85,8 +85,8 @@
                                        BAND so a sub-deadband manual move
                                        can never be silently swallowed. */
 #define STEP_COARSE     50          /* Page Up/Down step (us) */
-#define REFRESH_US      50000       /* 20 Hz */
-#define SMOOTH_DT_US    50000       /* 20 Hz update if smoother is on */
+#define REFRESH_US      0           /* pacing handled by ncurses timeout(20) */
+#define SMOOTH_DT_US    20000       /* 50 Hz update if smoother is on */
 
 /* Absolute hardware safety limits. The per-servo servo_min/servo_max
  * (loaded from runtime.json) are the *calibrated* limits — they're
@@ -861,9 +861,25 @@ static void gsim_tick(void)
                 gsim_targets_f[s] = (float)pca.servo_min[s];
             if(gsim_targets_f[s] > (float)pca.servo_max[s])
                 gsim_targets_f[s] = (float)pca.servo_max[s];
+        }
 
-            servo_us[s] = (uint16_t)(gsim_targets_f[s] + 0.5f);
-            SMOOTH_SetTarget(&smooth, s, servo_us[s]);
+        /* Only push to smoother when accumulated change >= 3 µs on any
+         * channel. Without this, the ~500 Hz loop produces sub-µs steps
+         * that quantize to 0/1 µs alternations, causing visible jitter. */
+        bool changed = false;
+        for(int s = 0; s < PCA_SERVO_COUNT; s++)
+        {
+            uint16_t rounded = (uint16_t)(gsim_targets_f[s] + 0.5f);
+            if(abs((int)rounded - (int)servo_us[s]) >= 3)
+                changed = true;
+        }
+        if(changed)
+        {
+            for(int s = 0; s < PCA_SERVO_COUNT; s++)
+            {
+                servo_us[s] = (uint16_t)(gsim_targets_f[s] + 0.5f);
+                SMOOTH_SetTarget(&smooth, s, servo_us[s]);
+            }
         }
     }
     /* rest: don't touch targets — arm holds where it is */
@@ -1599,10 +1615,10 @@ static void draw_screen(void)
     r++;
     attron(COLOR_PAIR(CP_DIM) | A_DIM);
     if(cfg_path_used[0])
-        mvprintw(r, 1, "20 Hz refresh  |  direct I2C (no IPC/kernel)  |  cfg: %s",
+        mvprintw(r, 1, "50 Hz refresh  |  direct I2C (no IPC/kernel)  |  cfg: %s",
                  cfg_path_used);
     else
-        mvprintw(r, 1, "20 Hz refresh  |  direct I2C (no IPC/kernel)  |  cfg: <none>");
+        mvprintw(r, 1, "50 Hz refresh  |  direct I2C (no IPC/kernel)  |  cfg: <none>");
     attroff(COLOR_PAIR(CP_DIM) | A_DIM);
 
     refresh();
@@ -1845,7 +1861,9 @@ int main(int argc, char *argv[])
     noecho();
     keypad(stdscr, TRUE);
     curs_set(0);
-    timeout(0);
+    timeout(20);    /* 50 Hz loop — matches PCA9685 servo refresh rate.
+                     * Faster is pointless (servo ignores sub-20ms updates)
+                     * and causes sub-µs quantization jitter in gesture sim. */
 
     if(has_colors())
     {
