@@ -99,6 +99,18 @@ typedef struct
     uint16_t    last_written_us[PCA_SERVO_COUNT];    /* shadow of last PCA value */
     bool        ever_written[PCA_SERVO_COUNT];       /* false until first write */
 
+    /* v2.2: gravity compensation. For joints where arm weight accelerates
+     * downward motion beyond what the servo can track, reduce max_velocity
+     * when moving in the gravity-assisted direction.
+     *   gravity_dir:   +1 = gravity helps positive motion (increasing us)
+     *                  -1 = gravity helps negative motion (decreasing us)
+     *                   0 = no gravity effect (default)
+     *   gravity_scale: 0.1-1.0, multiplied into max_velocity when moving
+     *                  in the gravity direction. 1.0 = no reduction (default).
+     *                  0.3 = servo moves at 30% speed during gravity drop. */
+    int8_t      gravity_dir[PCA_SERVO_COUNT];        /* +1, -1, or 0 */
+    float       gravity_scale[PCA_SERVO_COUNT];      /* 0.1 .. 1.0 */
+
     /* Status per servo */
     bool        settled[PCA_SERVO_COUNT];
 } SMOOTH_Context;
@@ -114,6 +126,14 @@ void SMOOTH_Init(SMOOTH_Context *ctx, uint16_t start_us);
 void SMOOTH_SetEnabled (SMOOTH_Context *ctx, int channel, bool enabled);
 void SMOOTH_SetVelocity(SMOOTH_Context *ctx, int channel, uint16_t v_us_per_s);
 void SMOOTH_SetAccel   (SMOOTH_Context *ctx, int channel, uint16_t a_us_per_s2);
+
+/*  v2.2: gravity compensation.
+ *  dir:   +1  gravity assists positive motion (servo_us increasing)
+ *         -1  gravity assists negative motion (servo_us decreasing)
+ *          0  disabled (default)
+ *  scale: 0.1-1.0, velocity multiplier for gravity-assisted direction.
+ *         1.0 = no reduction. 0.3 = 30% speed when dropping. */
+void SMOOTH_SetGravity (SMOOTH_Context *ctx, int channel, int8_t dir, float scale);
 
 /*  v2.1: hold-pose deadband configuration.
  *  Once a servo settles at its target, SMOOTH_ShouldWrite() returns

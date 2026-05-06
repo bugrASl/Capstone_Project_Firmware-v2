@@ -48,6 +48,10 @@ void SMOOTH_Init(SMOOTH_Context *ctx, uint16_t start_us)
         ctx->hold_deadband_us[i] = SMOOTH_DEFAULT_DEADBAND;
         ctx->last_written_us[i]  = 0;
         ctx->ever_written[i]     = false;
+
+        /* v2.2 gravity compensation — disabled by default */
+        ctx->gravity_dir[i]      = 0;
+        ctx->gravity_scale[i]    = 1.0f;
     }
 }
 
@@ -77,6 +81,15 @@ void SMOOTH_SetAccel(SMOOTH_Context *ctx, int channel, uint16_t a)
 {
     if(channel < 0 || channel >= PCA_SERVO_COUNT) return;
     ctx->max_accel[channel] = (a > 0) ? a : 1;   /* avoid div-by-0 */
+}
+
+void SMOOTH_SetGravity(SMOOTH_Context *ctx, int channel, int8_t dir, float scale)
+{
+    if(channel < 0 || channel >= PCA_SERVO_COUNT) return;
+    ctx->gravity_dir[channel]   = (dir > 0) ? 1 : (dir < 0) ? -1 : 0;
+    ctx->gravity_scale[channel] = (scale < 0.1f) ? 0.1f
+                                : (scale > 1.0f) ? 1.0f
+                                : scale;
 }
 
 /*============= TARGET =====================================================*/
@@ -142,6 +155,17 @@ void SMOOTH_Update(SMOOTH_Context *ctx, uint32_t dt_us)
 
         float a        = (float)ctx->max_accel[i];
         float v_max    = (float)ctx->max_velocity[i];
+
+        /* v2.2: gravity compensation. When moving in the gravity-assisted
+         * direction, reduce max velocity so the smoother commands a slower
+         * trajectory. The servo's internal PID can then track without the
+         * arm weight causing overshoot. */
+        if(ctx->gravity_dir[i] != 0)
+        {
+            float move_dir = (dist >= 0.0f) ? 1.0f : -1.0f;
+            if((int)move_dir == ctx->gravity_dir[i])
+                v_max *= ctx->gravity_scale[i];
+        }
 
         /* If sitting close enough, finish */
         if(dist_abs < (float)SMOOTH_SETTLE_THRESH && vel_abs < a * dt_s)
