@@ -184,6 +184,7 @@ preflight_kernel() {
 }
 
 preflight_pca()    { resolve_bin pca_testbench;    }
+preflight_nrf()    { resolve_bin nrf_testbench;    }
 preflight_tui()    { resolve_bin cpcu_tui;          }
 preflight_signal() { resolve_bin signal_testbench;  }
 
@@ -754,6 +755,14 @@ run_pca() {
         warn "No runtime.json found — pca_testbench will use compile-time defaults"
         exec "${pca_bin}"
     fi
+}
+
+run_nrf() {
+    preflight_nrf
+    local nrf_bin="${RESOLVED_BIN}"
+    log "Mode: NRF (self-test + optional packet reception)"
+    trap - EXIT INT TERM
+    exec "${nrf_bin}" "$@"
 }
 
 run_smoother() {
@@ -1571,6 +1580,7 @@ case "${MODE}" in
     # session out of the box without having to start the kernel
     # manually first.
     test-pca)               run_pca ;;
+    test-nrf)               shift; run_nrf "$@" ;;
     test-signal)            run_signal ;;
     test-signal-demo)       run_signal_demo ;;
     test-safety-demo)       cmd_test_phase "safety-demo" ;;
@@ -1586,6 +1596,7 @@ case "${MODE}" in
     collect)                run_collect ;;
     signal)                 run_signal ;;
     pca)                    run_pca ;;
+    nrf)                    shift; run_nrf "$@" ;;
     smoother)               run_smoother "$@" ;;
     menu)                   show_menu ;;
     ws)                     cmd_ws "$@" ;;
