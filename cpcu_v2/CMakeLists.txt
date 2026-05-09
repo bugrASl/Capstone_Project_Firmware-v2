@@ -152,13 +152,6 @@ add_executable(config_testbench
 )
 target_link_libraries(config_testbench PRIVATE cpcu_config cpcu_ipc m)
 
-## NRF24L01+ testbench (self-test + packet reception, no ncurses)
-add_executable(nrf_testbench
-    test/nrf_testbench.c
-    src/nrf24l01_linux.c
-)
-target_link_libraries(nrf_testbench PRIVATE rt)
-
 ## PCA9685 servo testbench (interactive TUI, needs ncurses + I2C hardware)
 ## v2.2: now depends on cpcu_smooth.c (slew/smoother feature exposed via 's' / --smooth)
 if(CURSES_FOUND)
@@ -261,18 +254,42 @@ if(CURSES_FOUND)
     install(TARGETS cpcu_tui RUNTIME DESTINATION /opt/cpcu/bin)
 endif()
 
-## Python scripts -> /opt/cpcu/scripts
+## Testbenches -> /opt/cpcu/bin (v2.7: launch.sh runs them from here)
+## Each is gated on the corresponding CMake target existing, since some
+## (pca_testbench, signal_testbench, editor_testbench) require ncurses.
+install(TARGETS test_codec safety_testbench smooth_testbench
+                config_testbench json_testbench
+        RUNTIME DESTINATION /opt/cpcu/bin)
+if(CURSES_FOUND)
+    install(TARGETS pca_testbench signal_testbench editor_testbench
+            RUNTIME DESTINATION /opt/cpcu/bin)
+endif()
+if(TARGET cpcu_ws)
+    install(TARGETS cpcu_ws RUNTIME DESTINATION /opt/cpcu/bin)
+endif()
+
+## Python helpers -> /opt/cpcu/python   (v2.7: renamed from scripts/)
 install(FILES
-    scripts/cpcu_dsp.py
-    scripts/cpcu_ipc_bridge.py
+    python/cpcu_dsp.py
+    python/cpcu_ipc_bridge.py
+    DESTINATION /opt/cpcu/python
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+)
+
+## Internal shell helpers -> /opt/cpcu/scripts  (v2.7: only the helpers,
+## launch.sh now lives at the top level)
+install(FILES
+    scripts/setup_pi.sh
+    scripts/configure.sh
+    scripts/run_tests.sh
     DESTINATION /opt/cpcu/scripts
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
-## Launch scripts -> /opt/cpcu/scripts
+## launch.sh — the user API — at the top level of /opt/cpcu  (v2.7)
 install(FILES
-    scripts/launch.sh
-    DESTINATION /opt/cpcu/scripts
+    launch.sh
+    DESTINATION /opt/cpcu
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
@@ -287,8 +304,9 @@ install(FILES
 ## Model placeholder directory
 install(DIRECTORY DESTINATION /opt/cpcu/models)
 
-## Systemd service
-install(FILES
-    scripts/cpcu.service
-    DESTINATION /etc/systemd/system
-)
+## Note: no systemd unit is installed by cmake. v2.5+ generates the unit
+## dynamically via `./launch.sh install-service`, which writes to
+## /etc/systemd/system with the correct user, paths, and capabilities
+## baked in at install time. This avoids needing root for `cmake --install`
+## and keeps the unit's content in sync with launch.sh's understanding
+## of where things live.
