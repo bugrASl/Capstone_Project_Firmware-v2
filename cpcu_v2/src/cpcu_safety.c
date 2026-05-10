@@ -133,8 +133,8 @@ static void link_feed(LINK_Stats *l, const WL_Packet *pkt, uint32_t gap,
 
 /*============= FEED PACKET ================================================*/
 
-uint32_t SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
-                          uint64_t now_us)
+void SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
+                       uint64_t now_us)
 {
     /* v2.3.1: any successful FeedPacket call lifts the cold-start grace.
      * We don't gate this on FIRST_PACKET — what matters is that we're
@@ -149,7 +149,35 @@ uint32_t SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
     }
 
     uint32_t gap            =   SAFETY_SeqGap(ctx, pkt->seq);
-    link_feed(&ctx->link, pkt, gap, now_us);
+
+    /* v2.3.9: suppress link stats during boot grace period.
+     * Startup gaps (from BSAU powering up after CPCU) should not poison
+     * the link quality window. We still count the gap for diagnostics
+     * (the caller increments io_seq_gaps), but we don't feed it into
+     * link_feed until the boot grace has elapsed or we've received
+     * enough consecutive packets to establish a stable baseline.
+     *
+     * Additionally, when first_packet_seen transitions true, reset
+     * the link stats window so any gaps accumulated during the very
+     * first packets don't persist. */
+    bool in_boot_grace = (now_us - ctx->boot_us) / 1000 < SAFETY_RADIO_BOOT_GRACE_MS;
+
+    if(in_boot_grace)
+    {
+        /* During grace: feed gap as 0 so link stats stay clean */
+        link_feed(&ctx->link, pkt, 0, now_us);
+    }
+    else
+    {
+        /* After grace: if this is the first post-grace packet, flush
+         * any stale stats from the boot period */
+        if(!ctx->boot_grace_flushed)
+        {
+            ctx->boot_grace_flushed = true;
+            memset(&ctx->link, 0, sizeof(ctx->link));
+        }
+        link_feed(&ctx->link, pkt, gap, now_us);
+    }
 
     /* Battery with hysteresis */
     ctx->battery.raw        =   pkt->vbat_raw;
@@ -195,6 +223,17 @@ uint32_t SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
             {
                 ctx->recovery_cnt   =   0;
             }
+            /* v2.3.9: safety net — if we've been in RECOVERING for
+             * 10+ seconds with packets flowing, force to RUNNING.
+             * Prevents permanent lockout from boot-time gap bursts
+             * that poisoned the link stats window. */
+            if(ctx->state == RADIO_RECOVERING &&
+               ctx->degraded_entry_us > 0 &&
+               (now_us - ctx->degraded_entry_us) / 1000 > 10000)
+            {
+                ctx->state          =   RADIO_RUNNING;
+                ctx->last_fault     =   SAFETY_OK;
+            }
             break;
 
         case RADIO_RUNNING:
@@ -202,8 +241,6 @@ uint32_t SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
             /* Other transitions are driven from UpdateState. */
             break;
     }
-
-    return gap;
 }
 
 /*============= TIMEOUT CHECK ==============================================*/

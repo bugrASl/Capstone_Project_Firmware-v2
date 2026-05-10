@@ -264,6 +264,7 @@ typedef struct
      * elapsed. See docs/BOOT_AND_SYNC.md. */
     uint64_t        boot_us;
     bool            first_packet_seen;
+    bool            boot_grace_flushed;     /* v2.3.9: link stats flushed after grace */
 
     LINK_Stats      link;
     BATTERY_State   battery;
@@ -281,7 +282,7 @@ typedef struct
 void        SAFETY_Init(SAFETY_Context *ctx);
 
 uint32_t    SAFETY_SeqGap(SAFETY_Context *ctx, uint8_t seq);
-uint32_t    SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt, uint64_t now_us);
+void        SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt, uint64_t now_us);
 void        SAFETY_CheckTimeout(SAFETY_Context *ctx, uint64_t now_us);
 
 void        SAFETY_FeedMotorCMD(SAFETY_Context *ctx, uint64_t now_us);

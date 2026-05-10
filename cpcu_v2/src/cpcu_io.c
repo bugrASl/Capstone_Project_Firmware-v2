@@ -327,10 +327,8 @@ int main(int argc, char *argv[])
     SMOOTH_Context smooth;
     SMOOTH_Init(&smooth, PCA_SERVO_NEUTRAL);
 
-    /* Gripper (S5) bypasses the smoother entirely — grip/release must be
-     * immediate so objects don't slip during the ramp delay. The PCA
-     * write still goes through SMOOTH_ShouldWrite for deadband, but the
-     * position snaps to target on the next Update tick instead of ramping. */
+    /* Gripper (S5) bypasses the smoother — grip/release must be
+     * immediate so objects don't slip during the ramp delay. */
     SMOOTH_SetEnabled(&smooth, 5, false);
 
     /* Signal ready */
@@ -383,6 +381,21 @@ int main(int argc, char *argv[])
      * reloads without re-applying every tick — see the loop body. */
     uint32_t cfg_seq_seen = cfg_cache.config_seq;
     apply_runtime_smoother_cfg(&smooth, &cfg_cache);
+
+    /* v2.3.9: gravity compensation for weight-bearing joints.
+     * Loaded from runtime.json; falls back to hardcoded defaults for
+     * S1 (gravity_dir=-1, 30%) and S2 (gravity_dir=+1, 30%). */
+    for(int s = 0; s < PCA_SERVO_COUNT; s++)
+    {
+        if(cfg_cache.gravity_dir[s] != 0)
+            SMOOTH_SetGravity(&smooth, s, (int8_t)cfg_cache.gravity_dir[s],
+                              (float)cfg_cache.gravity_scale_pct[s] / 100.0f);
+    }
+    /* Defaults for S1/S2 if not in config */
+    if(cfg_cache.gravity_dir[1] == 0)
+        SMOOTH_SetGravity(&smooth, 1, -1, 0.30f);
+    if(cfg_cache.gravity_dir[2] == 0)
+        SMOOTH_SetGravity(&smooth, 2,  1, 0.30f);
 
     /* v2.3.7: gripper stall watchdog state. The watchdog fires when
      * the smoother current[5] has been at servo_min[5] (within a
@@ -450,10 +463,21 @@ int main(int argc, char *argv[])
          * TUI would stay RUNNING through any non-radio fault. */
         SAFETY_UpdateState(&safety, t);
 
-        /* 6. Update system state in shared memory */
-        atomic_store(&ipc.ctrl->system_state,
-                     safety.state == RADIO_SAFE ?   IPC_STATE_SAFE :
-                     safety.state == RADIO_RUNNING  ?   IPC_STATE_RUNNING : IPC_STATE_INIT);
+        /* 6. Update system state in shared memory.
+         * v2.3.9: DEGRADED and RECOVERING map to IPC_STATE_RUNNING (not INIT)
+         * because the system IS receiving packets — it's just in a transitional
+         * recovery phase. Only SAFE means servos are parked. INIT is reserved
+         * for the genuine pre-first-packet state. */
+        {
+            uint32_t ipc_state;
+            switch(safety.state)
+            {
+                case RADIO_SAFE:        ipc_state = IPC_STATE_SAFE;     break;
+                case RADIO_INIT:        ipc_state = IPC_STATE_INIT;     break;
+                default:                ipc_state = IPC_STATE_RUNNING;  break;
+            }
+            atomic_store(&ipc.ctrl->system_state, ipc_state);
+        }
 
         /* 7. NRF re-init if failed (full clean-reset sequence) */
         if(!nrf_ok && (t - t_reinit) > NRF_REINIT_INTERVAL_US)
