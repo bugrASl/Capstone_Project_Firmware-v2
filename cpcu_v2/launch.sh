@@ -1580,7 +1580,7 @@ case "${MODE}" in
     # session out of the box without having to start the kernel
     # manually first.
     test-pca)               run_pca ;;
-    test-nrf)               shift; run_nrf "$@" ;;
+    test-nrf)               run_nrf "$@" ;;
     test-signal)            run_signal ;;
     test-signal-demo)       run_signal_demo ;;
     test-safety-demo)       cmd_test_phase "safety-demo" ;;
@@ -1596,7 +1596,7 @@ case "${MODE}" in
     collect)                run_collect ;;
     signal)                 run_signal ;;
     pca)                    run_pca ;;
-    nrf)                    shift; run_nrf "$@" ;;
+    nrf)                    run_nrf "$@" ;;
     smoother)               run_smoother "$@" ;;
     menu)                   show_menu ;;
     ws)                     cmd_ws "$@" ;;
