@@ -138,7 +138,7 @@
 #define I2C_DEVICE              "/dev/i2c-1"
 #define PCA9685_ADDR            0x40
 #define GPIO_CE                 25
-#define NRF_CHANNEL             76
+#define NRF_CHANNEL             108
 #define NRF_ADDRESS             {0xE7, 0xE7, 0xE7, 0xE7, 0xE7}
 
 #define NRF_INIT_RETRIES        3
@@ -476,6 +476,13 @@ int main(int argc, char *argv[])
                 case RADIO_INIT:        ipc_state = IPC_STATE_INIT;     break;
                 default:                ipc_state = IPC_STATE_RUNNING;  break;
             }
+
+            /* v2.3.9: track SAFE entries for diagnostics.
+             * Increment counter on the RUNNING/RECOVERING → SAFE edge. */
+            uint32_t prev_state = atomic_load(&ipc.ctrl->system_state);
+            if(ipc_state == IPC_STATE_SAFE && prev_state != IPC_STATE_SAFE)
+                atomic_fetch_add(&ipc.diag->io_safe_entries, 1);
+
             atomic_store(&ipc.ctrl->system_state, ipc_state);
         }
 

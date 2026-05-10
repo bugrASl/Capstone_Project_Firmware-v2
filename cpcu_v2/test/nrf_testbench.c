@@ -29,7 +29,7 @@
 #define SPI_DEVICE   "/dev/spidev0.0"
 #define SPI_SPEED    8000000
 #define GPIO_CE      25
-#define RF_CHANNEL   76
+#define RF_CHANNEL   108
 #define RF_ADDR      {0xE7, 0xE7, 0xE7, 0xE7, 0xE7}
 
 /* Colors */
