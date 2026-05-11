@@ -98,7 +98,7 @@ SCRIPTS_INSTALL_DIR="${CPCU_DIR}/scripts"
 MODEL_DIR="${CPCU_DIR}/models"
 LOG_DIR="${CPCU_ROOT}/log"
 DATASETS_DIR="${CPCU_ROOT}/datasets"
-WS_INFO_FILE="${CPCU_ROOT}/config/ws_active.txt"
+WS_INFO_FILE="/tmp/cpcu_ws_active.txt"
 
 SESSION_NAME="cpcu"
 LAUNCH_MODE=""          # set by each command for log labeling

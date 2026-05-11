@@ -20,8 +20,8 @@ import sys, os, time, struct, argparse, json
 
 # Add parent dirs so cpcu_ipc_bridge is importable
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', 'python'))
-sys.path.insert(0, os.path.join(HERE, '..', 'scripts'))
+sys.path.insert(0, os.path.join(HERE, '..', 'python'))    # dev tree
+sys.path.insert(0, '/opt/cpcu/python')                     # installed
 
 try:
     from cpcu_ipc_bridge import IPCBridge

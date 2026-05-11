@@ -539,23 +539,28 @@ void draw_page_waves(int r, IPC_Context *ipc)
         r++;
 
         int big_w = g_tui_w - 6;
-        /* Scale the big plot to available height instead of a fixed constant.
-         * On a 24-line terminal this gives ~14; on a 50-line terminal ~40. */
-        int big_h = g_term_h - r - 6;   /* leave room for axis + footer */
-        if(big_h < WAVE_PLOT_H_BIG) big_h = WAVE_PLOT_H_BIG;  /* floor at original */
-        if(big_h > 40) big_h = 40;                             /* sane cap */
+        /* Scale big plot to available terminal height. On a tall terminal
+         * this gives a large plot; on a standard 24-line terminal it shrinks
+         * to fit. Never overflow the terminal bounds. */
+        int big_avail = g_term_h - r - 4;         /* leave footer + margin */
+        int big_h = big_avail;
+        if(big_h < 4)  big_h = 4;                 /* absolute minimum      */
+        if(big_h > 40) big_h = 40;                /* sane cap for huge terms */
         draw_waveform(r, 3, big_w, big_h, wave_sel_ch, CP_GOOD);
         r += big_h + 2;
     }
     else
     {
         /* ───── ALL 8 CHANNELS (mini-plots, 2 columns x 4 rows) ───── */
-        /* Scale mini plot height to terminal: 4 rows per column, each
-         * needs (mini_h + 2) rows. Available = footer row minus current r. */
-        int avail_rows = g_term_h - r - 3;    /* leave room for footer */
+        /* 4 channels per column, each uses (mini_h + 2) rows. Compute
+         * mini_h from what's actually available so we never draw past
+         * the terminal bottom. On a 24-line terminal this gives ~2-3
+         * rows per plot; on a 50-line terminal, up to 8. */
+        int avail_rows = g_term_h - r - 2;        /* leave footer row      */
+        if(avail_rows < 8) avail_rows = 8;         /* at least show something */
         int mini_h = (avail_rows / 4) - 2;
-        if(mini_h < 4)   mini_h = 4;            /* readable minimum */
-        if(mini_h > 14)  mini_h = 14;           /* sane maximum     */
+        if(mini_h < 2)   mini_h = 2;               /* absolute minimum      */
+        if(mini_h > 12)  mini_h = 12;              /* sane cap              */
         int mini_w = g_col_r - 4;
         if(mini_w < 20) mini_w = 20;
 
@@ -1832,8 +1837,7 @@ void draw_page_config(int r, IPC_Context *ipc)
     draw_lv(r, 1, "TUI version:",  CP_CYAN, "v3.4-pageorder");
     /* Check if ws_active.txt exists — written by launch.sh when web dashboard starts */
     {
-        FILE *ws_f = fopen("config/ws_active.txt", "r");
-        if(!ws_f) ws_f = fopen("/opt/cpcu/config/ws_active.txt", "r");
+        FILE *ws_f = fopen("/tmp/cpcu_ws_active.txt", "r");
         if(ws_f)
         {
             char ws_url[128] = {0};
