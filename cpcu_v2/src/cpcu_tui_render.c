@@ -36,17 +36,27 @@ int  g_slider_w  =   20;
 
 void layout_update(void)
 {
-    /* Query actual terminal size from the OS. ncurses' internal stdscr
-     * dimensions can be stale when tmux resizes the pane (detach/attach,
-     * manual resize) because SIGWINCH delivery to ncurses is unreliable
-     * inside tmux. This ioctl always returns the real dimensions. */
-    struct winsize ws;
+    /* Query actual terminal size from the kernel. ncurses can be stale
+     * when tmux resizes the pane (detach → attach, window drag, etc.)
+     * because SIGWINCH delivery inside tmux is unreliable. */
+    struct winsize ws = {0};
     if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 &&
        ws.ws_row > 0 && ws.ws_col > 0)
     {
-        if(ws.ws_row != g_term_h || ws.ws_col != g_term_w)
+        int cur_h, cur_w;
+        getmaxyx(stdscr, cur_h, cur_w);
+        if(ws.ws_row != cur_h || ws.ws_col != cur_w)
         {
-            resizeterm(ws.ws_row, ws.ws_col);
+            /* Size changed — reinitialize ncurses with actual dimensions.
+             * endwin+refresh is the portable resize idiom. We must re-apply
+             * all terminal settings because the reinit resets them. */
+            endwin();
+            refresh();
+            keypad(stdscr, TRUE);
+            nodelay(stdscr, TRUE);
+            curs_set(0);
+            noecho();
+            cbreak();
             clear();
         }
     }
@@ -55,7 +65,7 @@ void layout_update(void)
     g_tui_w     =   g_term_w;
     if(g_tui_w  <   TUI_MIN_WIDTH)      g_tui_w = TUI_MIN_WIDTH;
     g_col_r     =   g_tui_w / 2;
-    /* Bars and sliders scale with width: roughly quarter of the screen */
+    /* Bars and sliders scale with width */
     g_bar_w     =   (g_col_r - 8);
     if(g_bar_w  <   14) g_bar_w = 14;
     if(g_bar_w  >   50) g_bar_w = 50;
