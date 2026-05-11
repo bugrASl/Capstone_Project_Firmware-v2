@@ -357,6 +357,7 @@ const wsURL = (location.protocol === 'https:' ? 'wss://' : 'ws://')
 let ws = null;
 let reconnectMs = 250;
 let waveStream = 'raw';
+let waveZoomCh = -1;  /* -1 = all channels, 0-7 = zoomed */
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -522,18 +523,46 @@ function renderWaves() {
     const plotW = W - padL - padR;
     const trackH = (H - padT - padB) / N_CH;
 
-    /* Per-channel zero line + label */
-    waveCtx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--plot-grid').trim() || 'rgba(0,0,0,0.07)';
-    waveCtx.lineWidth = 1;
-    waveCtx.fillStyle = isDark ? '#999' : '#666';
-    waveCtx.font = '11px monospace';
-    for(let ch = 0; ch < N_CH; ch++) {
-        const yMid = padT + ch * trackH + trackH / 2;
+    /* Per-channel background stripes + separator lines + label.
+     * Alternating backgrounds make channels easy to distinguish.
+     * Click a channel label to zoom into single-channel view. */
+    waveCtx.font = '12px monospace';
+    const visibleChs = (waveZoomCh >= 0) ? [waveZoomCh] : Array.from({length: N_CH}, (_, i) => i);
+    const chH = H / visibleChs.length;
+
+    for(let i = 0; i < visibleChs.length; i++) {
+        const ch = visibleChs[i];
+        const yTop = i * chH;
+
+        /* Alternating background */
+        if(i % 2 === 1) {
+            waveCtx.fillStyle = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.025)';
+            waveCtx.fillRect(padL, yTop, plotW, chH);
+        }
+
+        /* Separator line between channels */
+        if(i > 0) {
+            waveCtx.strokeStyle = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)';
+            waveCtx.lineWidth = 1;
+            waveCtx.beginPath();
+            waveCtx.moveTo(padL, yTop);
+            waveCtx.lineTo(padL + plotW, yTop);
+            waveCtx.stroke();
+        }
+
+        /* Zero line (midpoint of each channel) */
+        const yMid = yTop + chH / 2;
+        waveCtx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+        waveCtx.lineWidth = 0.5;
         waveCtx.beginPath();
         waveCtx.moveTo(padL, yMid);
         waveCtx.lineTo(padL + plotW, yMid);
         waveCtx.stroke();
-        waveCtx.fillText('ch' + ch, 4, yMid + 4);
+
+        /* Channel label */
+        waveCtx.fillStyle = (waveZoomCh === ch) ? (isDark ? '#5DCAA5' : '#0F6E56') : (isDark ? '#999' : '#666');
+        waveCtx.font = (waveZoomCh >= 0) ? 'bold 14px monospace' : '12px monospace';
+        waveCtx.fillText('ch' + ch + (waveZoomCh === ch ? ' [click to unzoom]' : ''), 4, yMid + 4);
     }
 
     /* Wave traces. Both raw and filtered are normalized to [0..1]
@@ -543,18 +572,19 @@ function renderWaves() {
      * can compare amplitude. */
     const drawStream = (data, color, n_samples) => {
         if(!data) return;
-        for(let ch = 0; ch < N_CH; ch++) {
+        for(let i = 0; i < visibleChs.length; i++) {
+            const ch = visibleChs[i];
             const series = data[ch];
             if(!series || !series.length) continue;
             waveCtx.strokeStyle = color;
-            waveCtx.lineWidth = 1.2;
+            waveCtx.lineWidth = (waveZoomCh >= 0) ? 1.8 : 1.2;
             waveCtx.beginPath();
-            const yTop = padT + ch * trackH;
-            for(let i = 0; i < series.length; i++) {
-                const x = padL + (i / (series.length - 1)) * plotW;
-                const v = series[i] == null ? 0 : Math.abs(series[i]);
-                const y = yTop + trackH - Math.min(v * trackH, trackH * 0.95);
-                if(i === 0) waveCtx.moveTo(x, y);
+            const yTop = i * chH;
+            for(let j = 0; j < series.length; j++) {
+                const x = padL + (j / (series.length - 1)) * plotW;
+                const v = series[j] == null ? 0 : Math.abs(series[j]);
+                const y = yTop + chH - Math.min(v * chH, chH * 0.95);
+                if(j === 0) waveCtx.moveTo(x, y);
                 else waveCtx.lineTo(x, y);
             }
             waveCtx.stroke();
@@ -576,6 +606,19 @@ function renderWaves() {
     }
 }
 
+/* Click on wave canvas to zoom into a channel (or unzoom) */
+document.getElementById('wave-canvas').addEventListener('click', (e) => {
+    const rect = e.target.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const H = rect.height;
+    if(waveZoomCh >= 0) {
+        waveZoomCh = -1;  /* unzoom */
+    } else {
+        const ch = Math.floor(y / (H / 8));
+        if(ch >= 0 && ch < 8) waveZoomCh = ch;
+    }
+    renderWaves();
+});
 window.addEventListener('resize', renderWaves);
 
 /* ============================================================

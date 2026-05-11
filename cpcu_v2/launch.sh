@@ -30,8 +30,6 @@
 ##      ./launch.sh test-safety-demo       Fault-injection demo (no hardware)
 ##      ./launch.sh test-system            System requirements verification (live)
 ##
-##      ./launch.sh test-system            System-level SYS-REQ verification (live)
-##      ./launch.sh test-system --duration 30    Longer capture window
 ##
 ##    RUNTIME / COMPILE-TIME TUNING:
 ##      ./launch.sh configure              Interactive (compile-time)
