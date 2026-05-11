@@ -1,28 +1,15 @@
 /**
- *  @file       cpcu_tui_render.c
- *  @brief      TUI render layer — drawing primitives, helpers, page draws.
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    3.4 (multi-file split)
+ *  @file   cpcu_tui_render.c
+ *  @brief  TUI rendering — layout computation, page drawing, waveform plots.
  *
- *  Owns all interaction with ncurses and the layout globals
- *  (g_term_w/h, g_tui_w, g_col_r, g_bar_w, g_slider_w). Reads — never
- *  writes — the data buffers maintained by cpcu_tui_data.c (sensor
- *  ring waveform buffer, dataset capture state, demo synthesis state)
- *  and the main-module state (current_page, demo_mode).
- *
- *  Split structure:
- *      §1 Layout & shared constants (g_term_*, SERVO_NAMES, etc.)
- *      §2 State→string + signal helpers (state_str, batt_str, ZCR, RMS)
- *      §3 Drawing primitives (draw_lv, draw_bar, draw_slider, draw_section,
- *         draw_hline, now_ms)
- *      §4 Tab-bar + footer (draw_header, draw_footer)
- *      §5 Page renderers (one block per page)
- *      §6 Waveform line-trace (draw_waveform — used by Page 4)
+ *  Owns all terminal layout globals (g_term_w/h, g_tui_w, g_col_r, g_bar_w).
+ *  Provides draw_page_*() for each TUI page, draw_header/footer, bar/slider
+ *  primitives, and the ASCII waveform renderer. Layout auto-scales to
+ *  terminal dimensions on every frame via layout_update().
  */
 
 #include "cpcu_tui.h"
-#include "cpcu_tui_editor.h"        /* v2.3.8 — ED_Render */
+#include "cpcu_tui_editor.h"        /* ED_Render */
 
 #include <ctype.h>
 #include <math.h>
@@ -54,7 +41,7 @@ void layout_update(void)
     /* Bars and sliders scale with width: roughly quarter of the screen */
     g_bar_w     =   (g_col_r - 8);
     if(g_bar_w  <   14) g_bar_w = 14;
-    if(g_bar_w  >   32) g_bar_w = 32;
+    if(g_bar_w  >   50) g_bar_w = 50;
     g_slider_w  =   g_bar_w;
 }
 
@@ -552,13 +539,28 @@ void draw_page_waves(int r, IPC_Context *ipc)
         r++;
 
         int big_w = g_tui_w - 6;
-        draw_waveform(r, 3, big_w, WAVE_PLOT_H_BIG, wave_sel_ch, CP_GOOD);
-        r += WAVE_PLOT_H_BIG + 2;
+        /* Scale big plot to available terminal height. On a tall terminal
+         * this gives a large plot; on a standard 24-line terminal it shrinks
+         * to fit. Never overflow the terminal bounds. */
+        int big_avail = g_term_h - r - 4;         /* leave footer + margin */
+        int big_h = big_avail;
+        if(big_h < 4)  big_h = 4;                 /* absolute minimum      */
+        if(big_h > 40) big_h = 40;                /* sane cap for huge terms */
+        draw_waveform(r, 3, big_w, big_h, wave_sel_ch, CP_GOOD);
+        r += big_h + 2;
     }
     else
     {
         /* ───── ALL 8 CHANNELS (mini-plots, 2 columns x 4 rows) ───── */
-        int mini_h = WAVE_PLOT_H;
+        /* 4 channels per column, each uses (mini_h + 2) rows. Compute
+         * mini_h from what's actually available so we never draw past
+         * the terminal bottom. On a 24-line terminal this gives ~2-3
+         * rows per plot; on a 50-line terminal, up to 8. */
+        int avail_rows = g_term_h - r - 2;        /* leave footer row      */
+        if(avail_rows < 8) avail_rows = 8;         /* at least show something */
+        int mini_h = (avail_rows / 4) - 2;
+        if(mini_h < 2)   mini_h = 2;               /* absolute minimum      */
+        if(mini_h > 12)  mini_h = 12;              /* sane cap              */
         int mini_w = g_col_r - 4;
         if(mini_w < 20) mini_w = 20;
 
@@ -1289,7 +1291,7 @@ void draw_page_health(int r, IPC_Context *ipc,
     else
         ADD_ROW("IO loop",     0, "hb %u ms, poll %u us", hb_age_ms, max_poll);
 
-    /* 4. IPC ring (v2.3: ring overflows are recoverable; only flag a sustained burst) */
+    /* 4. IPC ring (ring overflows are recoverable; only flag a sustained burst) */
     if(overflows > 100)
         ADD_ROW("IPC ring",    2, "%u overflows  (DSP can't keep up)", overflows);
     else if(ring_fill > 900 || overflows > 0)
@@ -1356,7 +1358,7 @@ void draw_page_health(int r, IPC_Context *ipc,
     else
         ADD_ROW("SAFE trips",  2, "%u  (persistent instability)", safe_ents);
 
-    /* 11. v2.3.7 gripper stall watchdog. Counts every time cpcu_io
+    /* 11. Gripper stall watchdog. Counts every time cpcu_io
      * had to retreat the gripper from grip_firm because it had been
      * pinned at the floor for grip_stall_recover_ms. Single fires
      * are normal during heavy gripping; persistent fires suggest
@@ -1646,13 +1648,11 @@ void draw_page_dataset(int r, IPC_Context *ipc)
 
     /* Auto-size plot height from what's left. We have 4 plot rows in a 2x4
      * grid, each consuming (plot_h + 1) rows for the trace + axis line.
-     * Cap at a sane upper bound so a tall window doesn't produce a single
-     * giant plot per channel — at ~6 rows the line trace already gives 30
-     * sub-row resolution which is plenty. */
+     * Scale with terminal height so tall windows give bigger plots. */
     int avail   = max_r - r;          /* rows we can use         */
     int plot_h  = (avail / 4) - 1;    /* per plot, minus its axis*/
-    if(plot_h < 2)  plot_h = 2;       /* don't go below original */
-    if(plot_h > 6)  plot_h = 6;       /* cap at scope-readable   */
+    if(plot_h < 2)  plot_h = 2;       /* don't go below minimum  */
+    if(plot_h > 14) plot_h = 14;      /* cap at readable maximum */
 
     for(int i = 0; i < 4 && r + plot_h + 1 <= max_r; i++)
     {
@@ -1684,7 +1684,7 @@ void draw_page_dataset(int r, IPC_Context *ipc)
  */
 void draw_page_config(int r, IPC_Context *ipc)
 {
-    /*==================== EDIT-MODE BANNER (v2.3.4) ====================*/
+    /*==================== EDIT-MODE BANNER ====================*/
     /*  Shows the current handshake state. The banner consumes one row
      *  at the very top of the CONFIG page so it's always visible while
      *  editing.
@@ -1741,7 +1741,7 @@ void draw_page_config(int r, IPC_Context *ipc)
     attroff(COLOR_PAIR(banner_color) | A_BOLD);
     r += 2;
 
-    /* v2.3.8: in EDITING state, render the live editor instead of the
+    /* in EDITING state, render the live editor instead of the
      * spec-sheet view. The editor's key bindings are handled in
      * cpcu_tui.c's main loop; here we only draw. Outside EDITING the
      * spec sheet renders (the user is viewing, not editing). */
@@ -1829,13 +1829,13 @@ void draw_page_config(int r, IPC_Context *ipc)
 
     draw_hline(r - 1, 0, g_tui_w);
 
-    /*==================== BUILD INFO + WEB DASHBOARD ====================*/
+    /*==================== BUILD INFO ====================*/
     draw_section(r, 1, "BUILD");
     draw_section(r, g_col_r, "WEB DASHBOARD");
     r++;
 
     draw_lv(r, 1, "TUI version:",  CP_CYAN, "v3.4-pageorder");
-    /* Show web dashboard URL when active (written by launch.sh) */
+    /* Check if ws_active.txt exists — written by launch.sh when web dashboard starts */
     {
         FILE *ws_f = fopen("/tmp/cpcu_ws_active.txt", "r");
         if(ws_f)
@@ -1852,7 +1852,10 @@ void draw_page_config(int r, IPC_Context *ipc)
                 }
             }
             fclose(ws_f);
-            draw_lv(r, g_col_r, "URL:",  CP_GOOD, "%s", ws_url[0] ? ws_url : "ACTIVE");
+            if(ws_url[0])
+                draw_lv(r, g_col_r, "URL:",  CP_GOOD, "%s", ws_url);
+            else
+                draw_lv(r, g_col_r, "Status:",  CP_GOOD, "ACTIVE (reading config...)");
         }
         else
         {
@@ -1860,8 +1863,9 @@ void draw_page_config(int r, IPC_Context *ipc)
         }
     }
     r++;
-    draw_lv(r, 1, "Built:",  CP_DIM, "%s %s", __DATE__, __TIME__);
+
     draw_lv(r, g_col_r, "Bind:", CP_CYAN, "0.0.0.0:8765  (LAN-shared)");
+    draw_lv(r, 1, "Built:",  CP_DIM, "%s %s", __DATE__, __TIME__);
     r++;
     draw_lv(r, 1, "Compiler:",     CP_CYAN,
 #ifdef __GNUC__
@@ -1870,6 +1874,9 @@ void draw_page_config(int r, IPC_Context *ipc)
             "unknown"
 #endif
             );
+    draw_lv(r, g_col_r, "Viewers:", CP_CYAN, "multi-viewer, read-only");
+    r++;
+    draw_lv(r, 1, "Std:",    CP_CYAN, "C%ld", __STDC_VERSION__ / 100L);
     draw_lv(r, g_col_r, "Logs:",  CP_CYAN, "cpcu_v2/log/");
 }
 
@@ -1901,7 +1908,7 @@ void draw_footer(int r)
         else if(current_page == PAGE_DATASET)
             mvprintw(r, 1, "1-7:pg  LEFT/RIGHT:label  s,SPACE:start/stop  r:cancel  t:raw/filt  q:quit");
         else if(current_page == PAGE_CONFIG)
-            mvprintw(r, 1, "1-7:pages  e:edit  q:quit  |  Ctrl+S:save  ESC:cancel  r:revert");
+            mvprintw(r, 1, "1-7:pages  e:edit mode  q:quit  |  Ctrl+S:save  ESC:cancel  r:revert field");
         else
             mvprintw(r, 1, "1-7:pages  q:quit  10 Hz  |  read-only (zero RT impact)");
     }
@@ -1934,3 +1941,4 @@ void draw_footer(int r)
 }
 
 /*==========================================================================================*/
+
