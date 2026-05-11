@@ -521,7 +521,7 @@ static void ev_handler(struct mg_connection *c, int ev, void *ev_data)
         }
         else
         {
-            struct { const char *root_dir; } opts = { g_static_dir };
+            struct mg_http_serve_opts opts = { .root_dir = g_static_dir };
             mg_http_serve_dir(c, hm, &opts);
         }
     }
@@ -536,7 +536,7 @@ static void ev_handler(struct mg_connection *c, int ev, void *ev_data)
 static void broadcast(struct mg_mgr *mgr, const char *buf, size_t len)
 {
     int n_sent = 0;
-    for(struct mg_connection *c = (struct mg_connection *)mgr->_opaque;
+    for(struct mg_connection *c = mgr->conns;
         c != NULL; c = c->next)
     {
         if(c->is_websocket && !c->is_closing)
@@ -577,6 +577,15 @@ static void parse_args(int argc, char **argv)
         else if(strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
         {
             usage();
+            exit(0);
+        }
+        else if(strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0)
+        {
+#ifdef CPCU_WS_HAVE_MONGOOSE
+            fprintf(stdout, "cpcu_ws v2.4.0 (Mongoose bridge)\n");
+#else
+            fprintf(stdout, "cpcu_ws v2.4.0 (BUILT WITHOUT MONGOOSE — stub)\n");
+#endif
             exit(0);
         }
         else

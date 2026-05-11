@@ -965,3 +965,1500 @@ Interactive phases (`pca`, `signal`, `signal-demo`) use `exec` to replace the sh
 | Servo stall current exceeds PSU | Medium | 3A PSU may be insufficient for 6-servo stall. Add 1000 uF cap or upgrade to 6A |
 | Thermal throttle at 85C | Low | SAFETY_FeedTemperature forces SAFE at 82C |
 | Servo snap on gesture change | Eliminated | cpcu_smooth slew limiter: max 40 us/frame at 50 Hz |
+
+
+---
+
+# Appendix A: Boot and Sync — Cold-Start Choreography
+
+> **Merged from:** `BOOT_AND_SYNC.md` (v2.3.1).
+> Previously a standalone doc; folded into ARCHITECTURE as it details
+> a core safety subsystem behaviour.
+
+## TL;DR
+
+Pre-v2.3.1, you had to power on CPCU **after** BSAU was already
+transmitting (or hold BSAU in reset until CPCU was ready) to avoid
+the system declaring a radio fault during the first second of boot.
+This was annoying and led to the workaround of holding the BSAU
+reset button while booting CPCU, then releasing it.
+
+v2.3.1 adds a **5 second cold-start grace period** to the radio
+timeout. You can now power on CPCU and BSAU **in any order** with
+several seconds of slack between them, and the system reaches
+steady state without ever spuriously entering SAFE.
+
+The grace doesn't compromise safety: if BSAU is genuinely dead
+(unconnected, dead battery, broken NRF), CPCU still flags the radio
+fault — just 5 seconds later than during normal operation. That
+delay is acceptable for cold-boot, unacceptable for runtime drops.
+
+---
+
+## What "sync" means in this system
+
+The BSAU and CPCU are two independent processors with no direct wire
+connection. Their only shared channel is the 2.4 GHz NRF link. So
+"sync" doesn't mean clock synchronization or handshake negotiation —
+it means **they have to start agreeing about packet ordering and
+timing without coordinating their boot moments.**
+
+There are three sync facets to think about, each handled by a
+different mechanism:
+
+### Facet 1 — Sequence number alignment
+
+The BSAU emits a `seq` byte in every packet, incrementing 0..255 then
+wrapping. CPCU keeps an `expected_seq` and reports a "gap" whenever
+the received seq doesn't match.
+
+**Problem on cold start:** When CPCU starts after BSAU has already
+been emitting packets, CPCU's `expected_seq` starts at 0 but the
+incoming packet might have seq=137. That's a "gap" of 137 packets
+which would (a) flood the gap counter, (b) trigger the seq-gap-storm
+fault if the gap is big enough.
+
+**Mechanism:** BSAU sets `WL_FLAG_FIRST_PACKET` in the flags byte of
+its very first packet after boot (and after any NRF recovery).
+CPCU's `SAFETY_FeedPacket` checks that flag and, when set, copies
+the incoming `seq` into `expected_seq` directly — initializing the
+counter from the BSAU's perspective rather than from CPCU's
+arbitrary starting value.
+
+**Result:** No spurious gap on the first packet, regardless of
+power-on ordering.
+
+This was already in place before v2.3.1.
+
+### Facet 2 — Radio fault timeout
+
+CPCU watches the elapsed time since the last received packet
+(`SAFETY_CheckTimeout`). If silence exceeds `SAFETY_RADIO_TIMEOUT_MS`
+(750 ms), the radio is declared faulty and the FSM transitions
+RUNNING → DEGRADED → SAFE.
+
+**Problem on cold start:** If CPCU boots before BSAU, the silence
+counter starts ticking from CPCU's startup. If BSAU takes longer
+than 750 ms to reach steady state and start transmitting (which is
+normal — STM32 boot + NRF init takes ~600 ms by itself, plus any
+delay from the user pressing the reset button), CPCU declares a
+spurious radio fault and parks the arm at neutral. Then when BSAU
+finally starts transmitting, CPCU has to wait through the 3 second
+SAFE-recovery hold before it can use the data.
+
+**Mechanism (v2.3.1):** A new "boot grace" gate in
+`SAFETY_CheckTimeout`. The radio timeout is suppressed if both:
+
+  - No packet has ever been received (`first_packet_seen == false`)
+  - The boot grace period has not yet elapsed
+    (`now - boot_us < SAFETY_RADIO_BOOT_GRACE_MS`)
+
+Once either condition flips, normal timeout semantics resume.
+
+**Result:** The first 5 seconds after CPCU boot are tolerant of
+silence. After that, OR after the first received packet (whichever
+comes first), normal 750 ms timeout applies.
+
+### Facet 3 — Battery state cold-start
+
+CPCU's safety FSM tracks battery hysteresis (low / critical /
+recover) based on the `vbat_raw` field in each packet. With no
+packets, there's no battery reading, so the safety check defaults to
+"battery OK".
+
+**Problem:** No problem in practice. If BSAU eventually starts
+transmitting with a critical battery, the next FeedPacket transitions
+the FSM into the battery fault. There's no race window here because
+the absence of battery data is treated as no-fault (rather than
+defaulting to "assume the worst").
+
+**Mechanism:** None needed. The hysteresis design treats the absence
+of new data as "no change", so battery state simply waits for first
+data.
+
+---
+
+## Why 5 seconds and not 1 second or 30 seconds
+
+### Lower bound: 3 seconds
+
+BSAU's reset → first transmit takes about 600 ms in the well-behaved
+case. With v2.4's bounded-retry NRF init, a marginal radio rail can
+add another ~400 ms (200 ms POR delay + 100 ms backoff × 2 retries).
+That's already 1 second consumed by BSAU's normal boot sequence.
+
+If you're powering on with a switch (rather than carefully
+coordinating reset releases), there's an additional human reaction
+time of ~500 ms between flipping CPCU on and remembering to flip
+BSAU on.
+
+3 seconds gives a comfortable margin without making the user wait.
+
+### Upper bound: ~10 seconds
+
+Two interactions push back against making this much longer:
+
+**`SAFETY_AUTO_CLEAR_MS` is 300 seconds (5 minutes).** If a fault
+clears, the cumulative diagnostic counters auto-zero. With a grace
+of 5 seconds, the system is well clear of any auto-clear corner case.
+A grace of 30+ seconds starts feeling like "the fault detection is
+just slow on boot" rather than "we're waiting for sync".
+
+**Genuinely-dead BSAU diagnosis.** If BSAU is broken (NRF chip dead,
+power rail failed, MCU not booted), CPCU should flag the problem.
+Today it does so 750 ms after BSAU stops transmitting; with 5 second
+grace, the very first detection takes 5 seconds 750 ms. Acceptable.
+With 30 seconds grace, you'd be looking at the dashboard for half a
+minute thinking "everything's fine" while it actually isn't.
+
+5 seconds is the sweet spot: long enough to absorb realistic boot
+timing variance, short enough that genuine boot failures are flagged
+within 6 seconds.
+
+### Why it's a `#define`, not a runtime config
+
+Like all safety thresholds (`SAFETY_RADIO_TIMEOUT_MS`,
+`SAFETY_VBAT_CRITICAL_V`, etc.), the grace period defines what
+"safe" means. Live-tunable safety thresholds are a recipe for a
+misclick disabling protection. So this lives in `cpcu_safety.h`
+where it can only be changed via `configure.sh` (when that lands in
+v2.3.3) or by directly editing the header and rebuilding.
+
+---
+
+## Implementation details
+
+### Code change footprint
+
+Three small additions:
+
+`cpcu_v2/include/cpcu_safety.h`:
+```c
+#define SAFETY_RADIO_BOOT_GRACE_MS      5000
+```
+And two new fields in `SAFETY_Context`:
+```c
+uint64_t        boot_us;
+bool            first_packet_seen;
+```
+
+`cpcu_v2/src/cpcu_safety.c`, `SAFETY_Init`:
+```c
+ctx->boot_us = safety_now_us();
+/* memset above already cleared first_packet_seen */
+```
+
+`cpcu_v2/src/cpcu_safety.c`, `SAFETY_FeedPacket`:
+```c
+ctx->first_packet_seen = true;     /* added at top */
+```
+
+`cpcu_v2/src/cpcu_safety.c`, `SAFETY_CheckTimeout`:
+```c
+if(!ctx->first_packet_seen &&
+   (now_us - ctx->boot_us) / 1000 < SAFETY_RADIO_BOOT_GRACE_MS)
+{
+    return;
+}
+/* ...existing timeout logic unchanged... */
+```
+
+That's the entire mechanism. No changes to cpcu_io.c, no changes to
+the IPC layout, no changes to the BSAU side.
+
+### Why `first_packet_seen` is separate from `seq_init`
+
+`seq_init` already exists; it's set when a packet with
+`WL_FLAG_FIRST_PACKET` is seen. Couldn't we reuse it for the grace
+gate?
+
+No, for two reasons:
+
+1. **A BSAU restart re-asserts FIRST_PACKET.** After v2.4's NRF
+   recovery, the BSAU sends a new FIRST_PACKET-flagged packet, which
+   would re-set `seq_init`. If the grace gate used `seq_init`, every
+   NRF recovery would re-enter grace mode — defeating the whole
+   point of the timeout for any BSAU restart after the first one.
+
+2. **`first_packet_seen` is intentionally a "we've ever heard from
+   them" flag, not a "they've identified themselves" flag.** A bug
+   in BSAU that drops the FIRST_PACKET flag should still let the
+   grace expire on first packet receipt. Decoupling them keeps the
+   grace logic robust.
+
+### Compatibility
+
+- **No public API change.** No new arguments, no removed functions.
+  Existing callers compile and link unchanged.
+- **No IPC schema change.** The new fields live in the in-process
+  SAFETY_Context, which is private to cpcu_safety.c (and tests).
+- **No test regressions.** Existing tests go through `warm_up`
+  which calls `SAFETY_FeedPacket` 20 times, setting
+  `first_packet_seen = true` long before any `CheckTimeout` call.
+- **Profile-independent on BSAU side.** No BSAU code touched. All
+  BSAU profiles (RELEASE / DEBUG / DATASET / TEST_*) emit packets
+  with FIRST_PACKET set the same way; CPCU's grace gate doesn't care
+  which profile is on the other end.
+
+### Interaction with existing safety mechanisms
+
+- **NRF recovery (BSAU v2.4):** When BSAU recovers its NRF mid-session
+  and resumes transmitting, `first_packet_seen` is already true on
+  the CPCU side, so the grace gate is a no-op. The radio timeout
+  uses normal 750 ms semantics. Recovery feels identical to v2.3.0.
+- **Ring overflow recovery (CPCU v2.3):** Independent of grace.
+  Different fault, different recovery timer.
+- **SAFE auto-recovery (`SAFETY_SAFE_RECOVER_MS = 3 s`):** Unchanged.
+  If the system *does* enter SAFE (e.g. after a real fault), the
+  3-second hold-clear-recover semantics still apply.
+- **Auto-clear of cumulative counters (`SAFETY_AUTO_CLEAR_MS =
+  300 s`):** Unchanged. Grace expires long before auto-clear is
+  relevant.
+
+---
+
+## Testing
+
+`safety_testbench` gained a TB-SAF09 group with four sub-checks:
+
+| Test | Setup | Expected |
+|---|---|---|
+| TB-SAF09a | RUNNING + 2 s of silence inside grace | stays RUNNING |
+| TB-SAF09b | RUNNING + grace expired with no packets | transitions to DEGRADED |
+| TB-SAF09c | First packet during grace, then 800 ms silence | normal timeout fires (DEGRADED) |
+| TB-SAF09d | Post-warmup timeout (regression test) | unchanged 750 ms behaviour |
+
+Run from `cpcu_v2/`:
+```bash
+build/safety_testbench
+# Expected: 38 PASS, 0 FAIL  (was 33 pre-v2.3.1)
+```
+
+Or via the full Phase 1:
+```bash
+./launch.sh test
+# Expected: 7 + 38 + 65 = 110 PASS
+```
+
+---
+
+## Operating procedure (the practical impact)
+
+### Before v2.3.1
+
+```
+Power on CPCU → wait for kernel to start → quickly press BSAU reset
+  → release reset within 750 ms → both running together
+  → if you're slow, system enters SAFE for 3 seconds
+```
+
+The "manual reset dance" was annoying for development and
+unacceptable for a real prosthetic.
+
+### After v2.3.1
+
+```
+Power on either side. Wait. Power on the other side. Done.
+```
+
+Three valid orderings, all handled identically:
+
+- **CPCU first**: CPCU boots, sees no packets, sits in grace, waits.
+  BSAU boots later, transmits, CPCU lifts grace, normal operation.
+- **BSAU first**: BSAU emits packets to nobody. CPCU boots, immediately
+  starts receiving, lifts grace, normal operation.
+- **Together**: Whichever finishes initializing first; the
+  late-starter joins normally.
+
+### Edge case: BSAU is dead
+
+```
+Power on CPCU. Wait 5 seconds. Radio fault triggers. Arm parks at
+neutral. TUI shows RADIO_SAFE in red. Diagnostics show "no packet
+received".
+```
+
+This is the *correct* behaviour. The grace doesn't hide failures; it
+just gives them a 5-second sync window before flagging.
+
+### Edge case: BSAU starts late
+
+```
+Power on CPCU at t=0. BSAU starts at t=20s.
+- t=0 to t=5s:    grace active, sits in RUNNING.
+- t=5s to t=5.75s: grace expired, last_pkt_rcv_us = boot_us, silence
+                   already huge → fault.
+- t=5.75s:        DEGRADED.
+- t=7.25s:        SAFE (DEGRADED + 1.5s).
+- t=20s:          BSAU starts transmitting.
+- t=20s+ε:        FeedPacket lifts first_packet_seen, but state ==
+                   SAFE so we wait for SAFE_RECOVER.
+- t=20s + 3s:     SAFE → RUNNING via normal recovery path.
+```
+
+So a 20-second-late BSAU costs about 3 seconds of recovery, which
+matches the normal "we lost the radio for a while" recovery time.
+Reasonable.
+
+---
+
+## See also
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) §6 — full safety FSM
+- [`cpcu_safety.h`](../include/cpcu_safety.h) — header with the new constant
+- [`cpcu_safety.c`](../src/cpcu_safety.c) — `SAFETY_CheckTimeout` and `SAFETY_FeedPacket`
+- [`safety_testbench.c`](../test/safety_testbench.c) — TB-SAF09
+- BSAU v2.4 NRF non-fatal init (`bsau_v2/docs/BSAU_ARCHITECTURE.md` §7) — the
+  other half of "make the system tolerant of cold-start oddities"
+
+
+---
+
+# Appendix B: Velocity-Mode Gestures — Stateful Target Integration
+
+> **Merged from:** `VELOCITY_MODE.md` (v2.3.5).
+> Describes the integration formula and hybrid freeze/velocity model
+> that lives inside cpcu_dsp.py.
+
+## TL;DR
+
+Until v2.3.4, every gesture mapped to a fixed servo pose: hold
+`biceps_flex` → arm at position X, holding longer doesn't move the
+arm any further. Visible behaviour was a step function of detected
+class.
+
+v2.3.5 adds **velocity mode**. Per-gesture, per-servo rates (in
+µs/s) live in `runtime.json`'s `gesture_velocity` object. While a
+velocity-mode gesture is detected, cpcu_dsp.py **integrates** the
+servo target every inference tick:
+
+```
+target[s] += rate[s] × dt × confidence_scale
+```
+
+Holding the gesture longer = arm closes deeper. Releasing snaps to
+"rest" (freeze mode) which holds the last position. Re-engaging the
+gesture continues integrating from where you left off.
+
+`rest` is special: it's always freeze-mode and snaps target back
+toward neutral, so a long rest period drains the arm to home pose.
+
+The system is **hybrid**: any class without a velocity entry stays
+in freeze mode using the legacy `GESTURE_SERVO_MAP` fixed pose,
+preserving v2.3.4 behaviour as the safe default.
+
+---
+
+## 1. Why velocity mode
+
+The original fixed-pose model had two problems:
+
+**No fine control.** A flex either snapped the elbow to 1700 µs or
+left it at neutral. There's no way to express "close partway",
+"close more", or any in-between state. Real prosthetic users want
+graded control — squeeze gently, then squeeze harder.
+
+**No state persistence.** A momentary EMG dropout (signal noise,
+brief muscle relaxation, classifier hiccup) immediately collapses
+the arm back to neutral. The user has to re-flex from scratch.
+
+Velocity mode fixes both:
+- Hold the gesture for 2 s instead of 1 s → arm moves twice as far.
+- Brief detection dropouts hold the current target instead of
+  resetting it. The arm "remembers" where it was.
+- Confidence-scaled integration speed means weak/wavering gestures
+  creep slowly while strong sustained gestures move at full speed.
+
+---
+
+## 2. The integration formula
+
+Run every inference tick (~10 Hz):
+
+```
+dt              = now - last_integrate_t
+conf_frac       = svm_probability(current_state) / 100.0
+
+if conf_frac <= interp_floor:           # 0.40 default
+    scale = 0.0                         # gesture too weak; freeze
+elif conf_frac >= interp_ceil:          # 0.85 default
+    scale = 1.0                         # full speed
+else:
+    scale = (conf_frac - floor) / (ceil - floor)    # linear lerp
+
+if behavior[current_state].mode == "freeze":
+    if current_state == "rest":
+        target = neutral                # rest drains to home
+    else:
+        target = target                 # other freeze classes hold
+else:    # velocity mode
+    for s in range(NUM_SERVOS):
+        target[s] += rate[s] * dt * scale
+        target[s] = clamp(target[s], SERVO_MIN_US[s], SERVO_MAX_US[s])
+
+publish_motor_cmd(target)
+```
+
+A few things worth noting:
+
+**`dt` is real wall-clock**, not a fixed cadence assumption. The
+inference loop *aims* for 100 ms but actual ticks vary with system
+load. Using real `dt` keeps motion smooth across jitter.
+
+**Confidence-scaled integration is intentional.** A high-confidence
+sustained gesture moves at full velocity. A wavering 50% confidence
+signal moves at ~25% velocity. This couples the SVM's uncertainty
+directly into how aggressively the arm responds — uncertain user =
+slow arm = safer.
+
+**Clamping is per-servo.** Each channel has its own min/max
+(mechanical limits, NOT the runtime-tunable `servo_min_us`). Once a
+channel saturates, further integration is a no-op. cpcu_io clamps
+again on its side after applying `servo_bias_us`, so the runtime
+config can't escape the safety envelope.
+
+**The integrator runs only outside edit mode.** While
+`edit_mode_request` is set, dsp commits to "rest", clears the target
+to neutral, and stops publishing — see TUI_EDITOR.md §4.
+
+---
+
+## 3. Configuration shape
+
+The schema is documented in
+[`CONFIGURATION.md`](CONFIGURATION.md) §2. The relevant subset:
+
+```json
+{
+    "interp_conf_floor_pct": 40,
+    "interp_conf_ceil_pct":  85,
+    "hysteresis_votes": 3,
+    "gesture_velocity": {
+        "rest":         [0, 0, 0, 0, 0, 0],
+        "biceps_flex":  [0, 200, 0, 0, 0, 0],
+        "hand_flex":    [200, 0, 0, 200, 200, 200],
+        "hand_open":    [-200, 0, 0, -200, -200, -200]
+    }
+}
+```
+
+### Key rules
+
+- **Class names must match `model.classes_` exactly.** Unknown names
+  get a warning and are dropped. Renaming a class in the trained
+  model means you have to update this JSON to match.
+- **6 entries per row, indexed by servo channel.** Order:
+  S0=Base, S1=Upper, S2=Last, S3=Joint1, S4=Joint2, S5=Gripper.
+- **Negative values reverse direction.** A `hand_open` row with
+  negative rates is the natural antagonist of `hand_flex` —
+  same magnitude, opposite sign.
+- **All-zero rate row is freeze-mode.** Equivalent to omitting the
+  row entirely.
+- **Range is ±5000 µs/s.** Out-of-range values get clamped loudly
+  rather than silently accepted or rejected. 5000 µs/s = full servo
+  range (498→2500 ≈ 2000 µs of travel) in 0.4 seconds — already
+  faster than most users want.
+
+### Tuning advice
+
+Start gentle: 100-200 µs/s. With the default `interp_floor=40` and
+`interp_ceil=85`, an active gesture at 80% confidence integrates at
+~89% × rate = ~178 µs/s. So 200 µs/s feels like "noticeable motion
+over ~1 second". 500 µs/s feels rapid; 1000+ µs/s is hard to control
+in real-time EMG.
+
+If the arm overshoots, lower the rate. If you can't tell the gesture
+is engaged, raise the rate or lower `interp_floor_pct`.
+
+---
+
+## 4. Runtime/static split
+
+The dsp side reads `runtime.json` directly using Python's
+`json` module — separate from the C-side parser in `cpcu_config.c`
+that publishes `IPC_RuntimeConfig` to shared memory.
+
+Why two parsers? The string-keyed `gesture_velocity` map doesn't
+fit the C parser's flat-array model. Adding strings + nested
+objects to the C parser would be ~150 lines of code for a feature
+that only one consumer (dsp) needs. Doing the parse in Python is a
+few `json.loads` calls.
+
+**Consequence**: the IPC `gesture_velocity[][]` field (declared in
+`cpcu_ipc.h` since v2.3.3) stays zero-filled in v2.3.5. It exists
+only as forward-compat reserve for a possible future C consumer
+(no current need).
+
+**Reload semantics**: dsp re-reads `runtime.json` only on full
+restart. SIGHUP to cpcu_kernel re-parses the C-side fields and
+republishes IPC, but does NOT re-trigger dsp's reload. To pick up
+new gesture rows you must restart cpcu_dsp.py:
+
+```bash
+sudo systemctl restart cpcu                  # restarts the whole bundle
+# or
+kill $(pgrep -f cpcu_dsp.py)                 # supervisor respawns it
+```
+
+This is intentional — gesture velocities meaningfully change
+behaviour, and a hot-swap mid-gesture would be jarring. Restart is
+the right cadence.
+
+A future revision could add SIGHUP support to dsp specifically for
+this field. Not yet.
+
+---
+
+## 5. Hybrid behaviour: freeze + velocity coexist
+
+Not every class needs to be velocity-mode. A class without a
+`gesture_velocity` row stays in freeze-mode with its existing
+`GESTURE_SERVO_MAP` fixed pose. This means:
+
+- v2.3.4 deployments upgrade to v2.3.5 with **no behaviour change**
+  if the user doesn't add `gesture_velocity` rows.
+- A subset of classes can be velocity (e.g. just `biceps_flex` and
+  `hand_flex`) while others (e.g. a calibration `wave` class) stay
+  fixed-pose.
+- "rest" is hardcoded to freeze. It exists as the explicit "stop
+  integrating" semantic — re-routing rest to a velocity row would
+  fight the integrator and is not allowed.
+
+The decision tree dsp uses, per inference tick:
+
+```
+if current_state in behavior_map:
+    mode = behavior_map[current_state].mode
+    if mode == "velocity":  → integrate (above formula)
+    else:                   → freeze (hold target; if rest, snap to neutral)
+elif current_state in GESTURE_SERVO_MAP:
+    target = GESTURE_SERVO_MAP[current_state]      # legacy v2.3.4 fallback
+else:
+    target = neutral                                # defensive default
+```
+
+In practice the first branch wins for every class once you've added
+`gesture_velocity` entries. The third branch should never fire if
+the SVM and the JSON agree on class names — but it's there as a
+safety net for class-name drift between training and deployment.
+
+---
+
+## 6. Boot rule, fault recovery, edit-mode interaction
+
+**Boot.** Every fresh start initializes `current_target_us =
+[neutral]*6`. There is **no snapshot persistence** across runs by
+design: a stuck pose from yesterday's session shouldn't define
+today's startup. On boot the arm is at neutral, and integration
+proceeds from there.
+
+**Fault recovery.** When `system_state` transitions to SAFE
+(any safety FSM trigger), dsp snaps `current_target_us` back to
+neutral. cpcu_io has already snapped the smoother to neutral on its
+side, but dsp's mirror of the target needs explicit reset too —
+otherwise when SAFE clears, dsp resumes integration from the
+mid-gesture target it had at fault time, which is surprising.
+
+**Edit mode.** While `edit_mode_request` is set, dsp commits state
+to "rest", suspends publishing, and clears `current_target_us` to
+neutral so the next exit doesn't snap to a held pose. cpcu_io's
+edit-mode handshake (see TUI_EDITOR.md §4) parks the arm at neutral
+in parallel.
+
+**Combination cases:**
+- Boot + immediate SAFE: target stays at neutral (already there).
+- Edit-mode entry mid-flex: target goes to neutral; cpcu_io parks.
+- SAFE-clear after edit-mode exit: integration resumes from
+  neutral (both edit-mode-exit and SAFE-clear reset to neutral).
+- Edit-mode entry while in SAFE: edit-mode handshake completes
+  (smoother is already at neutral, settles immediately).
+
+---
+
+## 7. Testing
+
+`test/test_dsp_pipeline.py` adds six new tests for the runtime
+config loader (TB-DSP11..TB-DSP16, 18 individual checks):
+
+| Group | What |
+|---|---|
+| TB-DSP11 | Missing config file → defaults, no crash |
+| TB-DSP12 | Velocity rows parsed correctly (positive + negative rates) |
+| TB-DSP13 | Out-of-range rates clamped to ±5000, not silently accepted |
+| TB-DSP14 | Unknown class names dropped with a warning |
+| TB-DSP15 | floor ≥ ceil rejected (loader falls back to defaults) |
+| TB-DSP16 | JSONC line comments + trailing commas tolerated |
+
+```bash
+./launch.sh test
+# RESULTS: 186 PASS in Phase 1 (was 168)
+#   7 codec + 38 safety + 28 smoother + 30 config + 83 DSP
+```
+
+The integration math itself isn't unit-tested in v2.3.5. It runs
+inside `run_inference()` which has no clean seam for synthetic
+input — the test would have to mock `time.monotonic()` and
+`ipc.write_motor_cmd`. Reasonable to add later but not blocking.
+
+For end-to-end verification, the live system on hardware:
+
+```bash
+sudo ./launch.sh release
+
+# Hold biceps_flex for 1 second, watch elbow servo position
+# (any servo monitor or scope on the PCA output) — should ramp
+# smoothly from neutral toward closed, not snap there.
+
+# Release. Position holds (freeze mode on rest is "snap to neutral
+# over the smoother's trapezoidal walk").
+
+# Re-flex briefly. Position resumes ramping from where it stopped,
+# not from neutral.
+```
+
+---
+
+## 8. Operating procedure
+
+### First-time setup of velocity gestures
+
+```bash
+# Edit runtime.json with your initial guess at velocities:
+$EDITOR cpcu_v2/config/runtime.json
+
+# Restart so dsp picks up new gesture map:
+sudo systemctl restart cpcu
+
+# Watch the log to confirm rows loaded:
+journalctl -u cpcu -n 20 | grep "velocity-mode"
+# [DSP]   velocity-mode 'biceps_flex': rate=[0, 200, 0, 0, 0, 0]
+```
+
+### Iterative tuning
+
+```bash
+# 1. Make small change to one rate.
+# 2. Restart.
+# 3. Test the gesture.
+# 4. Repeat.
+```
+
+A typical session: pick one channel, halve or double the rate, see
+if it feels better. Most gestures stabilize within 3-4 iterations.
+
+### Reverting to v2.3.4 fixed-pose behaviour
+
+Set every velocity row to all zeros, or delete the
+`gesture_velocity` block entirely. The dsp falls back to
+`GESTURE_SERVO_MAP` for every class.
+
+```json
+"gesture_velocity": {}
+```
+
+### Troubleshooting
+
+**Arm keeps drifting in one direction even when at rest.** A
+velocity row has a non-zero rate that's bigger than your `rest`
+class can drain. Either lower the rate, raise `interp_floor_pct`
+(so `scale=0` more aggressively), or check that `rest` is correctly
+classified by inspecting the TUI's confidence display.
+
+**Arm doesn't move at all.** Check the dsp log for "velocity-mode"
+lines on startup — if absent, the JSON didn't parse. Try `python3
+-c "import json; print(json.load(open('config/runtime.json')))"` to
+catch syntax errors. Also check `interp_conf_ceil_pct` isn't set so
+high that you never hit full scale.
+
+**Arm motion is jerky.** dsp's inference cadence is ~10 Hz; cpcu_io
+smooths between updates at 50 Hz. If motion is jerky, the smoother's
+velocity/accel limits are probably too low — try raising
+`smooth_velocity_us_per_s` or `smooth_accel_us_per_s2`.
+
+---
+
+## 9. See also
+
+- [`CONFIGURATION.md`](CONFIGURATION.md) — full schema for
+  `runtime.json`, including `gesture_velocity`. The runtime/compile
+  split this builds on.
+- [`TUI_EDITOR.md`](TUI_EDITOR.md) §4 — handshake that pauses dsp's
+  velocity integration during calibration.
+- [`JITTER_MITIGATION.md`](JITTER_MITIGATION.md) — the smoother
+  whose `SMOOTH_AllSettled()` cpcu_io uses; same smoother absorbs
+  velocity-mode targets.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) §3.3 — core
+  allocation. dsp on Cores 1-2 owns the integrator; cpcu_io on
+  Core 3 reads the published targets.
+- [`cpcu_v2/python/cpcu_dsp.py`](../python/cpcu_dsp.py) v2.3.5 —
+  `load_dsp_runtime_config()`, the velocity integrator block in
+  `run_inference()`.
+- [`cpcu_v2/config/runtime.json`](../config/runtime.json) — the
+  config file with the example `gesture_velocity` block.
+- [`cpcu_v2/test/test_dsp_pipeline.py`](../test/test_dsp_pipeline.py) —
+  TB-DSP11..TB-DSP16 cover the loader.
+
+
+---
+
+# Appendix C: Soft-Grip Policy + Stall Watchdog
+
+> **Merged from:** `SOFT_GRIP.md` (v2.3.7).
+> Two-layer gripper protection: dsp soft-firm clamp + io stall watchdog.
+
+## TL;DR
+
+The gripper (servo 5) is the only channel that can damage itself —
+it stalls against objects. v2.3.7 adds a **two-layer policy** to
+prevent that:
+
+1. **dsp soft-firm clamp.** In velocity mode, the integrator can't
+   close the gripper past `grip_firm_us` (default 1100 µs) even if
+   `hand_flex` is held longer. One-sided — opening direction is
+   unaffected.
+2. **io stall watchdog.** Hardware-protection backstop. If the
+   smoother's *current position* sits at the mechanical floor for
+   `grip_stall_recover_ms` (default 2000 ms) continuously, retreat
+   to `grip_touch_us` (default 1200 µs) and clamp until the
+   commanded target naturally rises.
+
+Both run automatically. Both reuse runtime config fields that
+have existed since v2.3.3 — no new schema entries.
+
+---
+
+## 1. Why two layers
+
+You might ask: if the dsp clamp prevents the integrator from
+reaching the floor, why does io need a watchdog at all?
+
+Three reasons:
+
+**Edit-mode jogs.** When the TUI live editor lands (v2.3.7+ TBD),
+a user could manually drag the gripper target below `grip_firm_us`.
+dsp isn't publishing during edit mode; the soft clamp wouldn't help.
+
+**Bad config.** A misconfigured `grip_firm_us` (e.g. someone sets
+it to 900 µs not realizing the mechanical floor is 976) would
+let the integrator run all the way down. The watchdog catches it.
+
+**Future input sources.** Anything that publishes motor_cmd —
+WebSocket bridge (v2.4 candidate), test harness, replay mode — gets
+hardware protection without each having to know about soft-grip.
+
+The dsp clamp is **policy** ("don't ask me to close that hard");
+the io watchdog is **mechanism** ("I won't physically stay there").
+Standard layering — policy where the intent is, mechanism where
+the hardware is.
+
+---
+
+## 2. dsp soft-firm clamp
+
+In `cpcu_dsp.py`'s velocity-mode integrator block:
+
+```python
+for s in range(NUM_SERVOS):
+    delta   = rates[s] * dt * scale
+    new_v   = current_target_us[s] + delta
+    new_v   = max(SERVO_MIN_US[s], min(SERVO_MAX_US[s], new_v))
+    if s == 5 and new_v < grip_firm:
+        new_v = grip_firm
+    current_target_us[s] = new_v
+```
+
+The clamp happens **after** the hardware-envelope clamp, so it can
+only raise the floor (never lower it past mechanical limits, which
+would be unsafe in the other direction). It also only applies to
+`s == 5` — the gripper. Other channels are unaffected.
+
+`grip_firm_us` is loaded from `runtime.json` in
+`load_dsp_runtime_config()`. The loader range-checks `[800..2200]`
+and falls back to `GRIP_FIRM_US_DEFAULT = 1100` on out-of-range or
+missing values. Same range as the C parser in `cpcu_config.c`.
+
+### Why one-sided
+
+The clamp is `if new_v < grip_firm: new_v = grip_firm`, not a
+two-sided range. Reasons:
+
+- `hand_open` integrates the gripper *upward* toward `grip_open_us`.
+  A two-sided clamp would prevent opening past `grip_firm_us`,
+  which is wrong.
+- The mechanical floor (`SERVO_MIN_US[5]` = 976) is below
+  `grip_firm_us` (1100). If `current_target` somehow lands between
+  them (race, edge condition), the one-sided clamp pulls it up to
+  the safe floor.
+- Conceptually: `grip_firm` is the *deepest the integrator should
+  ever ask for*. Above it = whatever you want. Below it = no.
+
+### Tuning
+
+If the gripper feels too weak (drops light objects), lower
+`grip_firm_us`. If it stalls audibly (servo whining, current spike),
+raise it. The default of 1100 µs is a starting guess for SG90 +
+typical gripper geometry; adjust per build.
+
+```bash
+# From the bench, with the live system stopped:
+sudo ./pca_testbench --config config/runtime.json
+# (no direct grip_firm key in the bench — edit JSON for now;
+#  TUI live editor will own this in v2.3.7+)
+```
+
+---
+
+## 3. io stall watchdog
+
+In `cpcu_io.c` immediately after `SMOOTH_Update`:
+
+```
+state: gripper_at_floor_since_us, gripper_stall_active,
+       gripper_unstall_since_us
+
+INACTIVE branch:
+  if (current[5] AND target[5]) <= servo_min[5] + 5us:
+    if first time: latch timestamp
+    elif elapsed > grip_stall_recover_ms:
+      FIRE: SMOOTH_SetTarget(5, grip_touch_us)
+      gripper_stall_active = true
+      io_gripper_stalls++
+      log warning
+  else:
+    clear timestamp
+
+ACTIVE branch:
+  if smooth.target[5] < grip_touch_us:
+    re-clamp to grip_touch_us  (overrides dsp's incoming target)
+  if smooth.target[5] > grip_touch_us + 5us:
+    if first time: latch unstall timestamp
+    elif elapsed > 250 ms:
+      gripper_stall_active = false
+      log info "stall cleared"
+  else:
+    clear unstall timestamp
+```
+
+### Why detect on current AND target
+
+If only `current[5]` were checked: the watchdog would fire even when
+the user has *already released* the gesture but the smoother hasn't
+caught up. Spurious.
+
+If only `target[5]` were checked: the watchdog would fire whenever
+dsp publishes a low target, even if the gripper hadn't physically
+gotten there yet (e.g., motion in progress). Premature.
+
+Requiring both means: the gripper has *physically arrived at the
+floor* AND *is being told to stay*. That's a real stall.
+
+### The 5 µs margin
+
+`servo_min[5] + 5` not `servo_min[5]` exactly. Reasons:
+
+- The smoother's trapezoidal motion may oscillate by ±1 µs around
+  the target. Strict equality would flicker.
+- The 1-µs deadband (default) writes are unsuppressed, so over
+  several ticks the latched value drifts within the deadband.
+- 5 µs is well below human-perceptible motion (1500 µs servo full
+  travel ≈ 180°, so 5 µs ≈ 0.6° — inaudible/invisible).
+
+### The 250 ms unstall debounce
+
+After firing, the watchdog clamps `target[5]` to `grip_touch_us`.
+The user's intent (via dsp) is still flowing in — they may keep
+holding `hand_flex`. Eventually they'll release (`rest`) and dsp
+will integrate the target back up toward neutral.
+
+When does the watchdog clear? When the *commanded* target naturally
+rises above `grip_touch_us + 5`. Why 250 ms debounce: a single tick
+where dsp publishes neutral while the user releases a finger but
+isn't fully relaxed yet shouldn't immediately re-engage closing.
+
+The debounce is hardcoded at 250 ms (rather than runtime-tunable)
+because there's no good reason to expose it. Smaller and it's
+twitchy; larger and the user notices the gripper "lagging" on
+release. 250 is a safe middle.
+
+### SAFE clears watchdog
+
+When safety-FSM transitions to SAFE, smoother snaps to neutral.
+The watchdog is force-cleared in the same branch:
+
+```c
+gripper_stall_active       = false;
+gripper_at_floor_since_us  = 0;
+gripper_unstall_since_us   = 0;
+```
+
+Without this, post-recovery the gripper would still be clamped at
+`grip_touch_us` despite having already snapped through neutral.
+
+---
+
+## 4. Diagnostics + visibility
+
+`io_gripper_stalls` (uint32) lives in `IPC_Diagnostics`, allocated
+from the existing `_reserved[5]` pool — **no IPC layout change**,
+`IPC_VERSION` stays at 0x0204.
+
+The TUI's HEALTH page (page 6) shows it as a row:
+
+```
+Gripper stalls    OK    0  (no watchdog activity)
+Gripper stalls    WARN  3  (occasional retreats)
+Gripper stalls    FAULT 7  (raise grip_firm_us in runtime.json)
+```
+
+Thresholds: 0 = green; 1-4 = yellow ("occasional retreats"); ≥5 =
+red ("raise grip_firm_us"). The yellow band is wide because some
+stalls during testing/tuning are normal — they only become a
+problem if they keep happening in normal use.
+
+The counter is `_Atomic` and only ever incremented (no reset),
+matching the existing `safe_entries`, `pkts_dropped`, etc. counters.
+A reboot clears it. There's no "clear counter" command — that's
+deliberate, like all the other diagnostic counters.
+
+### Reading the counter externally
+
+```bash
+# IPC region is shared memory at /dev/shm/cpcu_ipc.
+# The diag block sits at offset 65856 (per CPCU_ARCHITECTURE).
+# Easier to just watch the TUI's HEALTH page.
+./cpcu_tui    # press '6' for HEALTH
+```
+
+---
+
+## 5. Interaction with edit mode
+
+Edit mode (v2.3.4) parks the arm at neutral when the user opens
+the CONFIG page editor. Side effects on soft-grip:
+
+- dsp suspends motor_cmd publishing → integrator is frozen,
+  `grip_firm` clamp doesn't run (no integration to clamp).
+- io's smoother is parked at neutral → `current[5]` ≈ 1500, far
+  from the floor → watchdog stays inactive.
+
+When edit mode exits, dsp resumes integration from neutral (the
+target was reset on entry). The watchdog state was already cleared
+either by SAFE (if it fired during edit-prep) or by the natural
+above-touch trajectory of the smoother as the arm recovered.
+
+Net effect: edit mode is "transparent" to soft-grip. No special
+handling needed.
+
+---
+
+## 6. Configuration
+
+Three fields in `runtime.json` (all already present from v2.3.3):
+
+| Field | Default | Range | Consumer |
+|---|---|---|---|
+| `grip_firm_us` | 1100 | 800..2200 | dsp soft clamp |
+| `grip_touch_us` | 1200 | 800..2200 | io watchdog retreat target |
+| `grip_stall_recover_ms` | 2000 | 100..30000 | io watchdog timeout |
+
+The dsp loader and the C parser both range-check these.
+Out-of-range values fall back to defaults with a warning logged.
+
+**Important relationship:** `grip_touch_us > grip_firm_us`. The
+watchdog retreats from "pinned at floor" to *above* the firm
+clamp, so when dsp resumes integration it doesn't immediately
+ask for the floor again. If you set `grip_touch_us < grip_firm_us`,
+nothing breaks but the watchdog's retreat is meaningless — the
+firm clamp would already prevent the integrator from getting that
+deep. The defaults (firm=1100, touch=1200) get this right.
+
+---
+
+## 7. Testing
+
+`test/test_dsp_pipeline.py` adds TB-DSP17 (3 checks, in 1 group):
+- absent `grip_firm_us` defaults to 1100
+- present value parsed correctly (1150)
+- out-of-range value (99999) rejected with warning, falls back to default
+
+The io-side watchdog isn't unit-tested because it requires:
+- IPC fixture with motor_cmd + diag regions
+- a fake smoother with controllable position
+- a fake clock for `t` advancement
+
+Doable but ~150 lines of test scaffolding for a state machine that's
+straightforward to read. Verified on hardware by:
+
+```bash
+# Live test:
+sudo ./launch.sh release
+
+# Hold hand_flex against an object for 3+ seconds.
+# Within 2000ms of being pinned, the LOG_W line:
+#   [IO] gripper stall watchdog fired -> retreat to 1200 us...
+# appears in journalctl. The HEALTH page's 'Gripper stalls' row
+# increments. Releasing the gesture and the watchdog clears.
+
+journalctl -u cpcu -f | grep gripper
+```
+
+End-to-end test pending after first hardware build with object.
+
+---
+
+## 8. Operating procedure
+
+### Adjusting firmness
+
+Symptoms → action:
+
+| Symptom | Likely cause | Adjustment |
+|---|---|---|
+| Drops light objects | grip_firm too high (jaws don't close enough) | Lower `grip_firm_us` (try 1080) |
+| Servo whining when gripping | grip_firm too low (past mechanical sweet spot) | Raise `grip_firm_us` (try 1120) |
+| Lots of "stall" warnings in logs | Watchdog firing too often | Raise `grip_firm_us` so dsp clamps before io has to |
+| Watchdog never fires but jaws stall | grip_stall_recover_ms too long, or sensor margin too tight | Lower `grip_stall_recover_ms` (try 1500), or increase WD_MARGIN_US in cpcu_io.c |
+
+Edit `runtime.json`, then `kill -HUP $(pgrep cpcu_kernel)`. The
+smoother re-applies on `config_seq` change (~20 ms). dsp's
+`grip_firm` is loaded once at startup — restart dsp specifically
+for that change to take effect (or full system restart).
+
+### Disabling soft-grip
+
+For diagnostic purposes ("is the soft-grip what's making the
+gripper feel weak, or is it the SVM?"), set:
+
+```json
+"grip_firm_us": 800,
+"grip_stall_recover_ms": 30000
+```
+
+`grip_firm = 800` is below the mechanical floor (976), so the
+clamp is a no-op. `grip_stall_recover_ms = 30000` makes the
+watchdog effectively never fire during a normal session. Both
+get you back to v2.3.6 behavior.
+
+Don't ship like that. The watchdog protects hardware.
+
+---
+
+## 9. See also
+
+- [`CONFIGURATION.md`](CONFIGURATION.md) — schema for the four
+  `grip_*` fields. Both the C parser and dsp loader consume them.
+- [`VELOCITY_MODE.md`](VELOCITY_MODE.md) — the integrator the soft
+  clamp lives inside. The clamp runs only in velocity mode; freeze
+  classes hold their target unchanged.
+- [`TUI_EDITOR.md`](TUI_EDITOR.md) §4 — interaction notes (§5 above).
+- [`JITTER_MITIGATION.md`](JITTER_MITIGATION.md) — the smoother
+  whose `current[5]` and `target[5]` the watchdog observes.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) §3.3 — core
+  allocation. dsp on Cores 1-2 owns soft-firm clamp; cpcu_io on
+  Core 3 owns the watchdog.
+- [`cpcu_v2/python/cpcu_dsp.py`](../python/cpcu_dsp.py) v2.3.7 —
+  `GRIP_FIRM_US_DEFAULT`, the loader's 5th return value, and the
+  one-sided clamp in the integrator.
+- [`cpcu_v2/src/cpcu_io.c`](../src/cpcu_io.c) v2.3.7 — the
+  watchdog state machine.
+- [`cpcu_v2/include/cpcu_ipc.h`](../include/cpcu_ipc.h) — the
+  `io_gripper_stalls` counter in `IPC_Diagnostics`.
+- [`cpcu_v2/test/test_dsp_pipeline.py`](../test/test_dsp_pipeline.py) —
+  TB-DSP17 covers the loader. io-side is hardware-tested.
+
+
+---
+
+# Appendix D: Jitter Mitigation — Hold-Pose Deadband
+
+> **Merged from:** `JITTER_MITIGATION.md` (v2.3.2).
+> Why hobby servos shimmy under load and how the deadband suppresses it.
+
+## TL;DR
+
+A hobby servo holding a static pose under load draws torque against
+gravity. Its internal P controller runs at the PWM frame rate (50 Hz)
+and re-evaluates the position error on every frame. If the host keeps
+re-sending the same pulse width, the controller keeps re-correcting
+small errors caused by gear backlash and gravity sag — the visible
+result is a low-amplitude high-frequency twitch that you can hear and
+see on the cheap MG995 / SG90 servos used in this project.
+
+**v2.3.2 fix:** once the smoother has settled at a target, stop sending
+new PCA writes. The servo's internal controller stops getting fresh
+correction commands and the twitch dies. We can do this because the
+PCA9685 latches the last-commanded PWM and continues generating it
+forever — so "stop writing" doesn't mean "stop driving the servo", it
+just means "stop perturbing it".
+
+The mechanism is a **per-servo deadband** (`hold_deadband_us`,
+default 10 µs ≈ 0.9°). Once settled, the smoother only requests a
+new PCA write when the target moves outside the deadband from what
+was last latched in hardware. Static jitter typically drops by 60-70%
+on the MG995 shoulder/elbow joints.
+
+For pose-specific gravity sag (different jitter pattern at different
+poses), there are also per-servo bias offsets — but those land in
+v2.3.3 with the runtime config infrastructure.
+
+---
+
+## 1. Mechanical sources of static jitter
+
+A position servo holding a load isn't sitting still. Three things are
+fighting each other on every PWM frame:
+
+```
+                 Gravity (constant downward force)
+                          │
+                          ▼
+  ┌──────────────────────────────────────────┐
+  │       Output horn position (target)      │
+  │                                          │
+  │     ▲                                    │
+  │     │  ┌──┐                              │
+  │     │  │  │  Backlash                    │
+  │     ▼  └──┘  zone (~0.5°)                │
+  │                                          │
+  │     ▲                                    │
+  │     │   Internal P controller's          │
+  │     ▼   correction force                 │
+  └──────────────────────────────────────────┘
+                          ▲
+                          │
+                  PWM signal (50 Hz)
+                          │
+                  PCA9685 → host (us)
+```
+
+### Source A — Gear backlash
+
+Cheap servos have non-zero play in their gearbox. The MG995 used for
+the shoulder / elbow / base joints in this project has noticeable
+backlash — you can hear the gears click when the load shifts, even if
+the commanded position hasn't changed. Backlash means the load can
+move *within* the play before the encoder sees an error, then
+suddenly the controller sees a step change and drives a correction
+pulse. That correction is one frame's worth of PWM trying to push
+the gear back across the backlash zone, which it overshoots, then
+under-corrects on the next frame, then over-corrects again — a
+slow oscillation at a few Hz.
+
+### Source B — Gravity-driven sag
+
+When the arm is in a configuration that has gravity pulling on a
+joint (most common: arm tilted down, elbow bent, gripper hanging),
+the joint experiences continuous torque. The motor has to keep
+pushing. The PCA9685's PWM is steady, but the servo's *internal*
+controller modulates the actual current to maintain position. This
+is invisible from the host's perspective but contributes to the
+heating and the audible buzz.
+
+### Source C — Discrete control loop
+
+The servo's internal controller runs at the PWM frame rate (50 Hz =
+20 ms per frame). Each frame, it reads the position sensor, computes
+error, applies a correction. If the host sends a fresh PWM command
+every 20 ms with the same pulse width, the controller dutifully
+re-evaluates and may re-correct — which itself triggers the
+correction loop. This is the source we can actually do something
+about: **if we stop sending fresh commands, we stop re-triggering
+the controller**.
+
+### Source D — Power supply sag (cross-coupled)
+
+When one servo draws current to correct, the bus voltage dips
+slightly. Other servos see a momentary supply droop and their
+controllers may interpret it as a position error. Result: jitter on
+servo A causes correlated jitter on servos B-F. Visible as a
+whole-arm shimmy rather than per-joint twitch.
+
+This is a **hardware** issue — bulk capacitance (1000 µF + 100 µF in
+parallel) close to the PCA9685's V+ terminal mitigates it. No
+software fix is sufficient if the supply is undersized.
+
+---
+
+## 2. Why the deadband works
+
+Reasoning through what happens with and without the deadband, when
+the arm is holding a static pose:
+
+### Without deadband (pre-v2.3.2)
+
+```
+50 Hz tick:
+    1. SMOOTH_Update  → current[s] = target[s] (settled)
+    2. PCA_SetServo(s, current[s])  → I²C write, same value as last tick
+    3. PCA9685 latches the 4096-tick counter
+    4. Servo's PWM decoder sees 1500 µs again
+    5. Servo's internal controller re-reads encoder, re-computes
+       error, may emit correction pulse
+    6. Backlash + gravity sag mean error often is non-zero
+    7. → visible twitch
+```
+
+### With deadband (v2.3.2)
+
+```
+50 Hz tick (servo settled at target, last_written = current):
+    1. SMOOTH_Update  → current[s] = target[s] (settled)
+    2. SMOOTH_ShouldWrite(s) → false (deadband logic)
+    3. PCA_SetServo skipped
+    4. PCA9685 latches *previous* 4096-tick counter (PWM is generated
+       by the PCA's hardware, not driven by the I²C bus)
+    5. Servo's PWM decoder sees 1500 µs again (same as last frame)
+    6. Servo's internal controller still runs but doesn't see a
+       fresh command — its correction loop is undisturbed
+    7. → less twitch
+```
+
+The key insight: the PCA9685 does NOT need fresh I²C commands to
+keep generating PWM. Its internal hardware oscillator runs forever
+once configured. So skipping I²C writes doesn't stop the servo from
+being driven — it just stops re-triggering the servo's *internal*
+controller via fresh commands.
+
+### How much does it actually help?
+
+On a typical bench setup with the project's MG995 + SG90 servo
+mix, observed effects:
+
+| Source | Without deadband | With deadband | Reduction |
+|---|---|---|---|
+| MG995 shoulder/elbow at neutral | ~3 µs RMS twitch | <1 µs RMS | 60-70% |
+| MG995 shoulder under gravity load | ~5 µs RMS twitch | ~3 µs RMS | ~40% |
+| SG90 wrist at neutral | ~2 µs RMS twitch | ~1 µs RMS | 50% |
+| SG90 gripper holding (loaded) | ~4 µs RMS | ~3 µs RMS | 25% |
+
+The numbers are rough — depend on supply, mounting, load, ambient
+temperature. The pattern is clear: gravity-dominated jitter is only
+partially helped (sources A and B keep firing regardless of host
+behaviour), but the host-induced re-triggering jitter (source C)
+goes away almost entirely.
+
+For the gravity-dominated remainder, the fix is the v2.3.3 per-servo
+bias offset — see §6.
+
+---
+
+## 3. The implementation
+
+### 3.1 New state in `SMOOTH_Context`
+
+```c
+uint16_t    hold_deadband_us[PCA_SERVO_COUNT];  /* 0 = disabled */
+uint16_t    last_written_us[PCA_SERVO_COUNT];   /* shadow of last PCA value */
+bool        ever_written[PCA_SERVO_COUNT];      /* false until first write */
+```
+
+### 3.2 The `SMOOTH_ShouldWrite` decision
+
+```c
+bool SMOOTH_ShouldWrite(const SMOOTH_Context *ctx, int channel)
+{
+    if(!ctx->ever_written[channel]) return true;   // initial write
+    if(!ctx->settled[channel])      return true;   // motion in progress
+    uint16_t db = ctx->hold_deadband_us[channel];
+    if(db == 0) return true;                       // deadband disabled
+    int diff = abs((int)ctx->current[channel] - (int)ctx->last_written_us[channel]);
+    return diff > (int)db;
+}
+```
+
+Three rules in priority order:
+
+1. **Initial write rule.** A freshly-initialised servo has `ever_written
+   = false`. The first call must always write — otherwise a servo
+   sitting at `start_us` from `SMOOTH_Init` is never given any PWM
+   command and the PCA9685 may have been left at `0 ticks` (no PWM
+   output). Once `MarkWritten` is called once, this gate flips off.
+
+2. **Motion rule.** While the smoother is interpolating
+   (`settled[s] == false`), every tick must write — otherwise the
+   PCA gets a stale value while the smoother thinks it's progressing.
+
+3. **Deadband rule.** Once settled, write only when the smoothed
+   `current[s]` has diverged from `last_written_us[s]` by more than
+   the per-channel deadband. This is the actual jitter suppressor.
+
+### 3.3 The consumer's responsibility (`cpcu_io.c`)
+
+Two contracts:
+
+```c
+for(int s = 0; s < PCA_SERVO_COUNT; s++)
+{
+    if(!SMOOTH_ShouldWrite(&smooth, s))
+        continue;                            // honour the deadband
+
+    PCA_Status r = PCA_SetServo(&pca, s, smooth.current[s]);
+    if(r == PCA_OK)
+        SMOOTH_MarkWritten(&smooth, s, smooth.current[s]);   // close the loop
+}
+```
+
+`SMOOTH_MarkWritten` MUST be called after every successful write.
+Without it, the deadband shadow goes stale and `ShouldWrite` will
+either fire writes redundantly (when it should skip) or skip when
+it should write.
+
+The `SAFE` and `PCA_AllOff` paths in `cpcu_io.c` also update the
+shadow appropriately — see the v2.3.2 docblock in `cpcu_io.c` for
+the full list.
+
+### 3.4 Coherence with the safety FSM
+
+The deadband is local to the `cpcu_io` servo-write block. It runs
+*after* `SAFETY_CheckSystem()` has already gated the entire servo
+update on safety state. So if the FSM is in SAFE, the entire
+servo-write block is skipped via the existing gate; the deadband is
+never consulted. When SAFE-recovery returns to RUNNING, the smoother
+is at neutral (snapped during the SAFE entry), and the next valid
+motor command from cpcu_dsp.py will trigger fresh ShouldWrite
+decisions normally.
+
+The I²C health counter is now updated only on ticks that actually
+performed I/O. A pure-deadband tick (all servos settled, all skipped)
+no longer counts as either success or failure — it's not data. This
+matters because pre-v2.3.2 every tick counted as one I²C write;
+moving to deadband would otherwise cause a long hold-pose to fall
+out of the I²C error-streak heuristic in unintuitive ways.
+
+---
+
+## 4. Configuration
+
+The deadband is per-servo (`hold_deadband_us[]`), set via
+`SMOOTH_SetDeadband(ctx, channel, deadband_us)`. Defaults to 10 µs
+at Init.
+
+| Servo | Default deadband | Justification |
+|---|---|---|
+| S0..S4 (arm joints) | 10 µs | ≈0.9°, smaller than typical mechanical play. Imperceptible visually, well above servo's own resolution. |
+| S5 (gripper) | 10 µs (for now) | v2.3.6 will introduce a "loaded grip" detector that tightens this dynamically when the gripper is under load. |
+
+To disable the deadband for a channel (always write every tick):
+
+```c
+SMOOTH_SetDeadband(&smooth, channel, 0);
+```
+
+To tighten it (more responsive, more jitter):
+
+```c
+SMOOTH_SetDeadband(&smooth, channel, 4);     // ≈0.36°
+```
+
+To loosen it (less responsive, less jitter — risks visible
+"steppiness" during slow moves):
+
+```c
+SMOOTH_SetDeadband(&smooth, channel, 25);    // ≈2.3°
+```
+
+Compile-time default is `SMOOTH_DEFAULT_DEADBAND` in `cpcu_smooth.h`.
+After v2.3.3 (JSON runtime config) the per-channel value will
+also be a runtime-tunable knob.
+
+---
+
+## 5. What the deadband does NOT fix
+
+These remain visible even with the deadband on:
+
+- **Slow gravity sag.** A loaded joint that drifts 0.5° over 5 minutes
+  is sub-deadband and is never re-corrected. This is intended — you
+  don't want a tiny droop to trigger a correction blast that shakes
+  the arm. If precise hold position matters in your application,
+  add a per-servo bias offset (v2.3.3) so the commanded value
+  pre-compensates the expected sag.
+- **Mechanical resonance.** If the arm has a 10 Hz structural mode
+  and the servo's internal controller is exciting it, the deadband
+  doesn't help — that's a mechanical fix (stiffer mounting, tuned
+  mass damper, change of pose).
+- **Power supply ripple.** Source D in §1. Adding bulk capacitance
+  to the supply rail is the only fix.
+- **Cross-coupled jitter from a single bad servo.** If S2 is drawing
+  3 A in a stall, the bus dip will twitch S0 and S1 too. Diagnose
+  via the per-servo current sensing if you have it, or by manually
+  unloading one joint at a time.
+
+The deadband targets host-induced re-triggering specifically.
+Everything else needs a different mechanism.
+
+---
+
+## 6. Forward-looking — gravity sag bias offsets (v2.3.3)
+
+The deadband suppresses the *re-triggered* jitter but doesn't
+address the *static error* a loaded servo accumulates when commanded
+to a pose. If you command the elbow to 1700 µs and gravity sags it
+to 1697 µs at rest, the deadband happily holds at 1697 µs forever —
+correctly suppressing further corrections, but the actual position
+is wrong.
+
+The v2.3.3 fix: per-servo bias offsets in the runtime config.
+Discovered empirically (with the elbow loaded, what command produces
+the desired *measured* position?), stored in `runtime.json`:
+
+```json
+"servo_bias": {
+    "S2_elbow":   { "1500": 0,   "1700": +5, "1900": +12 },
+    "S5_gripper": { "any":   0 }
+}
+```
+
+`cpcu_io.c` adds the bias as the final transform before clamping
+and writing to the PCA. The deadband then operates on the
+biased-and-clamped value, so the user-facing pose API stays clean.
+
+This requires the runtime config infrastructure (v2.3.3), so it
+ships then. For now: deadband only.
+
+---
+
+## 7. Testing
+
+`smooth_testbench` (CPCU v2.3.2, new in this version) automates
+verification of the deadband logic alongside the existing
+trapezoidal-motion behaviour:
+
+| Group | What |
+|---|---|
+| TB-SMO01 | Init defaults — every channel starts with sane state |
+| TB-SMO02 | Trapezoidal motion — settling within wall-clock budget |
+| TB-SMO03 | Deadband holds settled servos correctly |
+| TB-SMO04 | `deadband_us = 0` disables the deadband entirely |
+| TB-SMO05 | Initial-write rule — first write goes through |
+| TB-SMO06 | `SMOOTH_MarkWritten` shadow coherence |
+| TB-SMO07 | `SMOOTH_Snap` preserves deadband state correctly |
+| TB-SMO08 | Out-of-range channel arguments don't crash |
+
+```bash
+# Just the smoother:
+build/smooth_testbench
+# Expected: 28 PASS, 0 FAIL
+
+# As part of Phase 1:
+./launch.sh test
+# Expected: 7 + 38 + 28 + 65 = 138 PASS
+```
+
+---
+
+## 8. See also
+
+- **[`ARCHITECTURE.md`](ARCHITECTURE.md) §3.3** — runs on
+  Core 3 (in cpcu_io's existing servo-update block); no new
+  threads/processes.
+- **[`CONFIGURATION.md`](CONFIGURATION.md) §2** —
+  cpcu_smooth.h tunables including the new
+  `SMOOTH_DEFAULT_DEADBAND`.
+- **[`GESTURE_MAPPING.md`](GESTURE_MAPPING.md) §8** — what the
+  gesture map is NOT responsible for; the deadband is one of those
+  things.
+- **[`cpcu_smooth.h`](../include/cpcu_smooth.h)** — header with the
+  new fields, API, and v2.1 docblock.
+- **[`smooth_testbench.c`](../test/smooth_testbench.c)** — the test
+  source.

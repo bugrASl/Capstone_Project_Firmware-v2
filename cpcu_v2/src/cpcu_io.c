@@ -242,7 +242,7 @@ int main(int argc, char *argv[])
         LOG_I("IO", "file logging enabled -> %s/log_*.csv", LOG_DIR_DEFAULT);
     }
 
-    LOG_I("IO", "=== CPCU I/O Controller (Core 3) v2.2 ===");
+    LOG_I("IO", "=== CPCU I/O Controller (Core 3) v2.3.7 ===");
     signal(SIGINT,  on_signal);
     signal(SIGTERM, on_signal);
 

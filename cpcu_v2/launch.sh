@@ -65,6 +65,16 @@
 ##      - launch.sh exposes ALL helper functionality. Users never invoke
 ##        the helpers directly.
 ##
+##  v2.7.1 changes:
+##      - Every tmux session now includes a SHELL window (window 1)
+##        between KERNEL (0) and the tool window (2+). Ctrl-b 1 gives
+##        you a bash prompt for ./launch.sh stop without detaching.
+##      - cpcu_ws: fixed broadcast() field name (mgr->conns), added
+##        --version flag, fixed mg_http_serve_opts struct.
+##      - CMakeLists.txt: web/static/ now installed to /opt/cpcu/ws_static.
+##      - cpcu_kernel.c: removed duplicate #define block.
+##      - cpcu_io.c: fixed version banner (v2.2 → v2.3.7).
+##
 
 set -e
 
@@ -251,6 +261,12 @@ tmux_create_with_kernel() {
 
     TMUX_OWNED=1
 
+    # v2.7.1: add a spare SHELL window so the user can type
+    # `./launch.sh stop` (or any other command) without detaching.
+    # Placed after KERNEL but before the caller adds its own window,
+    # so window order is:  0=KERNEL  1=SHELL  2=<TUI|SIGNAL|WS|...>
+    tmux_add_window "SHELL" "bash --login"
+
     log "Waiting for shared memory..."
     for i in $(seq 1 30); do
         if [ -e /dev/shm/cpcu_ipc ]; then
@@ -288,7 +304,8 @@ tmux_attach_at() {
     log "${C_BLD}Session ready.${C_RST} You're attached to the ${C_GRN}${target_window}${C_RST} window."
     log "Keys (press ${C_BLD}Ctrl-b${C_RST} first, then the letter):"
     log "  ${C_GRN}Ctrl-b 0${C_RST}   switch to KERNEL window (kernel + io + dsp logs)"
-    log "  ${C_GRN}Ctrl-b 1${C_RST}   switch to ${target_window} window"
+    log "  ${C_GRN}Ctrl-b 1${C_RST}   switch to SHELL window  (run ./launch.sh stop here)"
+    log "  ${C_GRN}Ctrl-b 2${C_RST}   switch to ${target_window} window"
     log "  ${C_GRN}Ctrl-b w${C_RST}   pick a window from a menu"
     log "  ${C_GRN}Ctrl-b d${C_RST}   detach (kernel keeps running in background)"
     log "  ${C_GRN}Ctrl-b ?${C_RST}   tmux help"
@@ -624,9 +641,9 @@ run_tui_tmux() {
     local tui_bin="${RESOLVED_BIN}"
     if [ "${WITH_WS:-0}" = "1" ]; then
         with_ws_preflight    || fatal "WS preflight failed"
-        log "Mode: TUI + WS (tmux: KERNEL + TUI + WS)"
+        log "Mode: TUI + WS (tmux: KERNEL + SHELL + TUI + WS)"
     else
-        log "Mode: TUI (tmux: KERNEL + TUI)"
+        log "Mode: TUI (tmux: KERNEL + SHELL + TUI)"
     fi
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
     tmux_add_window "TUI" "${tui_bin}"
@@ -643,9 +660,9 @@ run_collect_tmux() {
     local tui_bin="${RESOLVED_BIN}"
     if [ "${WITH_WS:-0}" = "1" ]; then
         with_ws_preflight    || fatal "WS preflight failed"
-        log "Mode: COLLECT + WS (tmux: KERNEL + TUI + WS, capture-focused)"
+        log "Mode: COLLECT + WS (tmux: KERNEL + SHELL + TUI + WS, capture-focused)"
     else
-        log "Mode: COLLECT (tmux: KERNEL + TUI, capture-focused)"
+        log "Mode: COLLECT (tmux: KERNEL + SHELL + TUI, capture-focused)"
     fi
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
     tmux_add_window "TUI" "${tui_bin}"
@@ -673,9 +690,9 @@ run_signal_tmux() {
     local sig_bin="${RESOLVED_BIN}"
     if [ "${WITH_WS:-0}" = "1" ]; then
         with_ws_preflight    || fatal "WS preflight failed"
-        log "Mode: SIGNAL + WS (tmux: KERNEL + SIGNAL + WS)"
+        log "Mode: SIGNAL + WS (tmux: KERNEL + SHELL + SIGNAL + WS)"
     else
-        log "Mode: SIGNAL (tmux: KERNEL + SIGNAL)"
+        log "Mode: SIGNAL (tmux: KERNEL + SHELL + SIGNAL)"
     fi
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
     tmux_add_window "SIGNAL" "${sig_bin}"
@@ -925,15 +942,15 @@ cmd_ws() {
     # cpcu_ws reads from /dev/shm/cpcu_ipc — it needs the kernel to
     # have created that region. Mirror the run_tui / run_signal
     # pattern: if the kernel isn't already up, spawn it in a tmux
-    # session, then put cpcu_ws in a second window. ./launch.sh stop
-    # tears everything down cleanly.
+    # session (KERNEL + SHELL), then put cpcu_ws in a third window.
+    # ./launch.sh stop tears everything down cleanly.
     if [ ! -e /dev/shm/cpcu_ipc ]; then
         if ! require_tmux; then
             err "tmux not installed — install via './launch.sh setup',"
             err "  or start cpcu_kernel manually first then re-run './launch.sh ws'."
             exit 1
         fi
-        log "Mode: WS (tmux: KERNEL + WS)"
+        log "Mode: WS (tmux: KERNEL + SHELL + WS)"
         log "Dashboard at http://$(hostname -I | awk '{print $1}'):8765"
         log "  (or http://${HOSTNAME}.local:8765 if mDNS is enabled)"
         log "Static dir: ${static_dir}"
@@ -1120,13 +1137,15 @@ show_menu() {
   │              CPCU v2.7 — Mode Selection (tmux)                   │
   ├──────────────────────────────────────────────────────────────────┤
   │  1) kernel    Run kernel only  (foreground, no UI)               │
-  │  2) tui       tmux: [KERNEL][TUI]   — main dashboard             │
-  │  3) collect   tmux: [KERNEL][TUI]   — capture workflow guide     │
-  │  4) signal    tmux: [KERNEL][SIGNAL] — signal-integrity testbench│
+  │  2) tui       tmux: [KERNEL][SHELL][TUI]    — main dashboard     │
+  │  3) collect   tmux: [KERNEL][SHELL][TUI]    — capture workflow   │
+  │  4) signal    tmux: [KERNEL][SHELL][SIGNAL] — signal testbench   │
   │  5) pca       PCA9685 servo calibration only  (no kernel)        │
   │  6) ws        Web dashboard (browser-accessible)                 │
   │  7) smoother  Servo motion profile exerciser  (needs kernel)     │
   │  q) quit                                                         │
+  ├──────────────────────────────────────────────────────────────────┤
+  │  Ctrl-b 0 = KERNEL | Ctrl-b 1 = SHELL | Ctrl-b 2 = tool window  │
   └──────────────────────────────────────────────────────────────────┘
 EOF
     while true; do
@@ -1317,7 +1336,7 @@ EOF
                 tui)
                     cat <<'EOF'
 Bring up the kernel + the ncurses dashboard inside a tmux session.
-Two windows: KERNEL (logs) and TUI (live dashboard).
+Three windows: KERNEL (logs), SHELL (for ./launch.sh stop), TUI (dashboard).
 
 Inside the TUI, the 7 pages are:
   1=Overview   2=Radio/IO   3=DSP/AI   4=Waves
@@ -1325,11 +1344,12 @@ Inside the TUI, the 7 pages are:
 Press 'e' on the Config page to enter live edit mode (arm parks).
 Press 'q' to quit the TUI (kernel keeps running).
 
+Windows:  Ctrl-b 0 = KERNEL  |  Ctrl-b 1 = SHELL  |  Ctrl-b 2 = TUI
 Detach with Ctrl-b d. Re-attach later with './launch.sh attach'.
 
 Combine with the web dashboard:
   ./launch.sh tui --with-ws
-This adds a third tmux window (WS) running cpcu_ws so others can
+This adds a fourth tmux window (WS) running cpcu_ws so others can
 watch from a browser at http://<pi-ip>:8765 while you work in the
 TUI. Both views share one kernel and one IPC region — no duplication.
 EOF
@@ -1337,6 +1357,7 @@ EOF
                 signal)
                     cat <<'EOF'
 Bring up the kernel + signal-integrity testbench inside a tmux session.
+Three windows: KERNEL (logs), SHELL (for commands), SIGNAL (testbench).
 Plots raw 8-channel ADC data straight off the IPC ring.
 
 Pass criteria when a function generator drives PA0 with a 100 Hz sine,
@@ -1346,11 +1367,12 @@ Pass criteria when a function generator drives PA0 with a 100 Hz sine,
   - Vpp ≈ 1.2 V, SNR > 20 dB
   - Packet rate ≈ 1000/s, loss < 0.1%
 
+Windows:  Ctrl-b 0 = KERNEL  |  Ctrl-b 1 = SHELL  |  Ctrl-b 2 = SIGNAL
 Press TAB for all-channel view, q to quit.
 
 Combine with the web dashboard:
   ./launch.sh signal --with-ws
-This adds a third tmux window (WS). Useful for showing the live
+This adds a fourth tmux window (WS). Useful for showing the live
 signal stream to someone in a browser while you watch it locally.
 EOF
                     ;;
@@ -1358,7 +1380,7 @@ EOF
                     cat <<'EOF'
 Like 'tui' but with on-screen reminders for the dataset capture
 workflow. Use this when you're recording EMG to .csv files for
-training.
+training. Three windows: KERNEL, SHELL, TUI.
 
 Inside the TUI:
   - Press 7 to jump to the DATASET page
@@ -1367,6 +1389,8 @@ Inside the TUI:
   - s or SPACE to start, again to stop and save
   - r to cancel and delete a partial capture
   - q to quit. Files land in /opt/cpcu/bin/datasets/.
+
+Windows:  Ctrl-b 0 = KERNEL  |  Ctrl-b 1 = SHELL  |  Ctrl-b 2 = TUI
 
 Combine with the web dashboard:
   ./launch.sh collect --with-ws
@@ -1435,6 +1459,9 @@ EOF
                     cat <<'EOF'
 Start the web dashboard on http://<pi-ip>:8765. Read-only,
 multi-viewer, browser-accessible from any device on the LAN.
+
+If the kernel isn't already running, this spawns it in a tmux session:
+  Ctrl-b 0 = KERNEL  |  Ctrl-b 1 = SHELL  |  Ctrl-b 2 = WS
 
 Tabs in the dashboard:
   Overview    System state, packet rate, classification

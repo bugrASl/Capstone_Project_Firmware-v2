@@ -311,6 +311,13 @@ install(FILES
 ## Model placeholder directory
 install(DIRECTORY DESTINATION /opt/cpcu/models)
 
+## Web dashboard static files -> /opt/cpcu/ws_static
+## (cpcu_ws and launch.sh both look for this directory)
+if(EXISTS "${CMAKE_SOURCE_DIR}/web/static")
+    install(DIRECTORY web/static/ DESTINATION /opt/cpcu/ws_static)
+    message(STATUS "web/static/ found — will install to /opt/cpcu/ws_static")
+endif()
+
 ## Note: no systemd unit is installed by cmake. v2.5+ generates the unit
 ## dynamically via `./launch.sh install-service`, which writes to
 ## /etc/systemd/system with the correct user, paths, and capabilities

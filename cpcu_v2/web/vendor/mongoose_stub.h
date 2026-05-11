@@ -33,8 +33,9 @@
 #define WEBSOCKET_OP_BINARY 2
 
 /* Mongoose forward-decl pattern; we only touch fields cpcu_ws.c needs. */
+struct mg_fs;
 struct mg_str  { const char *buf; size_t len; };
-struct mg_mgr  { void *_opaque; };
+struct mg_mgr  { struct mg_connection *conns; };
 
 struct mg_connection {
     struct mg_connection *next;
@@ -62,8 +63,17 @@ void  mg_mgr_poll(struct mg_mgr *mgr, int timeout_ms);
 struct mg_connection *mg_http_listen(struct mg_mgr *mgr, const char *url,
                                       mg_event_handler_t fn, void *fn_data);
 
+struct mg_http_serve_opts {
+    const char *root_dir;
+    const char *ssi_pattern;
+    const char *extra_headers;
+    const char *mime_types;
+    const char *page404;
+    struct mg_fs *fs;
+};
+
 void  mg_http_serve_dir(struct mg_connection *c, struct mg_http_message *hm,
-                        const struct {const char *root_dir;} *opts);
+                        const struct mg_http_serve_opts *opts);
 
 void  mg_ws_upgrade(struct mg_connection *c, struct mg_http_message *hm,
                     const char *fmt);

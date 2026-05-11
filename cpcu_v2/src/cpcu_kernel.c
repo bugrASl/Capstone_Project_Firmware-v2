@@ -67,19 +67,6 @@
 #define CONFIG_PATH_DEFAULT     "/opt/cpcu/config.json"
 #define CONFIG_PATH_FALLBACK    "config/runtime.json"
 
-/*============= CONFIGURATION ==============================================================*/
-
-#define HB_TIMEOUT_MS           2000            /* Heartbeat stale -> kill + respawn */
-#define WDG_PET_S               5               /* Pet /dev/watchdog every N seconds */
-#define LOG_S                   5               /* Telemetry print every N seconds */
-#define READY_TIMEOUT_S         10              /* Max wait for child ready flag */
-
-/* Paths */
-#define CPCU_IO_BIN             "./cpcu_io"
-#define CPCU_DSP_SCRIPT         "/opt/cpcu/python/cpcu_dsp.py"
-#define CPCU_DSP_SCRIPT_ALT     "./cpcu_dsp.py"
-#define PYTHON3_BIN             "/usr/bin/python3"
-
 /*============= TIMING =====================================================================*/
 
 static volatile sig_atomic_t g_run          =   1;
