@@ -1,11 +1,34 @@
 /**
- *  @file   cpcu_tui_data.c
- *  @brief  TUI data layer — demo signal synthesis, dataset capture, wave ring.
+ *  @file       cpcu_tui_data.c
+ *  @brief      TUI data layer — demo synthesis, dataset capture, wave ring.
+ *  @author     bugrASl
+ *  @date       April 2026
+ *  @version    3.4 (multi-file split)
  *
- *  Generates synthetic EMG waveforms for demo mode (sine, chirp, multi-tone,
- *  noise-burst, AM, chirp-burst). Drains the IPC sensor ring into a rolling
- *  per-channel waveform buffer for the Waves page. Manages CSV file I/O for
- *  the Dataset capture page (start/stop/save/cancel).
+ *  Owns and updates the *data* the rendering layer reads. None of the
+ *  functions here touch ncurses; they only mutate shared-memory state
+ *  or local file-static buffers. The render layer (cpcu_tui_render.c)
+ *  consumes those buffers without writing to them.
+ *
+ *  Three independent state machines live in this file:
+ *
+ *      1.  Demo mode      — synthesises a 1 kHz packet stream into the
+ *                           in-process IPC stand-in, exercising the same
+ *                           WL_Pack/WL_Unpack codec the real RX path uses.
+ *                           Fault-injection hotkeys mutate demo_fault_mask
+ *                           which we read here every tick.
+ *
+ *      2.  Dataset capture — peek-only walk of the SPSC sensor ring,
+ *                           writing one CSV file per capture. Same
+ *                           on-disk format as bsau_dataset_collector.py
+ *                           (RAW) or cpcu_dsp.py (FILTERED).
+ *
+ *      3.  Waveform ring  — peek-only walk of the SPSC sensor ring into
+ *                           a separate per-channel rolling buffer used by
+ *                           the line-trace renderer on Page 4.
+ *
+ *  All three reach into the ring without ever advancing sensor_tail —
+ *  cpcu_dsp.py is the only legitimate consumer in production.
  */
 
 #include "cpcu_tui.h"
@@ -289,8 +312,7 @@ static void ds_sanitize(const char *in, char *out, size_t outsz)
 }
 
 /**
- *  Scan DATASET_OUT_DIR for files matching "{stem}_{N}_{mode}.csv" or
- *  legacy "{stem}_{N}.csv", return max N + 1.
+ *  Scan DATASET_OUT_DIR for files matching "{stem}_N.csv", return max N + 1.
  */
 static int ds_next_index(const char *out_dir, const char *stem)
 {
@@ -310,14 +332,8 @@ static int ds_next_index(const char *out_dir, const char *stem)
         char *endp = NULL;
         long n = strtol(nstr, &endp, 10);
         if(endp == nstr) continue;
-
-        /* Accept "{stem}_{N}.csv" (legacy) or "{stem}_{N}_{mode}.csv" */
-        if(strcmp(endp, ".csv") == 0 ||
-           strcmp(endp, "_filtered.csv") == 0 ||
-           strcmp(endp, "_unfiltered.csv") == 0)
-        {
-            if(n > max_n) max_n = (int)n;
-        }
+        if(strcmp(endp, ".csv") != 0 && strcmp(endp, "_filtered.csv") != 0 && strcmp(endp, "_unfiltered.csv") != 0) continue;
+        if(n > max_n) max_n = (int)n;
     }
     closedir(d);
     return max_n + 1;
@@ -497,4 +513,3 @@ void wave_peek_ring(IPC_Context *ipc)
 }
 
 /*==========================================================================================*/
-

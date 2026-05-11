@@ -1,18 +1,65 @@
 /**
- *  @file   cpcu_tui.c
- *  @brief  ncurses live dashboard — main loop, key dispatch, boot sequence.
+ *  @file       cpcu_tui.c
+ *  @brief      Terminal User Interface — multi-page live system monitor.
+ *  @author     bugrASl
+ *  @date       April 2026
+ *  @version    3.4-pageorder (build marker: PAGE-APR26)
+ *  @version    3.3-dataset
+ *  @version    3.2-linetrace
+ *  @version    3.1
  *
- *  7-page TUI for monitoring and configuring the running system:
- *    Page 1: Overview    Page 2: Radio/IO     Page 3: DSP/AI
- *    Page 4: Waves       Page 5: Health       Page 6: Dataset
- *    Page 7: Config (with live editor)
+ *  @details    Reads /dev/shm/cpcu_ipc (read-only on pages 1-6) and displays
+ *              a real-time dashboard with 7 switchable pages:
  *
- *  Reads IPC shared memory at ~10 Hz refresh. Supports demo mode with
- *  synthetic data for development without hardware.
+ *              Page 1 (Overview)   :  System state, radio, EMG bars, servos,
+ *                                     battery, DSP summary, ML classification.
+ *              Page 2 (Radio/IO)   :  NRF deep-dive, safety FSM, packet stats,
+ *                                     retry distribution, raw packet dump.
+ *              Page 3 (DSP/AI)     :  DSP pipeline, gesture classification,
+ *                                     per-class confidence, filtered RMS, servos.
+ *              Page 4 (Waveforms)  :  Live 8-channel line-trace plots,
+ *                                     per-channel Vpp/DC, detail view with TAB.
+ *              Page 5 (Health)     :  10-row traffic-light rollup.
+ *              Page 6 (Dataset)    :  Interactive 8-channel CSV capture
+ *                                     (RAW / FILTERED), 10 gesture labels,
+ *                                     LEFT/RIGHT cycles label, s/SPACE
+ *                                     starts/stops, t toggles mode, r cancels.
+ *              Page 7 (Config)     :  Static compile-time + hardware spec sheet
+ *                                     (moved to last tab in v3.4).
+ *
+ *              Supports --demo mode with synthetic data (no hardware needed).
+ *
+ *  v3.4 changes (2026-04, multi-file split):
+ *      - Source split into four files for readability:
+ *          cpcu_tui.c         (this file) — main(), key dispatch, splash,
+ *                              boot, shutdown, demo_full_reset.
+ *          cpcu_tui_render.c — drawing primitives, all draw_page_*,
+ *                              draw_header, draw_footer, layout_update,
+ *                              waveform line-trace renderer.
+ *          cpcu_tui_data.c   — demo state machine, dataset capture state
+ *                              machine, waveform ring-buffer maintenance.
+ *          cpcu_tui.h        — shared declarations (color pairs, layout
+ *                              globals, page enum, fault flags, externs,
+ *                              cross-file function prototypes).
+ *      - Page order changed: CONFIG (static spec sheet) moved from page 5
+ *        to page 7. Live data pages now occupy the first six tabs.
+ *      - IO heartbeat thresholds (IO_HB_WARN_MS / IO_HB_BAD_MS) introduced
+ *        and centralised in cpcu_tui.h. Pre-v3.4 the radio page warned
+ *        whenever io_hb_age > 20 ms, which fired on ~80 % of frames during
+ *        normal operation because the natural ceiling of that age is the
+ *        100 ms heartbeat period itself.
+ *
+ *  Build:      see CMakeLists.txt — three .c files plus the codec/ipc/log
+ *              static libs and ncurses + rt + m link.
+ *  Run:        ./cpcu_tui                (live, needs cpcu_kernel)
+ *              ./cpcu_tui --demo         (synthetic data, no hardware)
+ *              ./cpcu_tui --no-splash    (skip splash screen)
+ *  Pages:      1=Overview 2=Radio/IO 3=DSP/AI 4=Waves 5=Health 6=Dataset 7=Config
+ *  Quit:       press 'q'
  */
 
 #include "cpcu_tui.h"
-#include "cpcu_tui_editor.h"        /* live editor */
+#include "cpcu_tui_editor.h"        /* v2.3.8 live editor */
 
 #include <locale.h>
 #include <stdatomic.h>
@@ -31,7 +78,7 @@
 
 volatile sig_atomic_t  g_run         =   1;
 
-/* track whether ED_Init() has been called for the current
+/* v2.3.8: track whether ED_Init() has been called for the current
  * session of EDITING. Reset to false when leaving EDITING so re-entry
  * picks up fresh disk values (e.g. if pca_testbench saved between
  * sessions). */
@@ -266,7 +313,7 @@ int main(int argc, char *argv[])
         /*-------------- Key dispatch -------------------------------------------------------*/
         int ch = getch();
 
-        /* TUI live editor on CONFIG page.
+        /* v2.3.8: TUI live editor on CONFIG page.
          * When in EDITING state (handshake complete, arm parked), the
          * editor consumes nav keys (arrows, Enter, digits, Esc, Ctrl+S,
          * 'r'). Page-switch keys (1-7), 'e' (exit edit-mode), 'q' still
@@ -397,7 +444,7 @@ int main(int argc, char *argv[])
                 }
                 break;
 
-            /*-- Page 7 (Config) edit-mode toggle ----------------*/
+            /*-- Page 7 (Config) edit-mode toggle (v2.3.4) ----------------*/
             /*  Pressing 'e' on the CONFIG page raises (or lowers) the
              *  edit_mode_request flag in IPC. cpcu_io watches that flag,
              *  parks the smoother at neutral, and once SMOOTH_AllSettled
@@ -428,13 +475,6 @@ int main(int argc, char *argv[])
                 break;
 
             case 'q': case 'Q': g_run = 0; break;
-
-            case KEY_RESIZE:
-                /* Terminal resized. layout_update() handles the actual
-                 * resize via ioctl on every frame, so just clear here. */
-                clear();
-                break;
-
             default: break;
         }
 
@@ -462,4 +502,3 @@ after_dispatch:
 }
 
 /*==========================================================================================*/
-
