@@ -302,7 +302,7 @@ canvas { display: block; width: 100%; height: 100%; }
             <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
                 <canvas id="spec-filtered-canvas"></canvas>
             </div>
-            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Same FFT, bins outside 20-450 Hz zeroed. Shows what the DSP pipeline sees.</p>
+            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">FFT of actual DSP output: 4th-order Butterworth 20-450 Hz + Q=30 notch at 50 Hz.</p>
         </div>
     </div>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
@@ -318,7 +318,7 @@ canvas { display: block; width: 100%; height: 100%; }
             <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
                 <canvas id="spec-filtered-water-canvas"></canvas>
             </div>
-            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Bandpass view. Compare with raw to see PLI rejection.</p>
+            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Waterfall of real DSP-filtered signal. Compare with raw to see PLI rejection.</p>
         </div>
     </div>
 </section>
@@ -756,6 +756,7 @@ buildSpecChButtons();
 
 /* Process incoming wave frame — push a new FFT row per channel into
  * the history buffers. Called from applyWaves. */
+const specFilteredHist = Array.from({length: 8}, () => []);
 function pushSpecFrames(d) {
     if(!d.raw_full) return;
     for(let ch = 0; ch < 8; ch++) {
@@ -767,7 +768,34 @@ function pushSpecFrames(d) {
         specHistoryHead[ch] = (specHistoryHead[ch] + 1) % WATERFALL_ROWS;
         if(specHistoryFilled[ch] < WATERFALL_ROWS) specHistoryFilled[ch]++;
     }
-    if($('#panel-spectrum').classList.contains('active')) renderSpec();
+    /* Build filtered spectrum from REAL post-DSP samples (d.filtered).
+     * These are actual time-domain values after Butterworth bandpass +
+     * 50 Hz notch, sent by cpcu_ws.c from IPC_DspFiltered. We zero-pad
+     * from 200 samples to N_FFT (256) and compute a proper FFT. */
+    if(d.filtered && d.filtered_present) {
+        for(let _ch = 0; _ch < 8; _ch++) {
+            const fSamples = d.filtered[_ch];
+            if(!fSamples || fSamples.length < 10) continue;
+
+            /* Zero-pad to N_FFT for power-of-2 FFT */
+            const padded = new Array(N_FFT).fill(0);
+            for(let i = 0; i < Math.min(fSamples.length, N_FFT); i++)
+                padded[i] = fSamples[i];
+
+            const mag = computeFFT(padded);
+            if(!mag) continue;
+
+            const mx = Math.max(...mag, 0.001);
+            specFilteredHist[_ch].unshift(mag.map(v => v / mx));
+            if(specFilteredHist[_ch].length > WATERFALL_ROWS)
+                specFilteredHist[_ch].pop();
+        }
+    }
+    if($('#panel-spectrum').classList.contains('active')) {
+        renderSpec();
+        renderFilteredSpec();
+        renderFilteredWater();
+    }
 }
 
 const specStaticCanvas = $('#spec-static-canvas');
@@ -941,7 +969,7 @@ window.addEventListener('resize', () => {
 /* ============================================================
  * Filtered spectrum (20-450 Hz bandpass view)
  * ============================================================ */
-const specFilteredHist = Array.from({length: 8}, () => []);
+
 
 function renderFilteredSpec() {
     const can = document.getElementById('spec-filtered-canvas');
@@ -956,17 +984,15 @@ function renderFilteredSpec() {
     ctx.clearRect(0, 0, W, H);
 
     const ch = specCh;
-    const head = specHistoryHead[ch];
-    const filled = specHistoryFilled[ch];
-    if(filled === 0) return;
-    const latest = specHistory[ch][(head - 1 + WATERFALL_ROWS) % WATERFALL_ROWS];
+    const hist = specFilteredHist[ch];
+    if(!hist || !hist.length) return;
+    const latest = hist[0];  /* most recent FFT row */
     if(!latest || !latest.length) return;
 
     const binHz = FS_HZ / N_FFT;
-    const mags = Array.from(latest).map((v, i) => {
-        const f = i * binHz;
-        return (f >= 20 && f <= 450) ? v : 0;
-    });
+    /* These are REAL post-DSP FFT magnitudes, not fake bin-zeroed values.
+     * The Butterworth bandpass + 50Hz notch have already shaped the spectrum. */
+    const mags = Array.from(latest);
 
     const padL = 48, padR = 16, padB = 32, padT = 8;
     const pW = W - padL - padR, pH = H - padT - padB;
@@ -1068,30 +1094,7 @@ function renderFilteredWater() {
     ctx.beginPath(); ctx.moveTo(x50, padT); ctx.lineTo(x50, padT + pH); ctx.stroke();
 }
 
-/* Hook into spectrum update to build filtered history */
-const _origPushSpec = pushSpecFrames;
-pushSpecFrames = function(d) {
-    _origPushSpec(d);
-    if(!d.raw_full) return;
-    const binHz = FS_HZ / N_FFT;
-    for(let ch = 0; ch < 8; ch++) {
-        const head = specHistoryHead[ch];
-        if(specHistoryFilled[ch] === 0) continue;
-        const latest = specHistory[ch][(head - 1 + WATERFALL_ROWS) % WATERFALL_ROWS];
-        if(!latest) continue;
-        const filt = Array.from(latest).map((v, i) => {
-            const f = i * binHz;
-            return (f >= 20 && f <= 450) ? v : 0;
-        });
-        const mx = Math.max(...filt, 0.001);
-        specFilteredHist[ch].unshift(filt.map(v => v / mx));
-        if(specFilteredHist[ch].length > WATERFALL_ROWS) specFilteredHist[ch].pop();
-    }
-    if($('#panel-spectrum').classList.contains('active')) {
-        renderFilteredSpec();
-        renderFilteredWater();
-    }
-};
+/* filtered spectrum hook moved into pushSpecFrames directly */
 
 /* ============================================================
  * Tools tab — render IPC_ToolPresence slots (v2.4.1)
