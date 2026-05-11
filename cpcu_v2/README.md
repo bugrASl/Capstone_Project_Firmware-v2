@@ -49,11 +49,17 @@ pipeline, and commands 6 servo motors via a PCA9685 PWM driver.
 # Verify readiness
 ./launch.sh check
 
+# Run software-only tests (233 PASS, no hardware needed)
+./launch.sh test-sw
+
 # Run with the TUI dashboard
 ./launch.sh tui
 
 # Run with web dashboard (friends can watch at http://<pi-ip>:8765)
 ./launch.sh tui --with-ws
+
+# System-level requirements verification (needs BSAU transmitting)
+./launch.sh test-system
 
 # Stop
 ./launch.sh stop
@@ -136,9 +142,53 @@ Velocity mode: holding a gesture integrates servo position over time (graded con
 
 ---
 
+## Logging
+
+Every `./launch.sh` command creates per-process log files under `cpcu_v2/log/`:
+
+```
+log/
+├── log_kernel_tui_20260511_143022.txt
+├── log_tui_tui_20260511_143022.txt
+├── log_ws_tui_20260511_143022.txt     (if --with-ws)
+├── log_kernel_ws_20260511_150000.txt   (from ./launch.sh ws)
+└── log_signal_signal_20260511_160000.txt
+```
+
+Format: `log_{process}_{launch-mode}_{timestamp}.txt`. Each file captures the full stdout+stderr of that process for the session.
+
+---
+
+## Dataset Collection
+
+```bash
+./launch.sh collect    # guided workflow
+```
+
+Files land in `cpcu_v2/datasets/` with the naming convention:
+
+```
+datasets/
+├── REST_0_filtered.csv
+├── REST_1_unfiltered.csv
+├── H_OPN_0_filtered.csv
+├── BICEP_0_filtered.csv
+└── ...
+```
+
+Format: `{gesture}_{index}_{filtered|unfiltered}.csv`. Toggle raw/filtered with `t` in the Dataset page.
+
+---
+
 ## Web Dashboard
 
 Browser-accessible at `http://<pi-ip>:8765`. Read-only, multi-viewer.
+
+```bash
+./launch.sh ws    # fully self-configuring: builds, vendors, starts
+```
+
+The command handles everything automatically (setup, Mongoose download, build, kernel start) and prints the URL in a prominent box. Connection info is also shown on the TUI's CONFIG page (page 7) so you always know how to reach the dashboard.
 
 | Tab | Content |
 |-----|---------|
@@ -146,8 +196,6 @@ Browser-accessible at `http://<pi-ip>:8765`. Read-only, multi-viewer.
 | Waves | 8-channel rolling raw + filtered envelopes |
 | Spectrum | Per-channel 256-pt FFT + waterfall (browser-side) |
 | Tools | Live tool presence (pca_testbench, signal_testbench) |
-
-Requires Mongoose: `./launch.sh vendor` (one-time fetch + rebuild).
 
 ---
 
@@ -168,6 +216,34 @@ cpcu_v2/
 └── docs/                  ← Architecture, testing, user guide, web dashboard
     └── diagrams/          ← System block diagrams (SVG)
 ```
+
+---
+
+## System Requirements Verification
+
+```bash
+# Start the system first
+./launch.sh tui
+
+# In the SHELL window (Ctrl-b 1), run:
+./launch.sh test-system              # 10-second default capture
+./launch.sh test-system --duration 30  # longer for stability testing
+./launch.sh test-system --json         # JSON output for CI
+```
+
+The test monitors live IPC data and verifies all SYS-REQ thresholds:
+
+| Requirement | Target | Measured from |
+|-------------|--------|---------------|
+| SYS-REQ-01: End-to-end latency | < 300 ms | Pipeline analysis (observation + inference + servo) |
+| SYS-REQ-03: Battery | > 2.7 V (not critical) | Live battery voltage from BSAU packets |
+| SYS-REQ-04: Signal fidelity | Packet loss < 1% | Sequence gap counter vs received packets |
+| SYS-REQ-05: Wireless link | > 900 pkt/s | Packet rate over capture window |
+| SYS-REQ-06: Sampling rate | ≥ 2000 Hz | Packet rate × 2 samples/pkt |
+| SYS-REQ-08: Safety | State = RUNNING, zero faults | Safety FSM state + SAFE entry counter |
+| SYS-REQ-09: Servo accuracy | Update rate ≥ 40 Hz | PCA9685 write cadence |
+
+Plus subsystem checks: IPC version, IO/DSP alive, ring health, CPU temperature, inference latency P50, sequence gap rate. Reports saved to `cpcu_v2/log/system_test_*.txt`.
 
 ---
 

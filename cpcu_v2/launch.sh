@@ -28,6 +28,10 @@
 ##      ./launch.sh test-signal            Live signal-integrity TUI (needs BSAU)
 ##      ./launch.sh test-signal-demo       Same TUI with synthetic data
 ##      ./launch.sh test-safety-demo       Fault-injection demo (no hardware)
+##      ./launch.sh test-system            System requirements verification (live)
+##
+##      ./launch.sh test-system            System-level SYS-REQ verification (live)
+##      ./launch.sh test-system --duration 30    Longer capture window
 ##
 ##    RUNTIME / COMPILE-TIME TUNING:
 ##      ./launch.sh configure              Interactive (compile-time)
@@ -92,9 +96,12 @@ BIN_DIR="${CPCU_DIR}/bin"
 PYTHON_INSTALL_DIR="${CPCU_DIR}/python"
 SCRIPTS_INSTALL_DIR="${CPCU_DIR}/scripts"
 MODEL_DIR="${CPCU_DIR}/models"
-LOG_DIR="/var/log/cpcu"
+LOG_DIR="${CPCU_ROOT}/log"
+DATASETS_DIR="${CPCU_ROOT}/datasets"
+WS_INFO_FILE="${CPCU_ROOT}/config/ws_active.txt"
 
 SESSION_NAME="cpcu"
+LAUNCH_MODE=""          # set by each command for log labeling
 
 # Cleanup-flag: 1 while we own a tmux session that the user hasn't yet
 # attached to. Cleared after attach returns.
@@ -114,6 +121,34 @@ warn()  { echo -e "${C_YEL}[LAUNCH] WARN:${C_RST} $*"; }
 err()   { echo -e "${C_RED}[LAUNCH] ERROR:${C_RST} $*" >&2; }
 fatal() { err "$*"; exit 1; }
 ok()    { echo -e "${C_GRN}[LAUNCH] OK:${C_RST} $*"; }
+
+# Per-process log path: cpcu_v2/log/log_{process}_{mode}_{timestamp}.txt
+make_log_path() {
+    local proc_name="$1"
+    mkdir -p "${LOG_DIR}" 2>/dev/null || true
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    echo "${LOG_DIR}/log_${proc_name}_${LAUNCH_MODE:-cli}_${ts}.txt"
+}
+
+# Write web dashboard connection info so TUI can display it
+write_ws_info() {
+    local ip="${1:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+    local port="${2:-8765}"
+    mkdir -p "$(dirname "${WS_INFO_FILE}")" 2>/dev/null || true
+    cat > "${WS_INFO_FILE}" << WSINFO
+# Web dashboard active — written by launch.sh, read by cpcu_tui
+url=http://${ip}:${port}
+ip=${ip}
+port=${port}
+started=$(date -Iseconds)
+pid=$$
+WSINFO
+}
+
+clear_ws_info() {
+    rm -f "${WS_INFO_FILE}" 2>/dev/null || true
+}
 
 # Verify a helper script is runnable. If it exists but isn't executable
 # (common right after a fresh clone — git doesn't always preserve the
@@ -239,9 +274,15 @@ tmux_kill_existing() {
 
 tmux_create_with_kernel() {
     tmux_kill_existing
+
+    # Create per-process log files labeled with the launch mode
+    local kernel_log
+    kernel_log=$(make_log_path "kernel")
     log "Creating tmux session '$SESSION_NAME', spawning KERNEL..."
+    log "  Kernel log: ${kernel_log}"
+
     tmux new-session -d -s "$SESSION_NAME" -n "KERNEL" \
-        "bash -c 'cd ${BIN_DIR} && exec taskset -c 0 ./cpcu_kernel --log 2>&1 | tee -a ${LOG_DIR}/cpcu.log'"
+        "bash -c 'cd ${BIN_DIR} && exec taskset -c 0 ./cpcu_kernel --log 2>&1 | tee -a ${kernel_log}'"
 
     # Wait briefly for the new session to be reachable. tmux's set-option
     # calls below otherwise race with the daemon and emit harmless but
@@ -627,15 +668,19 @@ cmd_test_phase() {
 # ════════════════════════════════════════════════════════════════════════
 
 run_kernel_only() {
+    LAUNCH_MODE="kernel"
     preflight_kernel
+    local kernel_log
+    kernel_log=$(make_log_path "kernel")
     log "Mode: KERNEL (foreground; systemd path, no tmux)"
-    log "Per-module CSVs → ${LOG_DIR}/log_*.csv"
+    log "  Log: ${kernel_log}"
     trap - EXIT INT TERM
     cd "${BIN_DIR}"
-    exec taskset -c 0 ./cpcu_kernel --log 2>&1 | tee -a "${LOG_DIR}/cpcu.log"
+    exec taskset -c 0 ./cpcu_kernel --log 2>&1 | tee -a "${kernel_log}"
 }
 
 run_tui_tmux() {
+    LAUNCH_MODE="tui"
     preflight_kernel
     preflight_tui
     local tui_bin="${RESOLVED_BIN}"
@@ -646,15 +691,22 @@ run_tui_tmux() {
         log "Mode: TUI (tmux: KERNEL + SHELL + TUI)"
     fi
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
-    tmux_add_window "TUI" "${tui_bin}"
+    local tui_log
+    tui_log=$(make_log_path "tui")
+    tmux_add_window "TUI" "bash -c '${tui_bin} 2>&1 | tee -a ${tui_log}'"
     if [ "${WITH_WS:-0}" = "1" ]; then
-        tmux_add_window "WS" "$(ws_window_cmd)"
+        local ws_log
+        ws_log=$(make_log_path "ws")
+        write_ws_info
+        tmux_add_window "WS" "bash -c '$(ws_window_cmd) 2>&1 | tee -a ${ws_log}'"
         log "Web dashboard at http://$(hostname -I | awk '{print $1}'):8765"
     fi
+    log "Logs: ${LOG_DIR}/"
     tmux_attach_at "TUI"
 }
 
 run_collect_tmux() {
+    LAUNCH_MODE="collect"
     preflight_kernel
     preflight_tui
     local tui_bin="${RESOLVED_BIN}"
@@ -665,9 +717,14 @@ run_collect_tmux() {
         log "Mode: COLLECT (tmux: KERNEL + SHELL + TUI, capture-focused)"
     fi
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
-    tmux_add_window "TUI" "${tui_bin}"
+    local tui_log
+    tui_log=$(make_log_path "tui")
+    tmux_add_window "TUI" "bash -c '${tui_bin} 2>&1 | tee -a ${tui_log}'"
     if [ "${WITH_WS:-0}" = "1" ]; then
-        tmux_add_window "WS" "$(ws_window_cmd)"
+        local ws_log
+        ws_log=$(make_log_path "ws")
+        write_ws_info
+        tmux_add_window "WS" "bash -c '$(ws_window_cmd) 2>&1 | tee -a ${ws_log}'"
         log "Web dashboard at http://$(hostname -I | awk '{print $1}'):8765"
     fi
 
@@ -685,6 +742,7 @@ run_collect_tmux() {
 }
 
 run_signal_tmux() {
+    LAUNCH_MODE="signal"
     preflight_kernel
     preflight_signal
     local sig_bin="${RESOLVED_BIN}"
@@ -695,11 +753,17 @@ run_signal_tmux() {
         log "Mode: SIGNAL (tmux: KERNEL + SHELL + SIGNAL)"
     fi
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
-    tmux_add_window "SIGNAL" "${sig_bin}"
+    local sig_log
+    sig_log=$(make_log_path "signal")
+    tmux_add_window "SIGNAL" "bash -c '${sig_bin} 2>&1 | tee -a ${sig_log}'"
     if [ "${WITH_WS:-0}" = "1" ]; then
-        tmux_add_window "WS" "$(ws_window_cmd)"
+        local ws_log
+        ws_log=$(make_log_path "ws")
+        write_ws_info
+        tmux_add_window "WS" "bash -c '$(ws_window_cmd) 2>&1 | tee -a ${ws_log}'"
         log "Web dashboard at http://$(hostname -I | awk '{print $1}'):8765"
     fi
+    log "Logs: ${LOG_DIR}/"
     tmux_attach_at "SIGNAL"
 }
 
@@ -900,6 +964,7 @@ cpcu_ws_is_stub() {
 }
 
 cmd_ws() {
+    LAUNCH_MODE="ws"
     log "${C_BLD}Web Dashboard Setup${C_RST}"
     echo
 
@@ -971,7 +1036,9 @@ cmd_ws() {
             err "tmux not installed — run './launch.sh setup' to install it."
             exit 1
         fi
+        write_ws_info
         log "Starting kernel + web dashboard in tmux..."
+        write_ws_info
         log "  Ctrl-b 0 = KERNEL  |  Ctrl-b 1 = SHELL  |  Ctrl-b 2 = WS"
         tmux_create_with_kernel || fatal "Couldn't bring up kernel"
         tmux_add_window "WS" "${BIN_DIR}/cpcu_ws --static \"${static_dir}\" $*"
@@ -980,6 +1047,7 @@ cmd_ws() {
     fi
 
     # Kernel already running — attach directly
+    write_ws_info
     log "Kernel already running. Starting cpcu_ws in foreground (Ctrl+C to stop)."
     exec "${BIN_DIR}/cpcu_ws" --static "${static_dir}" "$@"
 }
@@ -1005,6 +1073,7 @@ cmd_stop() {
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         log "Killing tmux session '$SESSION_NAME'..."
         tmux kill-session -t "$SESSION_NAME"
+        clear_ws_info
         ok "Done."
     else
         log "No tmux session '$SESSION_NAME' running."
@@ -1570,6 +1639,35 @@ EOF
 cmd_version() { echo "InfiniTech CPCU launch.sh v2.7 (April 2026)"; }
 
 
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  COMMAND: test-system (live system-level requirements verification)
+# ════════════════════════════════════════════════════════════════════════
+
+cmd_test_system() {
+    LAUNCH_MODE="test-system"
+
+    if [ ! -e /dev/shm/cpcu_ipc ]; then
+        fatal "Kernel not running. Start with: ./launch.sh tui (then run test-system in SHELL window)"
+    fi
+
+    local test_script=""
+    if [ -f "${CPCU_ROOT}/test/system_test.py" ]; then
+        test_script="${CPCU_ROOT}/test/system_test.py"
+    elif [ -f "/opt/cpcu/test/system_test.py" ]; then
+        test_script="/opt/cpcu/test/system_test.py"
+    else
+        fatal "system_test.py not found. Re-run './launch.sh build'."
+    fi
+
+    log "Running system-level requirements verification..."
+    log "  This requires cpcu_kernel + cpcu_io + cpcu_dsp to be running."
+    log "  The test monitors live IPC data for the specified duration."
+    echo
+    exec python3 "${test_script}" "$@"
+}
+
 # ════════════════════════════════════════════════════════════════════════
 #  ENTRY POINT
 # ════════════════════════════════════════════════════════════════════════
@@ -1619,6 +1717,7 @@ case "${MODE}" in
     test-signal)            run_signal ;;
     test-signal-demo)       run_signal_demo ;;
     test-safety-demo)       cmd_test_phase "safety-demo" ;;
+    test-system)            cmd_test_system "$@" ;;
 
     kernel|"")
         if [ -z "${MODE}" ] && [ -t 0 ] && [ -t 1 ]; then

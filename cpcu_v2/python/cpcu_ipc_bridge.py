@@ -523,3 +523,38 @@ class IPCBridge:
         if self.mm:
             self.mm.close()
             self.mm         =   None
+
+    # ══════════════════════════════════════════════════════════════════
+    #  Convenience readers for system_test.py
+    # ══════════════════════════════════════════════════════════════════
+
+    def read_magic(self):           return self._r32(OFF_CTRL + CTRL_MAGIC)
+    def read_version(self):         return self._r16(OFF_CTRL + CTRL_VERSION)
+    def read_heartbeat_us(self):    return self._r64(OFF_CTRL + CTRL_HEARTBEAT)
+    def read_sensor_head(self):     return self._r32(OFF_CTRL + 64)   # cache line 1
+    def read_sensor_tail(self):     return self._r32(OFF_CTRL + 128)  # cache line 2
+
+    def read_diag_pkts_received(self):  return self._r32(OFF_DIAG + DIAG_PKTS)
+    def read_diag_seq_gaps(self):       return self._r32(OFF_DIAG + DIAG_GAPS)
+    def read_diag_safe_entries(self):   return self._r32(OFF_DIAG + DIAG_SAFE)
+    def read_diag_ring_overflows(self): return self._r32(OFF_DIAG + DIAG_OVERFLOWS)
+    def read_diag_dsp_inferences(self): return self._r32(OFF_DIAG + DIAG_INFERENCES)
+    def read_diag_dsp_max_latency_us(self): return self._r32(OFF_DIAG + DIAG_MAXLAT)
+
+    def read_motor_cmd_servos(self):
+        """Read the 6 servo pulse widths from the motor command region."""
+        base = OFF_MOTOR + 4  # skip seq field
+        servos = []
+        for i in range(6):
+            servos.append(self._r16(base + i * 2))
+        return servos
+
+    def read_sensor_entry(self, idx):
+        """Read one sensor ring entry by index. Returns dict with vbat_raw."""
+        off = OFF_RING + (idx & RING_MASK) * SZ_ENTRY
+        # vbat_raw is at offset 38 within the entry (after samples+seq+flags+retry+loss+timestamp)
+        # samples: 2 × 8ch × 2B = 32B, seq(1), flags(1), retry(1), loss(1), timestamp(2)
+        vbat_raw = self._r16(off + 38)
+        return {'vbat_raw': vbat_raw}
+
+        return struct.unpack_from('<H', self.mm, off)[0]

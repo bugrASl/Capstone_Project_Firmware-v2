@@ -289,7 +289,8 @@ static void ds_sanitize(const char *in, char *out, size_t outsz)
 }
 
 /**
- *  Scan DATASET_OUT_DIR for files matching "{stem}_N.csv", return max N + 1.
+ *  Scan DATASET_OUT_DIR for files matching "{stem}_{N}_{mode}.csv" or
+ *  legacy "{stem}_{N}.csv", return max N + 1.
  */
 static int ds_next_index(const char *out_dir, const char *stem)
 {
@@ -309,8 +310,14 @@ static int ds_next_index(const char *out_dir, const char *stem)
         char *endp = NULL;
         long n = strtol(nstr, &endp, 10);
         if(endp == nstr) continue;
-        if(strcmp(endp, ".csv") != 0) continue;
-        if(n > max_n) max_n = (int)n;
+
+        /* Accept "{stem}_{N}.csv" (legacy) or "{stem}_{N}_{mode}.csv" */
+        if(strcmp(endp, ".csv") == 0 ||
+           strcmp(endp, "_filtered.csv") == 0 ||
+           strcmp(endp, "_unfiltered.csv") == 0)
+        {
+            if(n > max_n) max_n = (int)n;
+        }
     }
     closedir(d);
     return max_n + 1;
@@ -327,8 +334,9 @@ int ds_start_capture(IPC_Context *ipc)
     }
 
     int idx = ds_next_index(DATASET_OUT_DIR, stem);
-    snprintf(ds_path, sizeof(ds_path), "%s/%s_%d.csv",
-             DATASET_OUT_DIR, stem, idx);
+    const char *mode_str = (ds_mode == DS_MODE_FILTERED) ? "filtered" : "unfiltered";
+    snprintf(ds_path, sizeof(ds_path), "%s/%s_%d_%s.csv",
+             DATASET_OUT_DIR, stem, idx, mode_str);
 
     ds_file = fopen(ds_path, "w");
     if(!ds_file)

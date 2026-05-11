@@ -91,6 +91,7 @@
 <text x="570" y="160" class="cyn" style="font-size:11px">5 HEALTH      All 7 fault src, thermal, ring</text>
 <text x="570" y="180" class="cyn" style="font-size:11px">6 DATASET     EMG capture to CSV for training</text>
 <text x="570" y="200" class="cyn" style="font-size:11px">7 CONFIG      Runtime tuning + live editor</text>
+<text x="570" y="218" class="cyn" style="font-size:11px">              + web dashboard URL display</text>
 <text x="570" y="230" class="yel" style="font-size:11px">Press 'e' on CONFIG page to enter</text>
 <text x="570" y="248" class="yel" style="font-size:11px">live edit mode (arm parks at neutral)</text>
 <text x="570" y="266" class="yel" style="font-size:11px">Ctrl+S saves → SIGHUP → kernel reloads</text>
@@ -98,4 +99,6 @@
 <text x="570" y="300" class="grn" style="font-size:11px">Demo mode: ./launch.sh test-signal-demo</text>
 <text x="570" y="318" class="grn" style="font-size:11px">Synthetic 100 Hz sines, no hardware needed</text>
 <text x="570" y="336" class="grn" style="font-size:11px">Fault injection: F=radio B=batt G=gaps</text>
+<text x="570" y="362" class="dim" style="font-size:11px">Logs: cpcu_v2/log/log_{proc}_{mode}_{ts}.txt</text>
+<text x="570" y="378" class="dim" style="font-size:11px">Datasets: cpcu_v2/datasets/{gesture}_{N}_{mode}.csv</text>
 </svg>

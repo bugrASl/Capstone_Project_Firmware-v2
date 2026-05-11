@@ -1826,10 +1826,42 @@ void draw_page_config(int r, IPC_Context *ipc)
 
     /*==================== BUILD INFO ====================*/
     draw_section(r, 1, "BUILD");
+    draw_section(r, g_col_r, "WEB DASHBOARD");
     r++;
 
     draw_lv(r, 1, "TUI version:",  CP_CYAN, "v3.4-pageorder");
-    draw_lv(r, g_col_r, "Built:",  CP_DIM, "%s %s", __DATE__, __TIME__);
+    /* Check if ws_active.txt exists — written by launch.sh when web dashboard starts */
+    {
+        FILE *ws_f = fopen("config/ws_active.txt", "r");
+        if(!ws_f) ws_f = fopen("/opt/cpcu/config/ws_active.txt", "r");
+        if(ws_f)
+        {
+            char ws_url[128] = {0};
+            char line[256];
+            while(fgets(line, sizeof(line), ws_f))
+            {
+                if(strncmp(line, "url=", 4) == 0)
+                {
+                    size_t len = strlen(line + 4);
+                    if(len > 0 && line[4 + len - 1] == '\n') line[4 + len - 1] = '\0';
+                    snprintf(ws_url, sizeof(ws_url), "%s", line + 4);
+                }
+            }
+            fclose(ws_f);
+            if(ws_url[0])
+                draw_lv(r, g_col_r, "URL:",  CP_GOOD, "%s", ws_url);
+            else
+                draw_lv(r, g_col_r, "Status:",  CP_GOOD, "ACTIVE (reading config...)");
+        }
+        else
+        {
+            draw_lv(r, g_col_r, "Status:",  CP_DIM, "NOT RUNNING  (./launch.sh ws)");
+        }
+    }
+    r++;
+
+    draw_lv(r, g_col_r, "Bind:", CP_CYAN, "0.0.0.0:8765  (LAN-shared)");
+    draw_lv(r, 1, "Built:",  CP_DIM, "%s %s", __DATE__, __TIME__);
     r++;
     draw_lv(r, 1, "Compiler:",     CP_CYAN,
 #ifdef __GNUC__
@@ -1838,7 +1870,10 @@ void draw_page_config(int r, IPC_Context *ipc)
             "unknown"
 #endif
             );
-    draw_lv(r, g_col_r, "Std:",    CP_CYAN, "C%ld", __STDC_VERSION__ / 100L);
+    draw_lv(r, g_col_r, "Viewers:", CP_CYAN, "multi-viewer, read-only");
+    r++;
+    draw_lv(r, 1, "Std:",    CP_CYAN, "C%ld", __STDC_VERSION__ / 100L);
+    draw_lv(r, g_col_r, "Logs:",  CP_CYAN, "cpcu_v2/log/");
 }
 
 /*============= §4 FOOTER ==================================================================*/
