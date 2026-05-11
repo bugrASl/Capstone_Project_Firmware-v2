@@ -956,10 +956,14 @@ function renderFilteredSpec() {
     ctx.clearRect(0, 0, W, H);
 
     const ch = specCh;
-    if(!specMag[ch] || !specMag[ch].length) return;
+    const head = specHistoryHead[ch];
+    const filled = specHistoryFilled[ch];
+    if(filled === 0) return;
+    const latest = specHistory[ch][(head - 1 + WATERFALL_ROWS) % WATERFALL_ROWS];
+    if(!latest || !latest.length) return;
 
     const binHz = FS_HZ / N_FFT;
-    const mags = specMag[ch].map((v, i) => {
+    const mags = Array.from(latest).map((v, i) => {
         const f = i * binHz;
         return (f >= 20 && f <= 450) ? v : 0;
     });
@@ -1071,8 +1075,11 @@ pushSpecFrames = function(d) {
     if(!d.raw_full) return;
     const binHz = FS_HZ / N_FFT;
     for(let ch = 0; ch < 8; ch++) {
-        if(!specMag[ch]) continue;
-        const filt = specMag[ch].map((v, i) => {
+        const head = specHistoryHead[ch];
+        if(specHistoryFilled[ch] === 0) continue;
+        const latest = specHistory[ch][(head - 1 + WATERFALL_ROWS) % WATERFALL_ROWS];
+        if(!latest) continue;
+        const filt = Array.from(latest).map((v, i) => {
             const f = i * binHz;
             return (f >= 20 && f <= 450) ? v : 0;
         });
