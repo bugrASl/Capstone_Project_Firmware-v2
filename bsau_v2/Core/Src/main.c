@@ -87,6 +87,27 @@ int main(void)
 
   /* USER CODE BEGIN SysInit */
 
+  /*  PA4 is shared with DAC1_OUT1 on the STM32L432KC. After a cold boot
+   *  the DAC output buffer may not be fully tri-stated, weakly driving
+   *  the pad and injecting a DC offset into the ADC reading. Briefly
+   *  enable the DAC clock, force EN1=0 and MODE1=010 (pin connected,
+   *  buffer OFF), then kill the clock again. This guarantees the analog
+   *  switch is disconnected before the ADC takes ownership of the pin.  */
+  __HAL_RCC_DAC1_CLK_ENABLE();
+  DAC1->CR   = 0x00000000U;    /* EN1 = 0, all triggers off            */
+  DAC1->MCR  = 0x00000002U;    /* MODE1[2:0] = 010: buffer disabled    */
+  __HAL_RCC_DAC1_CLK_DISABLE();
+
+  /*  PA3 is shared with OPAMP1_VOUT. OPAMP1 inputs are PA0 (VINP) and
+   *  PA1 (VINM) — both EMG channels. If the OPAMP analog switch is not
+   *  fully disconnected after reset, it acts as a comparator between ch0
+   *  and ch1, overriding the external signal on PA3 with a clipped rail-
+   *  to-rail output. Force OPAMPxEN = 0 to disconnect the output path.
+   *  Clock is left running — the OPAMP control logic needs it to hold
+   *  the analog switch open.                                             */
+  __HAL_RCC_OPAMP_CLK_ENABLE();
+  OPAMP1->CSR = 0x00000000U;   /* OPAMPxEN = 0, output disconnected    */
+
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */

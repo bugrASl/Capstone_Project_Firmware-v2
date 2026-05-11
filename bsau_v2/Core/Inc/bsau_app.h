@@ -56,7 +56,7 @@ extern "C" {
 
 /*============= RADIO LINK PARAMETERS ==========================================================*/
 
-#define NRF_CHANNEL                 76
+#define NRF_CHANNEL                 108
 #define NRF_ADDRESS                 { 0xE7, 0xE7, 0xE7, 0xE7, 0xE7 }
 
 /*============= BATTERY THRESHOLDS =============================================================*/

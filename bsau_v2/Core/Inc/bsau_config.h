@@ -34,10 +34,10 @@
 /*============= SELECT EXACTLY ONE MODE ========================================================*/
 
 /* #define BSAU_MODE_RELEASE      */
-/* #define BSAU_MODE_DEBUG        */
+/* #define BSAU_MODE_DEBUG */
 /* #define BSAU_MODE_TEST_ADC_CSV */
 /* #define BSAU_MODE_TEST_PKT_LOG */
-/* #define BSAU_MODE_TEST_CSV     */
+/* #define BSAU_MODE_TEST_CSV */
 /* #define BSAU_MODE_TEST_DFT_LOG */
 /* #define BSAU_MODE_TEST_NRF_LOG */
 #define BSAU_MODE_DATASET

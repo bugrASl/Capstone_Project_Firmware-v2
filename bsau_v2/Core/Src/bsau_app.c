@@ -286,7 +286,9 @@ void BSAU_Run(void)
             continue;
         }
 
-        g_pkt_ready                 =   0;
+        /*  g_pkt_ready is cleared AFTER the g_adc_snapshot copy below.
+         *  Clearing it here would let the DMA ISR overwrite the snapshot
+         *  while we're still reading it — causing sporadic zero-spikes.  */
 
         /*  Deferred ADC error from ISR (we never LOG from ISR context). */
         if (g_adc_error_code != 0)
@@ -329,6 +331,10 @@ void BSAU_Run(void)
                 pkt.samples[s].ch[c] =  g_adc_snapshot[s * ADC_DMA_CHANNELS + c];
             }
         }
+
+        /*  NOW release the snapshot for the DMA ISR. All reads from
+         *  g_adc_snapshot (battery + EMG channels) are complete.         */
+        g_pkt_ready                 =   0;
 
         /*  Clipping detection (12-bit rails). */
         for (int s = 0; s < WL_SAMPLES_PER_PACKET; s++)

@@ -67,7 +67,7 @@ header {
     flex-wrap: wrap;
     z-index: 10;
 }
-header h1 { margin: 0; font-size: 16px; font-weight: 500; }
+header h1 { margin: 0; font-size: 20px; font-weight: 600; }
 .pill {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 10px; border-radius: 12px;
@@ -92,9 +92,9 @@ nav.tabs {
 }
 nav.tabs button {
     background: none; border: none;
-    padding: 12px 16px;
+    padding: 14px 20px;
     color: var(--fg-muted);
-    font-size: 14px;
+    font-size: 15px;
     cursor: pointer;
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
@@ -107,7 +107,7 @@ nav.tabs button.active {
 }
 main {
     padding: 20px;
-    max-width: 1200px;
+    max-width: none;
     margin: 0 auto;
 }
 .panel { display: none; }
@@ -144,12 +144,12 @@ main {
 .banner.parking { background: rgba(186, 117, 23, 0.15); color: var(--warn); }
 .banner.bad     { background: rgba(163, 45, 45, 0.15); color: var(--bad); }
 
-.gesture-card { display: flex; align-items: baseline; gap: 12px; }
-.gesture-name { font-size: 28px; font-weight: 500; font-family: monospace; }
-.gesture-conf { font-size: 16px; color: var(--fg-muted); }
+.gesture-card { display: flex; align-items: baseline; gap: 16px; }
+.gesture-name { font-size: 42px; font-weight: 500; font-family: monospace; }
+.gesture-conf { font-size: 22px; color: var(--fg-muted); }
 
-.confbar-row { display: grid; grid-template-columns: 80px 1fr 50px; gap: 10px; align-items: center; font-family: monospace; font-size: 12px; margin: 4px 0; }
-.confbar-track { background: var(--border); border-radius: 4px; height: 14px; overflow: hidden; }
+.confbar-row { display: grid; grid-template-columns: 80px 1fr 50px; gap: 10px; align-items: center; font-family: monospace; font-size: 13px; margin: 6px 0; }
+.confbar-track { background: var(--border); border-radius: 4px; height: 20px; overflow: hidden; }
 .confbar-fill  { background: var(--accent); height: 100%; transition: width 100ms; }
 .confbar-fill.active { background: var(--good); }
 
@@ -170,7 +170,8 @@ main {
 }
 .wave-canvas-wrap {
     position: relative;
-    height: 480px;
+    height: calc(100vh - 210px);
+    min-height: 480px;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -187,17 +188,17 @@ canvas { display: block; width: 100%; height: 100%; }
 
 .diag-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 12px;
 }
 .metric {
     background: var(--bg);
     border-radius: 6px;
-    padding: 10px;
+    padding: 14px;
     border: 1px solid var(--border);
 }
-.metric-label { font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-.metric-value { font-size: 20px; font-weight: 500; font-family: monospace; margin-top: 4px; }
+.metric-label { font-size: 12px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.metric-value { font-size: 26px; font-weight: 500; font-family: monospace; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -280,7 +281,7 @@ canvas { display: block; width: 100%; height: 100%; }
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
         <div class="card">
             <h2>Static spectrum (latest)</h2>
-            <div style="position: relative; height: 240px;">
+            <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
                 <canvas id="spec-static-canvas"></canvas>
             </div>
             <p style="font-size: 12px; color: var(--fg-muted); margin: 8px 0 0;">
@@ -290,7 +291,7 @@ canvas { display: block; width: 100%; height: 100%; }
         </div>
         <div class="card">
             <h2>Waterfall (last 60s)</h2>
-            <div style="position: relative; height: 240px;">
+            <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
                 <canvas id="spec-water-canvas"></canvas>
             </div>
             <p style="font-size: 12px; color: var(--fg-muted); margin: 8px 0 0;">

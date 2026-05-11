@@ -54,7 +54,7 @@ void layout_update(void)
     /* Bars and sliders scale with width: roughly quarter of the screen */
     g_bar_w     =   (g_col_r - 8);
     if(g_bar_w  <   14) g_bar_w = 14;
-    if(g_bar_w  >   32) g_bar_w = 32;
+    if(g_bar_w  >   50) g_bar_w = 50;
     g_slider_w  =   g_bar_w;
 }
 
@@ -552,13 +552,23 @@ void draw_page_waves(int r, IPC_Context *ipc)
         r++;
 
         int big_w = g_tui_w - 6;
-        draw_waveform(r, 3, big_w, WAVE_PLOT_H_BIG, wave_sel_ch, CP_GOOD);
-        r += WAVE_PLOT_H_BIG + 2;
+        /* Scale the big plot to available height instead of a fixed constant.
+         * On a 24-line terminal this gives ~14; on a 50-line terminal ~40. */
+        int big_h = g_term_h - r - 6;   /* leave room for axis + footer */
+        if(big_h < WAVE_PLOT_H_BIG) big_h = WAVE_PLOT_H_BIG;  /* floor at original */
+        if(big_h > 40) big_h = 40;                             /* sane cap */
+        draw_waveform(r, 3, big_w, big_h, wave_sel_ch, CP_GOOD);
+        r += big_h + 2;
     }
     else
     {
         /* ───── ALL 8 CHANNELS (mini-plots, 2 columns x 4 rows) ───── */
-        int mini_h = WAVE_PLOT_H;
+        /* Scale mini plot height to terminal: 4 rows per column, each
+         * needs (mini_h + 2) rows. Available = footer row minus current r. */
+        int avail_rows = g_term_h - r - 3;    /* leave room for footer */
+        int mini_h = (avail_rows / 4) - 2;
+        if(mini_h < 4)   mini_h = 4;            /* readable minimum */
+        if(mini_h > 14)  mini_h = 14;           /* sane maximum     */
         int mini_w = g_col_r - 4;
         if(mini_w < 20) mini_w = 20;
 
@@ -1646,13 +1656,11 @@ void draw_page_dataset(int r, IPC_Context *ipc)
 
     /* Auto-size plot height from what's left. We have 4 plot rows in a 2x4
      * grid, each consuming (plot_h + 1) rows for the trace + axis line.
-     * Cap at a sane upper bound so a tall window doesn't produce a single
-     * giant plot per channel — at ~6 rows the line trace already gives 30
-     * sub-row resolution which is plenty. */
+     * Scale with terminal height so tall windows give bigger plots. */
     int avail   = max_r - r;          /* rows we can use         */
     int plot_h  = (avail / 4) - 1;    /* per plot, minus its axis*/
-    if(plot_h < 2)  plot_h = 2;       /* don't go below original */
-    if(plot_h > 6)  plot_h = 6;       /* cap at scope-readable   */
+    if(plot_h < 2)  plot_h = 2;       /* don't go below minimum  */
+    if(plot_h > 14) plot_h = 14;      /* cap at readable maximum */
 
     for(int i = 0; i < 4 && r + plot_h + 1 <= max_r; i++)
     {
