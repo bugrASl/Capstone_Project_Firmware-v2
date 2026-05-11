@@ -1,0 +1,77 @@
+<svg viewBox="0 0 900 520" xmlns="http://www.w3.org/2000/svg" font-family="Inter, -apple-system, sans-serif">
+  <style>
+    text { font-size: 12px; fill: #1a1a1a; }
+    .title { font-size: 18px; font-weight: 600; }
+    .region { rx: 4; stroke-width: 1.5; }
+    .lbl { font-size: 11px; font-weight: 600; }
+    .det { font-size: 10px; fill: #555; }
+  </style>
+
+  <text x="450" y="30" text-anchor="middle" class="title">/dev/shm/cpcu_ipc — Shared Memory Layout (66 KB)</text>
+
+  <!-- Memory regions stacked -->
+  <rect x="50" y="60" width="400" height="40" class="region" fill="#e0e7ff" stroke="#6366f1"/>
+  <text x="60" y="78" class="lbl" style="fill:#4338ca">IPC_ControlBlock</text>
+  <text x="60" y="92" class="det">192 B · 3 cache lines · system state, heartbeats, edit-mode, kernel_pid</text>
+
+  <rect x="50" y="110" width="400" height="50" class="region" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="60" y="130" class="lbl" style="fill:#1d4ed8">IPC_SensorEntry[1024]</text>
+  <text x="60" y="144" class="det">64 KB · SPSC ring buffer · 64 B/entry · 1024 ms depth @ 1 kpkt/s</text>
+  <text x="60" y="155" class="det">Lock-free: head/tail on separate cache lines, C11 acquire/release</text>
+
+  <rect x="50" y="170" width="400" height="40" class="region" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="60" y="188" class="lbl" style="fill:#15803d">IPC_MotorCommand</text>
+  <text x="60" y="202" class="det">128 B · SeqLock · servo_us[6] + gesture_id + confidence</text>
+
+  <rect x="50" y="220" width="400" height="40" class="region" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="60" y="238" class="lbl" style="fill:#854d0e">IPC_Diagnostics</text>
+  <text x="60" y="252" class="det">128 B · Atomic counters · pkts, gaps, overflows, safe entries, stalls</text>
+
+  <rect x="50" y="270" width="400" height="40" class="region" fill="#fce7f3" stroke="#db2777"/>
+  <text x="60" y="288" class="lbl" style="fill:#be185d">IPC_DSPExport</text>
+  <text x="60" y="302" class="det">256 B · gesture name, per-class confidence, channel RMS, inference time</text>
+
+  <rect x="50" y="320" width="400" height="40" class="region" fill="#fff7ed" stroke="#ea580c"/>
+  <text x="60" y="338" class="lbl" style="fill:#c2410c">IPC_RuntimeConfig</text>
+  <text x="60" y="352" class="det">512+ B · SeqLock · servo limits, bias, smoother, grip, velocity map</text>
+
+  <rect x="50" y="370" width="400" height="40" class="region" fill="#f0fdf4" stroke="#22c55e"/>
+  <text x="60" y="388" class="lbl" style="fill:#166534">IPC_ToolPresence</text>
+  <text x="60" y="402" class="det">512 B · 8 slots × 64 B · side-tool heartbeat registry for web dashboard</text>
+
+  <rect x="50" y="420" width="400" height="40" class="region" fill="#ede9fe" stroke="#7c3aed"/>
+  <text x="60" y="438" class="lbl" style="fill:#6d28d9">IPC_DspFiltered</text>
+  <text x="60" y="452" class="det">6.4 KB · 8 ch × 200 samples float32 · post-filter envelope for web</text>
+
+  <!-- Writer/Reader arrows -->
+  <text x="530" y="70" class="lbl">Writers</text>
+  <text x="720" y="70" class="lbl">Readers</text>
+
+  <text x="530" y="88" class="det">cpcu_kernel</text>
+  <text x="720" y="88" class="det">All processes</text>
+
+  <text x="530" y="138" class="det">cpcu_io (Core 3)</text>
+  <text x="720" y="138" class="det">cpcu_dsp (Cores 1-2), TUI, WS</text>
+
+  <text x="530" y="188" class="det">cpcu_dsp</text>
+  <text x="720" y="188" class="det">cpcu_io (Core 3)</text>
+
+  <text x="530" y="238" class="det">cpcu_io, cpcu_dsp</text>
+  <text x="720" y="238" class="det">cpcu_kernel, TUI, WS</text>
+
+  <text x="530" y="288" class="det">cpcu_dsp</text>
+  <text x="720" y="288" class="det">cpcu_tui, cpcu_ws</text>
+
+  <text x="530" y="338" class="det">cpcu_kernel</text>
+  <text x="720" y="338" class="det">cpcu_io, cpcu_dsp</text>
+
+  <text x="530" y="388" class="det">pca/signal_testbench</text>
+  <text x="720" y="388" class="det">cpcu_ws</text>
+
+  <text x="530" y="438" class="det">cpcu_dsp</text>
+  <text x="720" y="438" class="det">cpcu_ws</text>
+
+  <!-- Total -->
+  <rect x="50" y="475" width="400" height="30" rx="6" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="250" y="495" text-anchor="middle" style="font-size:12px; font-weight:600; fill:#374151">Total: 66,240 bytes · POSIX shm · mmap'd by all processes</text>
+</svg>

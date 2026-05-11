@@ -1,32 +1,6 @@
 /**
- *  @file       demo_signals.h
- *  @brief      Shared synthetic-waveform generators for --demo modes.
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    1.0
- *
- *  @details    Header-only library of waveform generators used by the
- *              cpcu_tui and signal_testbench demo modes. Each generator
- *              takes a time argument (seconds), a frequency (Hz), and a
- *              per-channel phase offset, and returns a voltage in [0, 3.3]
- *              volts (mid-rail = 1.65 V, full-scale = ±0.6 V by default).
- *
- *              These are called once per sample at the sample rate (2 kHz
- *              for the BSAU chain). The caller converts voltage → 12-bit
- *              ADC via:
- *                  adc = voltage / 3.3 * 4095
- *              and clamps to [0, 4095].
- *
- *  Waveforms:
- *              1  Sine         pure tone
- *              2  Square       50 % duty
- *              3  Triangle     symmetric
- *              4  Sawtooth     rising ramp
- *              5  Noise        uniform white (centered on DC offset)
- *              6  EMG burst    realistic prosthetic-control signal:
- *                              1-s rest + 1-s contraction (noise × envelope)
- *              7  ECG          PQRST-ish repeating template; freq = BPM
- *              8  Chirp        frequency sweep from f to 5*f over 2 s
+ *  @file   demo_signals.h
+ *  @brief  Synthetic EMG signal generators for TUI demo mode.
  */
 
 #ifndef DEMO_SIGNALS_H
@@ -240,3 +214,4 @@ static inline float demo_gen(DemoWave wave, float t, float freq, float phase_off
 }
 
 #endif /* DEMO_SIGNALS_H */
+

@@ -1,28 +1,6 @@
 /**
- *  @file       smooth_testbench.c
- *  @brief      Automated unit tests for cpcu_smooth (v2.1, CPCU v2.3.2).
- *  @author     bugrASl
- *  @date       April 2026
- *
- *  Self-contained — no hardware, no IPC, no shared memory. Drives
- *  the smoother through synthetic inputs and verifies:
- *
- *      TB-SMO01 — Init defaults: SMOOTH_Init produces sane state for
- *                 every channel.
- *      TB-SMO02 — Trapezoidal motion: SMOOTH_Update advances current
- *                 toward target with finite velocity. Settling reached
- *                 within expected wall-clock budget.
- *      TB-SMO03 — Deadband (NEW v2.1): SMOOTH_ShouldWrite returns
- *                 true while in motion, false once settled and within
- *                 deadband of the last written value.
- *      TB-SMO04 — Deadband disabled (deadband_us = 0): always writes.
- *      TB-SMO05 — Initial-write rule: very first write goes through
- *                 even if smoother is settled at start_us.
- *      TB-SMO06 — MarkWritten coherence: a fresh PCA write through
- *                 SMOOTH_MarkWritten correctly updates the shadow.
- *      TB-SMO07 — Snap clears motion but preserves deadband state.
- *
- *  Runs in <50 ms and is safe to wire into run_tests.sh Phase 1.
+ *  @file   smooth_testbench.c
+ *  @brief  Smoother test harness — trapezoidal motion, deadband, gravity compensation.
  */
 
 #include <stdio.h>
@@ -304,3 +282,4 @@ int main(void)
 
     return (g_fail == 0) ? 0 : 1;
 }
+

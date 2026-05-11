@@ -1,15 +1,12 @@
 /**
- *  @file       nrf24l01_linux.c
- *  @brief      NRF24L01+ Driver
- *  @author     bugrASl
- *  @date       11.04.2026
- *  @version    2.0
- *  @details
- *      SPI: Each NRF transaction (cmd + data) is sent
- *      as a single ioctl(SPI_IOC_MESSAGE(1)) with the
- *      full buffer. The kernel's spidev driver holds
- *      CS low for the entire transfer.
- */ 
+ *  @file   nrf24l01_linux.c
+ *  @brief  NRF24L01+ Linux SPI driver — init, receive, status, power control.
+ *
+ *  Operates the NRF24L01+ in PRX (receive) mode via /dev/spidevX.Y.
+ *  GPIO CE pin is managed through the Linux GPIO character device.
+ *  Provides busy-poll packet reception, FIFO flush, IRQ clear, and
+ *  power-down for clean shutdown and recovery.
+ */
 
 #include "nrf24l01_linux.h"
 
@@ -335,3 +332,4 @@ NRF_Status NRF_ReadPayload(NRF_Handle *h, uint8_t *buf)
 }
 
 /*==========================================================================================*/
+

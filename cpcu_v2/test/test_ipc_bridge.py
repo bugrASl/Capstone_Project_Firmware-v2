@@ -16,19 +16,6 @@ Usage:
 
 Author: bugrASl
 Date:   April 2026
-
-──────────────────────────────────────────────────────────────────────────
-MAINTAINER NOTE — KEEP IPC OFFSETS IN SYNC
-──────────────────────────────────────────────────────────────────────────
-When a section is added to cpcu_v2/include/cpcu_ipc.h:
-    1. Mirror it in cpcu_v2/python/cpcu_ipc_bridge.py (OFF_*, SZ_*).
-    2. Add a new ASSERT line to test_section_offsets() below covering
-       the new section's offset.
-    3. Update the SHM_TOTAL assertion to extend through the new section.
-
-The test is the contract enforcement between C and Python views. Without
-the assertion for a new section, layout drift goes silently uncaught.
-──────────────────────────────────────────────────────────────────────────
 """
 
 import struct
@@ -38,7 +25,7 @@ import time
 import mmap
 
 # Add both this directory (test/) and the python module dir to sys.path
-# so `import cpcu_ipc_bridge` works regardless of cwd. v2.7 moved Python
+# so `import cpcu_ipc_bridge` works regardless of cwd. The restructure moved Python
 # modules from scripts/ to python/; we add both so this test works on
 # either layout.
 _TEST_DIR    =   os.path.dirname(os.path.abspath(__file__))
@@ -86,8 +73,8 @@ def test_struct_sizes():
 
 def test_section_offsets():
     """Verify section offsets are sequential and non-overlapping.
-       Updated v2.4.0: now includes CONFIG (v2.3.3), TOOL_PRESENCE
-       (v2.4.0), and DSP_FILTERED (v2.4.0) sections."""
+       Now includes CONFIG, TOOL_PRESENCE
+, and DSP_FILTERED sections."""
     print("\n--- Section Offset Validation ---")
     ASSERT(OFF_CTRL          == 0,                                      f"CTRL at 0")
     ASSERT(OFF_RING          == 192,                                    f"RING at 192")

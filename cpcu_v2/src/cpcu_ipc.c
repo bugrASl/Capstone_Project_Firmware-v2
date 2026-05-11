@@ -1,15 +1,16 @@
 /**
- *  @file       cpcu_ipc.c
- *  @brief      POSIX shared memory IPC — lock-free SPSC + SeqLock
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.3.3
+ *  @file   cpcu_ipc.c
+ *  @brief  POSIX shared memory IPC — create, open, close, ring buffer, seqlock.
  *
- *  v2.3.3 changes:
- *      - IPC_RuntimeConfig region added (last in layout). Mapped in
- *        ipc_map_ptrs after IPC_DSPExport.
- *      - IPC_WriteRuntimeConfig / IPC_ReadRuntimeConfig / IPC_RuntimeConfigSeq.
- *      - Bumped IPC_VERSION to 0x0203.
+ *  Manages a single /dev/shm/cpcu_ipc region containing:
+ *    - Control block (192 B): system state, heartbeats, edit-mode flags.
+ *    - Sensor ring (64 KB): lock-free SPSC ring buffer, 1024 entries.
+ *    - Motor command (128 B): seqlock-protected servo targets.
+ *    - Diagnostics (128 B): atomic counters per subsystem.
+ *    - DSP export (256 B): gesture name, confidence, RMS per channel.
+ *    - Runtime config: servo limits, smoother params, grip thresholds.
+ *    - Tool presence (512 B): side-tool heartbeat registry for dashboard.
+ *    - DSP filtered (6.4 KB): post-filter envelope for web visualization.
  */
 
 #include "cpcu_ipc.h"
@@ -38,11 +39,11 @@ static inline void ipc_map_ptrs(IPC_Context *ctx)
     off            +=   sizeof(IPC_Diagnostics);
     ctx->dsp_export =   (IPC_DSPExport *)(b + off);
     off            +=   sizeof(IPC_DSPExport);
-    ctx->config     =   (IPC_RuntimeConfig *)(b + off);     /* v2.3.3 */
+    ctx->config     =   (IPC_RuntimeConfig *)(b + off);     /* */
     off            +=   sizeof(IPC_RuntimeConfig);
-    ctx->tool_presence = (IPC_ToolPresence *)(b + off);     /* v2.4.0 */
+    ctx->tool_presence = (IPC_ToolPresence *)(b + off);     /* */
     off            +=   sizeof(IPC_ToolPresence);
-    ctx->dsp_filtered  = (IPC_DspFiltered *)(b + off);      /* v2.4.0 */
+    ctx->dsp_filtered  = (IPC_DspFiltered *)(b + off);      /* */
 }
 
 /*============= IPC_Create =========================================================================*/
@@ -299,7 +300,7 @@ bool IPC_ReadMotorCmd(IPC_Context *ctx, uint16_t servo_us[IPC_NUM_SERVOS],
     return false;   /* Failed after 4 attempts */
 }
 
-/*============= Runtime Config (SeqLock, v2.3.3) ===================================================*/
+/*============= Runtime Config (SeqLock) ===================================================*/
 /**
  *  Writer (cpcu_kernel only) populates the entire IPC_RuntimeConfig
  *  in one go. The seqlock pattern is identical to MotorCmd but the
@@ -352,3 +353,4 @@ uint32_t IPC_RuntimeConfigSeq(IPC_Context *ctx)
 }
 
 /*==================================================================================================*/
+

@@ -1,14 +1,11 @@
 /**
- *  @file       cpcu_pca9685.c
- *  @brief      PCA9685 I2C PWM servo driver
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    1.1
- *  @details    v1.1: PCA_SetServo and friends now take a logical servo
- *              index (0..PCA_SERVO_COUNT-1) and translate to the physical
- *              PCA9685 channel via PCA_Handle::servo_channel[]. See the
- *              header for the wiring map. PCA_SetPWM is unchanged — it
- *              still accepts raw channel 0..15 for low-level access.
+ *  @file   cpcu_pca9685.c
+ *  @brief  PCA9685 I2C PWM servo driver — init, set pulse, safety clamp.
+ *
+ *  Communicates with the PCA9685 16-channel PWM controller at 400 kHz I2C.
+ *  Configures 50 Hz PWM frequency, converts microsecond pulse widths to
+ *  12-bit ON/OFF register values. Per-servo hardware limits are enforced
+ *  by PCA_SafetyClamp() before any write reaches the bus.
  */
 
 #include "cpcu_pca9685.h"
@@ -72,7 +69,7 @@ static PCA_Status pca_write_4(PCA_Handle *p, uint8_t start_reg, const uint8_t da
 
 PCA_Status PCA_Init(PCA_Handle *p, const char *i2c_dev, uint8_t addr)
 {
-    /* Load servo safety limits and channel map (v1.1) */
+    /* Load servo safety limits and channel map */
     const uint16_t  mins[]  =   PCA_SERVO_MIN_US;
     const uint16_t  maxs[]  =   PCA_SERVO_MAX_US;
     const uint8_t   chans[] =   PCA_SERVO_CHANNEL;
@@ -191,7 +188,7 @@ PCA_Status PCA_SetPWM(PCA_Handle *p, uint8_t channel, uint16_t on, uint16_t off)
     return pca_write_4(p, PCA_REG_LEDn_ON_L(channel), data);
 }
 
-/*  v1.1: logical_idx is 0..PCA_SERVO_COUNT-1.
+/* logical_idx is 0..PCA_SERVO_COUNT-1.
  *  Translates to physical PCA channel via servo_channel[]. */
 PCA_Status PCA_SetServo(PCA_Handle *p, uint8_t logical_idx, uint16_t pulse_us)
 {
@@ -242,3 +239,4 @@ void PCA_SafetyClamp(PCA_Handle *p, uint16_t pulse_us[PCA_SERVO_COUNT])
 }
 
 /*====================================================================================*/
+

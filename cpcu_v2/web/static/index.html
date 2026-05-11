@@ -119,11 +119,12 @@ main {
     border-radius: 8px;
     padding: 16px;
     margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
 .card h2 {
     margin: 0 0 12px;
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 13px;
+    font-weight: 600;
     color: var(--fg-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -131,6 +132,10 @@ main {
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-family: monospace; font-size: 13px; }
 .kv dt { color: var(--fg-muted); }
 .kv dd { margin: 0; }
+
+/* Overview top row: system + gesture side by side */
+.overview-top { display: grid; grid-template-columns: 1fr 1.5fr; gap: 16px; margin-bottom: 16px; }
+@media (max-width: 700px) { .overview-top { grid-template-columns: 1fr; } }
 
 .banner {
     padding: 10px 14px;
@@ -148,10 +153,13 @@ main {
 .gesture-name { font-size: 42px; font-weight: 500; font-family: monospace; }
 .gesture-conf { font-size: 22px; color: var(--fg-muted); }
 
-.confbar-row { display: grid; grid-template-columns: 80px 1fr 50px; gap: 10px; align-items: center; font-family: monospace; font-size: 13px; margin: 6px 0; }
-.confbar-track { background: var(--border); border-radius: 4px; height: 20px; overflow: hidden; }
-.confbar-fill  { background: var(--accent); height: 100%; transition: width 100ms; }
+.confbar-row { display: grid; grid-template-columns: 90px 1fr 50px; gap: 10px; align-items: center; font-family: monospace; font-size: 13px; margin: 5px 0; }
+.confbar-track { background: var(--border); border-radius: 4px; height: 18px; overflow: hidden; }
+.confbar-fill  { background: var(--accent); height: 100%; transition: width 120ms ease; }
 .confbar-fill.active { background: var(--good); }
+.rms-row { display: grid; grid-template-columns: 40px 1fr 70px; gap: 10px; align-items: center; font-family: monospace; font-size: 13px; margin: 4px 0; }
+.rms-track { background: var(--border); border-radius: 3px; height: 14px; overflow: hidden; }
+.rms-fill  { background: var(--accent); height: 100%; transition: width 120ms ease; opacity: 0.8; }
 
 .wave-toggle { display: flex; gap: 8px; margin-bottom: 12px; }
 .wave-toggle button {
@@ -188,9 +196,11 @@ canvas { display: block; width: 100%; height: 100%; }
 
 .diag-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(4, 1fr);
     gap: 12px;
 }
+@media (max-width: 900px) { .diag-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 500px) { .diag-grid { grid-template-columns: 1fr; } }
 .metric {
     background: var(--bg);
     border-radius: 6px;
@@ -222,23 +232,24 @@ canvas { display: block; width: 100%; height: 100%; }
 <section id="panel-overview" class="panel active">
     <div id="banner" class="banner locked">Edit mode: LOCKED — press 'e' on the TUI's CONFIG page to enter</div>
 
-    <div class="card">
-        <h2>System</h2>
-        <dl class="kv">
-            <dt>state</dt><dd id="ov-state">—</dd>
-            <dt>io_ready</dt><dd id="ov-io">—</dd>
-            <dt>dsp_ready</dt><dd id="ov-dsp">—</dd>
-            <dt>io heartbeat</dt><dd id="ov-hb">—</dd>
-        </dl>
-    </div>
-
-    <div class="card">
-        <h2>Current gesture</h2>
-        <div class="gesture-card">
-            <span class="gesture-name" id="ov-gesture">—</span>
-            <span class="gesture-conf" id="ov-conf">— %</span>
+    <div class="overview-top">
+        <div class="card" style="margin-bottom:0">
+            <h2>System</h2>
+            <dl class="kv">
+                <dt>state</dt><dd id="ov-state">—</dd>
+                <dt>io_ready</dt><dd id="ov-io">—</dd>
+                <dt>dsp_ready</dt><dd id="ov-dsp">—</dd>
+                <dt>io heartbeat</dt><dd id="ov-hb">—</dd>
+            </dl>
         </div>
-        <div id="ov-confbars" style="margin-top: 12px;"></div>
+        <div class="card" style="margin-bottom:0">
+            <h2>Current gesture</h2>
+            <div class="gesture-card">
+                <span class="gesture-name" id="ov-gesture">—</span>
+                <span class="gesture-conf" id="ov-conf">— %</span>
+            </div>
+            <div id="ov-confbars" style="margin-top: 12px;"></div>
+        </div>
     </div>
 
     <div class="card">
@@ -424,30 +435,32 @@ function applyState(d) {
             const isActive = i === d.dsp.active_class;
             const row = document.createElement('div');
             row.className = 'confbar-row';
+            if(isActive) row.style.fontWeight = '600';
+            const label = isActive && d.dsp.gesture ? d.dsp.gesture : `class ${i}`;
             row.innerHTML = `
-                <span>class ${i}${isActive ? ' ◄' : ''}</span>
+                <span style="color:${isActive ? 'var(--good)' : 'var(--fg-muted)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}${isActive ? ' ◄' : ''}</span>
                 <div class="confbar-track">
                     <div class="confbar-fill ${isActive ? 'active' : ''}" style="width: ${(p*100).toFixed(0)}%"></div>
                 </div>
-                <span>${(p*100).toFixed(0)}%</span>`;
+                <span style="min-width:40px;text-align:right">${(p*100).toFixed(0)}%</span>`;
             cb.appendChild(row);
         });
     }
 
-    /* RMS bars */
+    /* RMS bars — use dedicated rms-row class for narrow channel labels */
     const rmsEl = $('#ov-rms');
     rmsEl.innerHTML = '';
     if(d.dsp.channel_rms) {
         const peak = Math.max(...d.dsp.channel_rms, 0.01);
         d.dsp.channel_rms.forEach((v, i) => {
             const row = document.createElement('div');
-            row.className = 'confbar-row';
+            row.className = 'rms-row';
             row.innerHTML = `
-                <span>ch${i}</span>
-                <div class="confbar-track">
-                    <div class="confbar-fill" style="width: ${(v/peak*100).toFixed(0)}%"></div>
+                <span style="color:var(--fg-muted)">ch${i}</span>
+                <div class="rms-track">
+                    <div class="rms-fill" style="width: ${(v/peak*100).toFixed(0)}%"></div>
                 </div>
-                <span>${v.toFixed(3)}</span>`;
+                <span style="font-size:12px">${v.toFixed(4)}</span>`;
             rmsEl.appendChild(row);
         });
     }

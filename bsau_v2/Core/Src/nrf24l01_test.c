@@ -1,30 +1,6 @@
 /**
- *  @file       nrf24l01_test.c
- *  @brief      On-target self-test suite for NRF24L01+ driver
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details    Each test is non-destructive: the radio state is restored
- *              after each sub-test so the chip remains operational for the
- *              following tests and for normal application traffic.
- *
- *              All tests use the LOG macro for output. The board prefix
- *              [BSAU] or [CPCU] is inserted automatically by log.h based
- *              on LOG_BOARD_xxx.
- *
- *              v2.1 changes:
- *                  - NRF_Test_Registers: expected RF_SETUP value was
- *                    `RF_DR_LOW | RF_PWR_3` (= 0x26, v2.0 @ 250 kbps).
- *                    v2.1 driver programs `RF_DR_HIGH | RF_PWR_3`
- *                    (= 0x0E, 2 Mbps). Also expected SETUP_RETR was 0x5F
- *                    (ARD=1500 µs, v2.0). v2.1 driver programs 0x1F
- *                    (ARD=500 µs). Without these fixes, a correctly-
- *                    running v2.1 radio would spuriously fail the audit.
- *                  - NRF_Test_TX: commented timeout updated from 75 ms
- *                    to 20 ms to match the v2.1 NRF_Transmit timeout.
- *                  - Style polish: 98-char banners, Allman braces in all
- *                    single-statement blocks, column-aligned assignments,
- *                    @version / @date headers.
+ *  @file   nrf24l01_test.c
+ *  @brief  NRF24L01+ hardware validation — register read-back, TX/RX loopback.
  */
 
 #include "nrf24l01_test.h"
@@ -100,7 +76,7 @@ TestResult NRF_Test_SPI(NRF_Handle *hnrf)
  *      expected values. Uses a mask per register because some fields are
  *      reserved or role-dependent.
  *
- *  v2.1 expected values (authoritative — see nrf24l01.c § NRF_Init):
+ *  expected values (authoritative — see nrf24l01.c § NRF_Init):
  *      RF_SETUP     = RF_DR_HIGH | RF_PWR_3  (0x0E: 2 Mbps, 0 dBm)
  *      SETUP_RETR   = 0x1F                   (ARD=500 µs, ARC=15)
  *      EN_AA        = 0x01                   (auto-ACK pipe 0 only)
@@ -135,7 +111,7 @@ TestResult NRF_Test_Registers(NRF_Handle *hnrf)
                                                       hnrf->channel, 0x7F, "RF_CH");
 
     /*
-     *  RF_SETUP: v2.1 programs RF_DR_HIGH=1, RF_DR_LOW=0, RF_PWR=0x03
+     *  RF_SETUP: Programs RF_DR_HIGH=1, RF_DR_LOW=0, RF_PWR=0x03
      *  -> 2 Mbps at 0 dBm. Mask 0x2E covers bits 5 (RF_DR_LOW),
      *  3 (RF_DR_HIGH), and 2:1 (RF_PWR). Bit 0 is reserved on NRF24L01+
      *  so we don't check it (driver leaves it 0, the plain NRF24L01 had
@@ -159,7 +135,7 @@ TestResult NRF_Test_Registers(NRF_Handle *hnrf)
                                                       NRF_PAYLOAD_SIZE, 0x3F, "RX_PW_P0");
 
     /*
-     *  SETUP_RETR: v2.1 programs ARD=500 µs (0x1), ARC=15 (0xF) -> 0x1F.
+     *  SETUP_RETR: Programs ARD=500 µs (0x1), ARC=15 (0xF) -> 0x1F.
      *  This is the minimum ARD permitted at 2 Mbps with 32-byte payload
      *  and 2-byte CRC (datasheet table 19).
      */
@@ -353,7 +329,7 @@ TestResult NRF_Test_PowerCycle(NRF_Handle *hnrf)
  *      ├────────────┼───────────────────────┼─────────────────────┤
  *      │ TX_DS=1    │ ACK received from PRX │ PASS (link alive)   │
  *      │ MAX_RT=1   │ 15 retries exhausted  │ PASS (RF SM works)  │
- *      │ neither    │ timeout (20 ms, v2.1) │ FAIL (HW fault)     │
+ *      │ neither    │ timeout (20 ms) │ FAIL (HW fault)     │
  *      └──────────────────────────────────────────────────────────┘
  *
  *      Why MAX_RT = PASS:
@@ -599,3 +575,4 @@ TestResult NRF_Test_All(NRF_Handle *hnrf, const uint8_t addr[NRF_ADDR_WIDTH])
 }
 
 /*==============================================================================================*/
+

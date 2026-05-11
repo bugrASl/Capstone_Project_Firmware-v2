@@ -1,24 +1,6 @@
 /**
- *  @file       cpcu_config.h
- *  @brief      Runtime config loader — JSON to IPC_RuntimeConfig (v2.3.3).
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    1.0
- *
- *  Parses cpcu_v2/config/runtime.json (or whatever path is passed) into
- *  an IPC_RuntimeConfig struct. cpcu_kernel calls this on startup and
- *  on SIGHUP, then publishes the result to shared memory via
- *  IPC_WriteRuntimeConfig.
- *
- *  Design rules:
- *      - Refuse to start on schema mismatch. No silent defaults.
- *      - Validate every numeric field against its sane range.
- *      - On any parse failure, return non-zero and DO NOT touch the
- *        output struct beyond zeroing it.
- *      - No third-party JSON dependency — small hand-rolled parser
- *        sufficient for the flat, well-known schema.
- *
- *  See cpcu_v2/docs/RUNTIME_CONFIG.md.
+ *  @file   cpcu_config.h
+ *  @brief  Runtime config API — load JSON, validate, patch, provide defaults.
  */
 
 #ifndef CPCU_CONFIG_H
@@ -64,7 +46,7 @@ void        CFG_Defaults(IPC_RuntimeConfig *out);
 /*  Convert a CFG_Status to a static string (for logging). */
 const char *CFG_StatusStr(CFG_Status s);
 
-/*============= TARGETED PATCH WRITER (v2.3.6) =====================*/
+/*============= TARGETED PATCH WRITER =====================*/
 /*
  *  Surgical JSON edit: rewrites only the listed keys and preserves
  *  every other field (including gesture_velocity, which dsp owns and
@@ -100,3 +82,4 @@ CFG_Status  CFG_PatchFile(const char *path,
 #endif
 
 #endif  /* CPCU_CONFIG_H */
+

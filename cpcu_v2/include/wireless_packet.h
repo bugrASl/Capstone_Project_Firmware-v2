@@ -1,37 +1,6 @@
 /**
- *  @file       wireless_packet.h
- *  @brief      Wireless packet structure and 12-bit compression
- *  @author     bugrASl
- *  @date       10.04.2026
- *  @version    2.1
- *
- *  @details
- *      ─────────────── Wire Layout (32-Byte, Fixed Payload) ───────────────────────────
- *      
- *      Byte    Fields          Size        Description
- *      ────────────────────────────────────────────────────────────────────────────────
- *      [0]     seq             1B          Packet Sequence Number(0-255, wraps)
- *      [1]     flags           1B          Status Flags, 2-bit Battery Level
- *      [2]     tx_retry        1B          ARC_CNT: Retransmitions for this packet
- *      [3]     pkt_loss        1B          PLOS_CNT: Cumulative lost packets
- *      [4-5]   timestamp       2B          TIM2 us counter, little-endian
- *      [6-7]   vbat_raw        2B          12-bit Battery ADC reading, high-nibble-aligned
- *      [8-19]  sample[0]       12B         8 Channels x 12-bit ADC reading, packed
- *      [20-31] sample[1]       12B         8 Channels x 12-bit ADC reading, packed
- *      ────────────────────────────────────────────────────────────────────────────────
- *      Total:  32B
- *
- *      ─────────────── 12-bit Packing ─────────────────────────────────────────────────
- *      Two 12-bit values A, B -> 3 bytes:
- *          byte[0] =   A[7:0]
- *          byte[1] =   A[11:8] | (B[3:0] << 4)
- *          byte[2] =   B[11:4]
- *      ────────────────────────────────────────────────────────────────────────────────
- *
- *      ─────────────── vbat_raw Encoding ──────────────────────────────────────────────
- *          byte[0] =   vbat_raw[11:4]
- *          byte[1] =   (vbat_raw[3:0] << 4)   
- *      ────────────────────────────────────────────────────────────────────────────────
+ *  @file   wireless_packet.h
+ *  @brief  Wireless packet format — 32-byte NRF payload structure and codec API.
  */
 
 #ifndef WIRELESS_PACKET_H
@@ -152,3 +121,4 @@ void WL_Unpack(const uint8_t *in, WL_Packet *out);
 #endif
 
 #endif /* WIRELESS_PACKET_H */
+

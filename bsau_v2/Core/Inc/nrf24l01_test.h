@@ -1,54 +1,6 @@
 /**
- *  @file       nrf24l01_test.h
- *  @brief      On-target self-test suite for NRF24L01+ driver
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details
- *              Tests runnable after NRF_Init() to verify the SPI chain,
- *              register configuration, and RF state machine. Each sub-test
- *              is independently invokable and logs PASS/FAIL via LOG().
- *
- *                          Test Hierarchy
- *              ────────────────────────────────────────────────────────────────
- *              TB-105a  SPI Loopback
- *                  Write/readback on a scratch register (SETUP_AW).
- *                  Catches: wiring faults, SPI clock polarity, dead chip.
- *
- *              TB-105b  Register Audit
- *                  Read back every register programmed by NRF_Init() and
- *                  compare against expected values.
- *                  Catches: init-order bugs, register write failures.
- *
- *              TB-105c  Address Verify
- *                  Read back the 5-byte pipe 0 address (and TX_ADDR for TX).
- *                  Catches: multi-byte SPI transfer issues.
- *
- *              TB-105d  FIFO Exercise
- *                  Empty → write dummy → non-empty → flush → empty.
- *                  Catches: FIFO controller faults, SPI command issues.
- *
- *              TB-105e  Power Cycle
- *                  Power down → verify PWR_UP=0 → power up → verify PWR_UP=1.
- *                  Catches: CONFIG register write failures, oscillator startup.
- *
- *              TB-105f  RF State Machine  (TX role only)
- *                  Transmit a test packet and check for TX_DS or MAX_RT.
- *                  Both are valid — the point is that the state machine
- *                  responds. MAX_RT just means "no receiver", expected solo.
- *                  Catches: RF synthesizer, PLL, CE pulse timing issues.
- *
- *              TB-105g  Receive Readiness  (RX role only)
- *                  Verify CONFIG has PRIM_RX set, CE is high, chip in RX mode.
- *                  Catches: init left the chip in the wrong mode.
- *
- *                          Integration
- *              ────────────────────────────────────────────────────────────────
- *              Call NRF_Test_All() after NRF_Init() returns NRF_OK. It runs
- *              all applicable tests for the current role and returns
- *              TEST_PASS / TEST_FAIL.
- *                  BSAU: invoked from BSAU_Test_Init() in TEST_NRF_LOG mode.
- *                  CPCU: invoked from CPCU_CM4_TestMain() (NRF is on CM4).
+ *  @file   nrf24l01_test.h
+ *  @brief  NRF24L01+ test API — self-test entry point.
  */
 
 #ifndef NRF24L01_TEST_H
@@ -121,3 +73,4 @@ TestResult  NRF_Test_RX         (NRF_Handle *hnrf);
 #endif
 
 #endif /* NRF24L01_TEST_H */
+

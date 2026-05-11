@@ -1,17 +1,11 @@
 /**
- *  @file       cpcu_config.c
- *  @brief      Runtime config loader implementation (v2.3.3).
- *  @author     bugrASl
- *  @date       April 2026
+ *  @file   cpcu_config.c
+ *  @brief  Runtime configuration loader — parses JSON into IPC_RuntimeConfig.
  *
- *  Hand-rolled minimal JSON parser. Sufficient for the flat schema in
- *  runtime.json. Not a generic JSON library — supports only the
- *  subset we actually use:
- *      - objects with string keys
- *      - numbers (integer + signed)
- *      - flat numeric arrays
- *      - 2-level nested numeric arrays (for gesture_velocity[][])
- *  Strings are not stored, only matched against expected key names.
+ *  Reads config/runtime.json, validates all fields against allowed ranges,
+ *  and populates an IPC_RuntimeConfig struct. Provides CFG_Defaults() for
+ *  compile-time fallback values. CFG_PatchFile() supports single-field
+ *  updates used by the TUI live editor's Ctrl+S save path.
  */
 
 #include "cpcu_config.h"
@@ -28,7 +22,7 @@
 /*============= COMPILE-TIME DEFAULTS ======================================*/
 /*
  *  These mirror the values in cpcu_pca9685.h, cpcu_smooth.h, and the
- *  draft GESTURE_BEHAVIOR map for v2.3.5. If runtime.json is absent on
+ *  draft GESTURE_BEHAVIOR map for future. If runtime.json is absent on
  *  a fresh install, the kernel refuses to start and points the user at
  *  cpcu_v2/config/runtime.json.example. CFG_Defaults is for tests and
  *  configure.sh --reset only.
@@ -58,7 +52,7 @@ void CFG_Defaults(IPC_RuntimeConfig *out)
     }
 
     /* Gesture velocities: zero everywhere by default (i.e. rest = freeze).
-     * v2.3.5 will populate non-rest classes from runtime.json. */
+     * will populate non-rest classes from runtime.json. */
     /* (memset above already zeroed out->gesture_velocity[][]). */
 
     out->interp_conf_floor_pct  = 40;       /* 0.40 */
@@ -225,7 +219,7 @@ static bool jc_read_int_array(JC *j, long *dst, int n)
  *  Caller decides whether absence is an error or just a "use default".
  *  Per design rules, top-level mandatory fields use REQUIRE; per-field
  *  servo bias / per-class velocities use OPTIONAL with defaulted values
- *  so a JSON without the v2.3.5 gesture map still works for v2.3.3.
+ *  so a JSON without the future gesture map still works for current.
  */
 
 #define REQUIRE(parser_call, errmsg)                                    \
@@ -391,7 +385,7 @@ CFG_Status CFG_LoadFromFile(const char *path, IPC_RuntimeConfig *out,
                          out->smooth_deadband_us, IPC_CFG_NUM_SERVOS,
                          0, 50);
 
-    /* v2.2: gravity compensation */
+    /* gravity compensation */
     (void)read_i16_array(j, "gravity_dir",
                          out->gravity_dir, IPC_CFG_NUM_SERVOS,
                          -1, 1);
@@ -425,8 +419,8 @@ CFG_Status CFG_LoadFromFile(const char *path, IPC_RuntimeConfig *out,
         out->grip_stall_recover_ms = (uint16_t)tmp;
 
     /* gesture_velocity: 2-D array, one row per class. Optional —
-     * absence means "all rest, no motion". v2.3.5 is the consumer. */
-    /* Skipped for v2.3.3 — adds complexity not yet exercised. The
+     * absence means "all rest, no motion". future is the consumer. */
+    /* Skipped for current — adds complexity not yet exercised. The
      * existing default (zero-filled) is correct for "freeze on every
      * gesture", which is the safe pre-velocity-mode behaviour. */
 
@@ -436,7 +430,7 @@ CFG_Status CFG_LoadFromFile(const char *path, IPC_RuntimeConfig *out,
     return CFG_OK;
 }
 
-/*============= TARGETED PATCH WRITER (v2.3.6) =====================*/
+/*============= TARGETED PATCH WRITER =====================*/
 /*
  *  Surgical text-level edit of a single JSON file. We load the whole
  *  file, locate each target key's value array, and splice in new
@@ -700,3 +694,4 @@ CFG_Status CFG_PatchFile(const char *path,
     }
     return CFG_OK;
 }
+

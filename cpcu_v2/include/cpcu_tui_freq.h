@@ -1,30 +1,6 @@
-/*
- *  cpcu_tui_freq.h — spectral helpers (radix-2 FFT, v2.0)
- *  Author: bugrASl
- *  Date:   April 2026
- *
- *  v2.0 changes (2026-04):
- *      - Replaces the 16-bin Goertzel sweep with a real radix-2 in-place
- *        FFT. Same time complexity overall (~O(N log N) for the FFT vs
- *        O(K·N) for Goertzel with K bins) but with N/2 = 256 magnitude
- *        bins instead of 16, giving ~3.9 Hz spectral resolution at the
- *        2 kHz BSAU sample rate.
- *      - Public API kept stable: freq_dominant_hz / freq_mean_hz /
- *        freq_render_bar still compile and behave the same way at the
- *        call site — only the implementation underneath changed.
- *      - New: freq_full_spectrum() returns the magnitude array directly
- *        for callers (signal_testbench) that want their own visuals.
- *
- *  Why FFT instead of Goertzel:
- *      Goertzel is optimal when you only care about a small fixed set
- *      of bins (DTMF detection, single-tone presence). EMG analysis
- *      wants the *whole spectrum* in the 20–500 Hz band — 120+ bins
- *      worth — and at that point a radix-2 FFT is faster and cleaner.
- *
- *  Cost on Pi 4 with N=512:
- *      ~2.3k complex multiplies + ~4.6k complex adds per channel.
- *      Measured ~80 µs/channel → 640 µs for all 8 channels per frame.
- *      Negligible relative to the 100 ms TUI redraw period.
+/**
+ *  @file   cpcu_tui_freq.h
+ *  @brief  Frequency estimation utilities for the TUI waveform display.
  */
 
 #ifndef CPCU_TUI_FREQ_H
@@ -266,3 +242,4 @@ static inline void freq_render_bar(int row, int col, int width,
 }
 
 #endif /* CPCU_TUI_FREQ_H */
+

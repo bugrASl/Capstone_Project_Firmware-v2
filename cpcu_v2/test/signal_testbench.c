@@ -1,47 +1,6 @@
 /**
- *  @file       signal_testbench.c
- *  @brief      End-to-end signal integrity TUI — live waveform + analysis
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    1.2 — line-trace renderer + selectable waveforms
- *
- *  @details    Validates the entire RAW signal chain from the BSAU to the CPCU:
- *                  BSAU ADC -> NRF TX -> NRF RX -> Codec -> IPC Ring -> This TUI
- *
- *              IMPORTANT:
- *                  This TUI plots RAW ADC samples straight off the ring
- *                  buffer. It does NOT apply any DSP (no band-pass, no
- *                  envelope, no feature extraction). Its purpose is to verify
- *                  the physical + link layer only:
- *                      - Function generator -> BSAU wiring is correct
- *                      - BSAU sampling works
- *                      - NRF link has no packet loss
- *                      - Codec packs/unpacks channels correctly
- *                      - IPC ring buffer is fed at the expected rate
- *                  For DSP/ML validation use the main cpcu_tui (Page 2).
- *
- *              Test Setup:
- *                  1. Connect function generator (sine) to all 8 EMG inputs
- *                  2. Connect Vcc (3.3V) to VBAT divider input
- *                  3. Start cpcu_kernel + cpcu_io (no DSP needed)
- *                  4. Run: sudo ./signal_testbench
- *
- *              Displays:
- *                  - 8-channel rolling Unicode waveform plots
- *                  - Per-channel: Dominant Freq (Goertzel), Vpp, DC Offset, SNR
- *                  - Radio link health: packet rate, seq gaps, loss %
- *                  - Battery voltage readout
- *
- *              Layout is FULLY DYNAMIC: scales to your terminal's getmaxyx().
- *              Resize the window and the TUI reflows on the next frame.
- *
- *              Cycles through channels with UP/DOWN, or views all 8 at once.
- *
- *  Build:      gcc -o signal_testbench signal_testbench.c cpcu_ipc.c \
- *                  wireless_packet.c -lncurses -lrt -lm
- *  Run:        sudo ./signal_testbench         (live data from cpcu_io)
- *              ./signal_testbench --demo        (synthetic sine, no hardware)
- *  Quit:       press 'q'
+ *  @file   signal_testbench.c
+ *  @brief  Signal integrity TUI — live 8-channel ADC plots with frequency/amplitude stats.
  */
 
 #include <ncurses.h>
@@ -53,7 +12,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
-#include <stdatomic.h>      /* v2.4.1 — IPC_ToolPresence publish */
+#include <stdatomic.h>      /* IPC_ToolPresence publish */
 
 #include "cpcu_ipc.h"
 #include "demo_signals.h"
@@ -139,7 +98,7 @@ typedef struct
 static volatile sig_atomic_t g_run = 1;
 static void on_sig(int s) { (void)s; g_run = 0; }
 
-/* v2.4.1: publish to IPC_ToolPresence slot 1 (signal_testbench).
+/* publish to IPC_ToolPresence slot 1 (signal_testbench).
  * The web bridge reads this and surfaces it on the dashboard's Tools
  * tab. Cheap — called once per main-loop iteration (~20 Hz). Empty
  * payload regions are zeroed so a partial write doesn't leak old
@@ -816,7 +775,7 @@ int main(int argc, char *argv[])
         else
             draw_screen(&ipc, demo_mode);
 
-        /* v2.4.1: publish to IPC_ToolPresence so the web dashboard's
+        /* publish to IPC_ToolPresence so the web dashboard's
          * Tools tab can show that we're running. Skip in demo mode
          * (no live IPC). The amplitude_vpp value comes from the
          * channel's existing peak-to-peak voltage measurement. */
@@ -868,7 +827,7 @@ int main(int argc, char *argv[])
     }
 
     /* Cleanup */
-    /* v2.4.1: clear our IPC_ToolPresence slot so the dashboard's
+    /* clear our IPC_ToolPresence slot so the dashboard's
      * Tools tab notices us going away immediately, rather than
      * waiting for the 2-second heartbeat-stale timeout. */
     if(!demo_mode) sigtb_tool_presence_clear(&ipc);
@@ -881,3 +840,4 @@ int main(int argc, char *argv[])
 }
 
 /*==========================================================================================*/
+

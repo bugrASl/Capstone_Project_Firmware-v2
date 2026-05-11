@@ -1,50 +1,6 @@
 /**
- *  @file       pca_testbench.c
- *  @brief      Standalone PCA9685 servo testbench with ncurses TUI
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    1.2
- *
- *  @details    Interactive servo calibration and testing tool. Talks
- *              directly to the PCA9685 over I2C — no kernel or IPC needed.
- *
- *              v1.2 changes:
- *                  - Scenario engine: F1-F9 run predefined motion profiles
- *                    (step, sweep, triangle)
- *                    on the selected servo. Auto-enables the smoother.
- *                    Tune velocity/accel/deadband with v/a/d keys, then
- *                    re-run the same scenario to feel the difference.
- *                  - Esc aborts a running scenario (returns to neutral).
- *                  - Live progress bar in the detail panel during scenarios.
- *
- *              v1.1 changes:
- *                  - Full-screen dynamic layout via getmaxyx().
- *                  - --min / --max CLI arguments for fast re-calibration
- *                    without recompiling:
- *                        sudo ./pca_testbench \
- *                            --min 600,1100,1100,1000,1000,950 \
- *                            --max 2400,1900,1900,2000,2000,1700
- *                  - --smooth enables the same slew-rate limiter used in
- *                    cpcu_io.c. When on, the slider commands become
- *                    *targets*; SMOOTH_Update moves the real servos there
- *                    at the limited rate. Good for visual QA of the
- *                    smoother's behaviour on real hardware.
- *                  - 'r' dumps PCA MODE1/MODE2/PRESCALE registers by
- *                    reading them live via PCA_ReadReg (previously
- *                    unexercised API). Useful when a servo is twitching
- *                    and you want to confirm the chip hasn't been reset
- *                    under you.
- *                  - 'A' (all at once) uses PCA_SetAllServos — also
- *                    previously unexercised.
- *
- *  Build:      gcc -o pca_testbench pca_testbench.c cpcu_pca9685.c \
- *                  cpcu_smooth.c -lncurses -lm
- *  Run:        sudo ./pca_testbench
- *              sudo ./pca_testbench /dev/i2c-1
- *              sudo ./pca_testbench --smooth
- *              sudo ./pca_testbench --min 600,1100,1100,1000,1000,950 \
- *                                   --max 2400,1900,1900,2000,2000,1700
- *  Quit:       press 'q'
+ *  @file   pca_testbench.c
+ *  @brief  PCA9685 servo calibration TUI — interactive jog, limit setting, smoother.
  */
 
 #include <ncurses.h>
@@ -58,7 +14,7 @@
 
 #include "cpcu_pca9685.h"
 #include "cpcu_smooth.h"
-#include "cpcu_config.h"        /* v2.3.6: load/save calibration */
+#include "cpcu_config.h"        /* load/save calibration */
 
 /*============= COLOR PAIRS ================================================================*/
 
@@ -160,7 +116,7 @@ static uint8_t          reg_mode1   =   0;
 static uint8_t          reg_mode2   =   0;
 static uint8_t          reg_presc   =   0;
 
-/* v2.3.6: calibration state. servo_bias[] is loaded from runtime.json
+/* calibration state. servo_bias[] is loaded from runtime.json
  * on startup and saved back on 'S'. cal_dirty tracks whether the
  * in-memory state has diverged from disk so we can warn before quit
  * and indicate to the user that there are unsaved changes. */
@@ -186,7 +142,7 @@ static bool             saved_valid                 = false;
  * renders a full-screen explanation instead of the normal layout. */
 static bool             g_help_visible              = false;
 
-/* v2.3.6: per-channel smoother state, mirrored to runtime.json on
+/* per-channel smoother state, mirrored to runtime.json on
  * save. Stored as int16 for symmetry with servo_bias / the patcher
  * API; values fit comfortably (max 10000 us/s velocity, 50000 us/s^2
  * accel — both within int16 if we use int16 for vel and uint16 for
@@ -200,7 +156,7 @@ static uint16_t         smooth_vel[PCA_SERVO_COUNT];      /* us/s */
 static uint16_t         smooth_acc[PCA_SERVO_COUNT];      /* us/s^2 */
 static uint16_t         smooth_dead[PCA_SERVO_COUNT];     /* us */
 
-/* v2.2: per-servo gravity compensation. 'G' toggles direction for the
+/* per-servo gravity compensation. 'G' toggles direction for the
  * selected servo, ',' / '.' fine-adjust scale when last knob is gravity. */
 static int8_t           gravity_dir[PCA_SERVO_COUNT]   = {0};
 static float            gravity_scale[PCA_SERVO_COUNT] = {1,1,1,1,1,1};
@@ -1326,7 +1282,7 @@ static void draw_screen(void)
     attron(COLOR_PAIR(CP_MAGENTA) | A_BOLD);
     printw("~%.1f deg", angle_est);
     attroff(COLOR_PAIR(CP_MAGENTA) | A_BOLD);
-    /* v2.3.6: bias display in the same row */
+    /* bias display in the same row */
     mvprintw(r, 38, "Bias: ");
     if(servo_bias[selected] != 0)
     {
@@ -1341,7 +1297,7 @@ static void draw_screen(void)
         attroff(COLOR_PAIR(CP_DIM));
     }
     r++;
-    /* v2.3.6: smoother knobs for the selected servo */
+    /* smoother knobs for the selected servo */
     mvprintw(r, 3, "Smooth:  ");
     attron(COLOR_PAIR(CP_CYAN));
     printw("vel %5u us/s    acc %5u us/s^2    dead %2u us",
@@ -1592,7 +1548,7 @@ static void draw_screen(void)
     attroff(COLOR_PAIR(CP_DIM));
     r += 11;
 
-    /* v2.3.6: status line for save/load/calibration feedback. Shown
+    /* status line for save/load/calibration feedback. Shown
      * for ~3-5 seconds (set per action). The dirty marker shows
      * persistently whenever there are unsaved changes. */
     if(status_until > 0 && time(NULL) <= status_until)
@@ -1639,7 +1595,7 @@ static void print_usage(const char *prog)
         "  --config <path>     runtime.json to load + save into\n"
         "                      (default: /opt/cpcu/config.json then config/runtime.json)\n"
         "  --help              this message\n"
-        "Calibration keys (v2.3.6):\n"
+        "Calibration keys:\n"
         "  [          set the current jog as MIN for the selected servo\n"
         "  ]          set the current jog as MAX for the selected servo\n"
         "  b          set the current deviation from neutral as BIAS\n"
@@ -1663,7 +1619,7 @@ int main(int argc, char *argv[])
     uint16_t override_min[PCA_SERVO_COUNT] = {0};
     uint16_t override_max[PCA_SERVO_COUNT] = {0};
     bool     have_min = false, have_max = false;
-    const char *cli_config_path = NULL;             /* v2.3.6 */
+    const char *cli_config_path = NULL;             /* */
 
     for(int i = 1; i < argc; i++)
     {
@@ -1744,7 +1700,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "[TESTBENCH] MAX overridden from CLI.\n");
     }
 
-    /* v2.3.6: Load runtime.json so the testbench starts with whatever
+    /* Load runtime.json so the testbench starts with whatever
      * the user has previously calibrated. Two-tier path search matches
      * cpcu_kernel: prefer the system symlink, fall back to the in-repo
      * file. CLI overrides above already won; this fills in everything
@@ -1776,7 +1732,7 @@ int main(int argc, char *argv[])
                 for(int i = 0; i < PCA_SERVO_COUNT; i++)
                 {
                     servo_bias[i] = cfg.servo_bias_us[i];
-                    /* v2.3.6: smoother values. Zero means "use default";
+                    /* smoother values. Zero means "use default";
                      * we substitute the SMOOTH_DEFAULT_* values so the
                      * UI shows a real number rather than 0. */
                     smooth_vel[i]  = cfg.smooth_velocity_us_per_s[i]
@@ -1786,7 +1742,7 @@ int main(int argc, char *argv[])
                                      ? cfg.smooth_accel_us_per_s2[i]
                                      : ACC_DEFAULT;
                     smooth_dead[i] = cfg.smooth_deadband_us[i];
-                    /* v2.2: gravity from config (0 = use testbench default) */
+                    /* gravity from config (0 = use testbench default) */
                     if(cfg.gravity_dir[i] != 0)
                     {
                         gravity_dir[i]   = (int8_t)cfg.gravity_dir[i];
@@ -1850,7 +1806,7 @@ int main(int argc, char *argv[])
     SMOOTH_SetGravity(&smooth, 1, gravity_dir[1], gravity_scale[1]);
     SMOOTH_SetGravity(&smooth, 2, gravity_dir[2], gravity_scale[2]);
 
-    /* v2.3.6: apply per-channel smoother values loaded from
+    /* apply per-channel smoother values loaded from
      * runtime.json (or the defaults if no JSON was loaded). The
      * 'v'/'a'/'d' keys cycle these at runtime; 'S' saves them back. */
     for(int i = 0; i < PCA_SERVO_COUNT; i++)
@@ -2034,7 +1990,7 @@ int main(int argc, char *argv[])
                 write_all_servos();     /* exercises PCA_SetAllServos */
                 break;
 
-            /* v2.3.6: calibration keys --------------------------------*/
+            /* calibration keys --------------------------------*/
             /* The user has jogged to a position they like — these keys
              * commit that position as a calibration value. Nothing
              * persists to disk until 'S'. */
@@ -2082,7 +2038,7 @@ int main(int argc, char *argv[])
                 status_until = time(NULL) + 3;
                 break;
 
-            /* v2.3.6: smoother per-channel cycling. Each press steps
+            /* smoother per-channel cycling. Each press steps
              * to the next preset for the SELECTED servo. The change
              * is applied immediately to the smoother so the next
              * jog uses the new values — you can feel the difference
@@ -2176,7 +2132,7 @@ int main(int argc, char *argv[])
                 }
                 break;
 
-            /* v2.3.6: ',' and '.' fine-adjust the LAST-TOUCHED smoother
+            /* ',' and '.' fine-adjust the LAST-TOUCHED smoother
              * knob (vel/acc/dead) for the SELECTED servo. Range-clamped
              * to match the JSON loader's accepted bounds so save can't
              * fail later on a value the bench let you type. */
@@ -2281,7 +2237,7 @@ int main(int argc, char *argv[])
                     {
                         mins_i16[i] = (int16_t)pca.servo_min[i];
                         maxs_i16[i] = (int16_t)pca.servo_max[i];
-                        /* v2.3.6: smoother values. uint16 -> int16
+                        /* smoother values. uint16 -> int16
                          * conversion is safe for vel (max preset 5000)
                          * and dead (max 50). For accel, max preset is
                          * 20000 which fits in int16's 32767. */
@@ -2359,7 +2315,7 @@ int main(int argc, char *argv[])
                             pca.servo_min[i] = cfg.servo_min_us[i];
                             pca.servo_max[i] = cfg.servo_max_us[i];
                             servo_bias[i]    = cfg.servo_bias_us[i];
-                            /* v2.3.6: smoother values too. Apply them
+                            /* smoother values too. Apply them
                              * back to the live smoother so the next
                              * jog feels different (or the same — the
                              * user can compare against unsaved). */
@@ -2532,3 +2488,4 @@ int main(int argc, char *argv[])
 }
 
 /*==========================================================================================*/
+

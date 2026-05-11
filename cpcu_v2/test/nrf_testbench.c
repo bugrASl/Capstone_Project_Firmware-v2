@@ -1,17 +1,6 @@
 /**
- *  @file       nrf_testbench.c
- *  @brief      NRF24L01+ testbench for Raspberry Pi (Linux spidev)
- *  @author     bugrASl
- *  @date       May 2026
- *  @version    1.0
- *  @details    Same tests as BSAU TB-105, reimplemented for Linux driver.
- *
- *  Usage:
- *      ./nrf_testbench                  # self-test only
- *      ./nrf_testbench --live           # + wait for BSAU packets
- *      ./nrf_testbench --timeout 10     # custom wait (seconds)
- *      ./nrf_testbench --stress 100     # receive 100 packets, stats
- *      ./nrf_testbench --dump           # register dump
+ *  @file   nrf_testbench.c
+ *  @brief  NRF24L01+ Linux test — SPI connectivity, register read-back, packet RX.
  */
 
 #include <stdio.h>
@@ -282,3 +271,4 @@ int main(int argc, char *argv[])
     NRF_Close(&nrf); close(gfd);
     return g_fail ? 1 : xr;
 }
+

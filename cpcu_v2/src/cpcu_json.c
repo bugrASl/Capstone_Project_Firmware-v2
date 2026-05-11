@@ -1,9 +1,10 @@
 /**
- *  @file       cpcu_json.c
- *  @brief      Minimal JSON serializer for cpcu_ws (v2.4.0)
- *  @author     bugrASl
+ *  @file   cpcu_json.c
+ *  @brief  Streaming JSON writer — builds JSON strings into a fixed buffer.
  *
- *  See cpcu_json.h for the API contract.
+ *  Used by cpcu_ws.c to serialize IPC state into JSON frames without
+ *  dynamic allocation. Supports objects, arrays, strings, integers,
+ *  floats, booleans, and uint32/uint64 types.
  */
 
 #include "cpcu_json.h"
@@ -257,3 +258,4 @@ void jw_kv_arr_begin(JW *jw, const char *k)
     jw_chr(jw, '[');
     jw_push(jw);
 }
+

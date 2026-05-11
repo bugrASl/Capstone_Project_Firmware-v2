@@ -1,17 +1,11 @@
 /**
- *  @file       cpcu_tui_editor.c
- *  @brief      TUI live editor implementation (v2.3.8)
- *  @author     bugrASl
+ *  @file   cpcu_tui_editor.c
+ *  @brief  TUI live editor — in-system runtime config tuning on the CONFIG page.
  *
- *  Sketch of the architecture:
- *    - g_ed_fields[]   declarative table of editable runtime.json keys
- *    - g_ed            cursor state, draft values, mode, status line
- *    - ED_HandleKey    dispatches arrows / digits / Enter / Esc / Ctrl+S / r
- *    - ED_Render       draws the table in spreadsheet style
- *    - ED_Save_        commits dirty drafts via CFG_PatchFile, sends SIGHUP
- *
- *  See cpcu_v2/docs/TUI_EDITOR.md for design rationale and the user-
- *  facing operating procedure.
+ *  Two-mode state machine (BROWSING / EDITING) with keyboard navigation.
+ *  In EDITING mode, the arm is parked at neutral via the edit-mode handshake.
+ *  On Ctrl+S: validates input, writes runtime.json via CFG_PatchFile(), then
+ *  signals the kernel (SIGHUP) to reload and republish IPC_RuntimeConfig.
  */
 
 #include "cpcu_tui_editor.h"
@@ -597,3 +591,4 @@ int ED_GetFieldCount(void)
 {
     return g_ed_field_count;
 }
+

@@ -1,0 +1,77 @@
+<svg viewBox="0 0 950 500" xmlns="http://www.w3.org/2000/svg" font-family="Inter,-apple-system,sans-serif">
+<defs><marker id="a" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><path d="M0,0 L7,2.5 L0,5" fill="#555"/></marker></defs>
+<style>text{font-size:11px;fill:#1a1a1a}.title{font-size:18px;font-weight:600}.box{rx:8;stroke-width:1.5}</style>
+
+<text x="475" y="28" text-anchor="middle" class="title">PCA9685 Servo Driver + Smoother + Safety Pipeline</text>
+
+<!-- Pipeline: DSP target → smoother → deadband → bias → clamp → PCA → servo -->
+<rect x="30" y="60" width="120" height="55" class="box" fill="#dcfce7" stroke="#16a34a"/>
+<text x="90" y="82" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#166534">Motor Cmd</text>
+<text x="90" y="98" text-anchor="middle" style="font-size:9.5px;fill:#555">from DSP (SeqLock)</text>
+
+<line x1="150" y1="87" x2="175" y2="87" stroke="#555" stroke-width="1.5" marker-end="url(#a)"/>
+
+<rect x="177" y="60" width="120" height="55" class="box" fill="#eff6ff" stroke="#3b82f6"/>
+<text x="237" y="82" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#1d4ed8">Safety Clamp</text>
+<text x="237" y="98" text-anchor="middle" style="font-size:9.5px;fill:#555">per-servo min/max</text>
+
+<line x1="297" y1="87" x2="322" y2="87" stroke="#555" stroke-width="1.5" marker-end="url(#a)"/>
+
+<rect x="324" y="55" width="140" height="65" class="box" fill="#e0e7ff" stroke="#6366f1"/>
+<text x="394" y="77" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#4338ca">Trapezoidal</text>
+<text x="394" y="91" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#4338ca">Smoother</text>
+<text x="394" y="107" text-anchor="middle" style="font-size:9.5px;fill:#555">accel → vel → decel</text>
+
+<line x1="464" y1="87" x2="489" y2="87" stroke="#555" stroke-width="1.5" marker-end="url(#a)"/>
+
+<rect x="491" y="60" width="110" height="55" class="box" fill="#fefce8" stroke="#ca8a04"/>
+<text x="546" y="82" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#854d0e">Deadband</text>
+<text x="546" y="98" text-anchor="middle" style="font-size:9.5px;fill:#555">suppress if settled</text>
+
+<line x1="601" y1="87" x2="626" y2="87" stroke="#555" stroke-width="1.5" marker-end="url(#a)"/>
+
+<rect x="628" y="60" width="100" height="55" class="box" fill="#fff7ed" stroke="#ea580c"/>
+<text x="678" y="82" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#c2410c">+ Bias</text>
+<text x="678" y="98" text-anchor="middle" style="font-size:9.5px;fill:#555">gravity comp</text>
+
+<line x1="728" y1="87" x2="753" y2="87" stroke="#555" stroke-width="1.5" marker-end="url(#a)"/>
+
+<rect x="755" y="60" width="100" height="55" class="box" fill="#fee2e2" stroke="#ef4444"/>
+<text x="805" y="82" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#dc2626">HW Clamp</text>
+<text x="805" y="98" text-anchor="middle" style="font-size:9.5px;fill:#555">compile-time lim</text>
+
+<line x1="855" y1="87" x2="880" y2="87" stroke="#555" stroke-width="1.5" marker-end="url(#a)"/>
+
+<rect x="882" y="65" width="55" height="45" class="box" fill="#fef3c7" stroke="#d97706"/>
+<text x="909" y="92" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#92400e">PCA</text>
+
+<!-- Servo outputs -->
+<rect x="30" y="150" width="910" height="55" rx="8" fill="#fff7ed" stroke="#ea580c"/>
+<text x="485" y="172" text-anchor="middle" style="font-size:12px;font-weight:600;fill:#c2410c">PCA9685 — I²C1 @ 400 kHz · 50 Hz PWM · 12-bit resolution (0.44° per step)</text>
+<text x="485" y="190" text-anchor="middle" style="font-size:10.5px;fill:#555">S0 Base (MG995) · S1 Upper (MG995) · S2 Last (MG995) · S3 Jnt-1 (SG90) · S4 Jnt-2 (SG90) · S5 Gripper (SG90)</text>
+
+<!-- Gripper stall watchdog -->
+<rect x="30" y="230" width="440" height="110" rx="8" fill="#fef2f2" stroke="#ef4444"/>
+<text x="250" y="252" text-anchor="middle" style="font-size:13px;font-weight:600;fill:#dc2626">Gripper Stall Watchdog (S5 only)</text>
+<text x="45" y="275" style="font-size:10.5px;fill:#374151">INACTIVE: if current[5] at mechanical floor for grip_stall_recover_ms → FIRE</text>
+<text x="45" y="292" style="font-size:10.5px;fill:#374151">FIRE: retreat to grip_touch_us (1200), increment io_gripper_stalls counter</text>
+<text x="45" y="309" style="font-size:10.5px;fill:#374151">ACTIVE: clamp target[5] ≥ grip_touch_us. Clear when target rises for 250 ms</text>
+<text x="45" y="326" style="font-size:10.5px;fill:#374151">SAFE transition → force-clear watchdog (arm already at neutral)</text>
+
+<!-- Soft grip policy (DSP side) -->
+<rect x="500" y="230" width="440" height="110" rx="8" fill="#eff6ff" stroke="#3b82f6"/>
+<text x="720" y="252" text-anchor="middle" style="font-size:13px;font-weight:600;fill:#1d4ed8">Soft-Grip Policy (DSP side, S5 only)</text>
+<text x="515" y="275" style="font-size:10.5px;fill:#374151">Velocity integrator cannot close past grip_firm_us (default 1100 µs)</text>
+<text x="515" y="292" style="font-size:10.5px;fill:#374151">One-sided clamp — opening direction unaffected</text>
+<text x="515" y="309" style="font-size:10.5px;fill:#374151">grip_firm_us < grip_touch_us: policy stops before watchdog fires</text>
+<text x="515" y="326" style="font-size:10.5px;fill:#374151">Two layers: policy (intent) + mechanism (hardware protection)</text>
+
+<!-- Power note -->
+<rect x="30" y="365" width="910" height="40" rx="6" fill="#f9fafb" stroke="#d1d5db"/>
+<text x="485" y="390" text-anchor="middle" style="font-size:11px;fill:#374151;font-weight:500">Power: 6V / 3A separate PSU for servos · 1000 µF decoupling · Common GND with Pi (required) · Never share Pi's 5V rail</text>
+
+<!-- Edit mode note -->
+<rect x="30" y="420" width="910" height="50" rx="6" fill="#ecfdf5" stroke="#10b981"/>
+<text x="485" y="442" text-anchor="middle" style="font-size:12px;font-weight:600;fill:#065f46">Edit-Mode: TUI requests → IO parks at neutral → waits for SMOOTH_AllSettled → sets active flag</text>
+<text x="485" y="458" text-anchor="middle" style="font-size:10.5px;fill:#065f46">While active: motor commands silently ignored (sticky park). Safety has priority — any fault forces exit.</text>
+</svg>

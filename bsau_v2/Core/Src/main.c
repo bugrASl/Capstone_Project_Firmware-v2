@@ -1,4 +1,12 @@
-/* USER CODE BEGIN Header */
+/**
+ *  @file   main.c
+ *  @brief  BSAU entry point — HAL init, peripheral setup, application dispatch.
+ *
+ *  Initializes STM32L432KC clocks, GPIO, SPI, ADC, DMA, TIM6, and USART.
+ *  Dispatches to the selected profile (RELEASE/DEBUG/DATASET/TEST) via
+ *  BSAU_App_Init() and BSAU_App_Loop().
+ */
+
 /**
   ******************************************************************************
   * @file           : main.c
@@ -228,3 +236,4 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+

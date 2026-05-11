@@ -1,0 +1,52 @@
+<svg viewBox="0 0 800 450" xmlns="http://www.w3.org/2000/svg" font-family="Inter,-apple-system,sans-serif">
+<defs><marker id="a" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><path d="M0,0 L7,2.5 L0,5" fill="#555"/></marker></defs>
+<style>text{font-size:11px;fill:#1a1a1a}.title{font-size:18px;font-weight:600}.box{rx:8;stroke-width:1.5}</style>
+
+<text x="400" y="28" text-anchor="middle" class="title">Kernel Supervisor — cpcu_kernel (Core 0)</text>
+
+<rect x="200" y="50" width="400" height="170" class="box" fill="#f3e8ff" stroke="#9333ea"/>
+<text x="400" y="72" text-anchor="middle" style="font-size:14px;font-weight:600;fill:#7c3aed">cpcu_kernel</text>
+<text x="400" y="88" text-anchor="middle" style="font-size:10px;fill:#6b21a8">Core 0 · CFS scheduler · non-RT</text>
+
+<text x="220" y="112" style="font-size:11px;fill:#374151">1. IPC_Create() — 66 KB shared memory</text>
+<text x="220" y="128" style="font-size:11px;fill:#374151">2. Load runtime.json → IPC_RuntimeConfig</text>
+<text x="220" y="144" style="font-size:11px;fill:#374151">3. Open /dev/watchdog (15 s timeout)</text>
+<text x="220" y="160" style="font-size:11px;fill:#374151">4. Spawn cpcu_io (Core 3, FIFO 90)</text>
+<text x="220" y="176" style="font-size:11px;fill:#374151">5. Spawn cpcu_dsp.py (Cores 1-2, FIFO 80)</text>
+<text x="220" y="192" style="font-size:11px;fill:#374151">6. Publish kernel_pid for TUI's SIGHUP path</text>
+<text x="220" y="208" style="font-size:11px;fill:#374151">7. Enter monitor loop (1 Hz)</text>
+
+<!-- Children -->
+<rect x="30" y="270" width="160" height="65" class="box" fill="#dbeafe" stroke="#2563eb"/>
+<text x="110" y="292" text-anchor="middle" style="font-size:12px;font-weight:600;fill:#1d4ed8">cpcu_io</text>
+<text x="110" y="308" text-anchor="middle" style="font-size:10px;fill:#555">Core 3 · FIFO 90</text>
+<text x="110" y="322" text-anchor="middle" style="font-size:10px;fill:#555">RT I/O + safety</text>
+<line x1="300" y1="220" x2="110" y2="268" stroke="#555" stroke-width="1.3" marker-end="url(#a)"/>
+
+<rect x="240" y="270" width="160" height="65" class="box" fill="#dcfce7" stroke="#16a34a"/>
+<text x="320" y="292" text-anchor="middle" style="font-size:12px;font-weight:600;fill:#166534">cpcu_dsp.py</text>
+<text x="320" y="308" text-anchor="middle" style="font-size:10px;fill:#555">Cores 1-2 · FIFO 80</text>
+<text x="320" y="322" text-anchor="middle" style="font-size:10px;fill:#555">DSP + ML inference</text>
+<line x1="400" y1="220" x2="320" y2="268" stroke="#555" stroke-width="1.3" marker-end="url(#a)"/>
+
+<rect x="450" y="270" width="160" height="65" class="box" fill="#fef3c7" stroke="#d97706"/>
+<text x="530" y="292" text-anchor="middle" style="font-size:12px;font-weight:600;fill:#92400e">cpcu_tui</text>
+<text x="530" y="308" text-anchor="middle" style="font-size:10px;fill:#555">Core 0 · CFS</text>
+<text x="530" y="322" text-anchor="middle" style="font-size:10px;fill:#555">ncurses dashboard</text>
+
+<rect x="650" y="270" width="130" height="65" class="box" fill="#fce4ec" stroke="#e91e63"/>
+<text x="715" y="292" text-anchor="middle" style="font-size:12px;font-weight:600;fill:#be185d">cpcu_ws</text>
+<text x="715" y="308" text-anchor="middle" style="font-size:10px;fill:#555">Core 0 · CFS</text>
+<text x="715" y="322" text-anchor="middle" style="font-size:10px;fill:#555">Web :8765</text>
+
+<text x="530" y="260" style="font-size:9px;fill:#888">reads IPC (not spawned by kernel)</text>
+<text x="715" y="260" text-anchor="middle" style="font-size:9px;fill:#888">reads IPC</text>
+
+<!-- Monitor loop detail -->
+<rect x="100" y="370" width="600" height="65" rx="8" fill="#f9fafb" stroke="#d1d5db"/>
+<text x="400" y="392" text-anchor="middle" style="font-size:12px;font-weight:600">Monitor Loop (every 1 s)</text>
+<text x="120" y="412" style="font-size:10.5px;fill:#374151">waitpid(WNOHANG) → respawn dead child</text>
+<text x="120" y="426" style="font-size:10.5px;fill:#374151">Heartbeat stale > 2 s → SIGKILL + respawn</text>
+<text x="430" y="412" style="font-size:10.5px;fill:#374151">SIGHUP → reload runtime.json → republish IPC</text>
+<text x="430" y="426" style="font-size:10.5px;fill:#374151">Pet watchdog (5 s) · Telemetry print (5 s)</text>
+</svg>

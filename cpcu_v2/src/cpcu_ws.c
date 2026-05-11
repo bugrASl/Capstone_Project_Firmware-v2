@@ -1,64 +1,20 @@
 /**
- *  @file       cpcu_ws.c
- *  @brief      WebSocket bridge — CPCU Dashboard backend (v2.4.0)
- *  @author     bugrASl
+ *  @file   cpcu_ws.c
+ *  @brief  WebSocket bridge — read-only JSON dashboard over HTTP.
  *
- *  ============================================================
- *  WHAT THIS PROCESS DOES
- *  ============================================================
+ *  Maps /dev/shm/cpcu_ipc as a consumer (same as cpcu_tui), serves a
+ *  single-page browser dashboard via Mongoose embedded HTTP/WS server.
  *
- *  cpcu_ws is the read-only web bridge for the running CPCU. It:
+ *  Operation:
+ *    1. Parse --bind URL and --static directory from command line.
+ *    2. Open IPC shared memory (read-only consumer).
+ *    3. Listen on HTTP; upgrade /ws path to WebSocket.
+ *    4. Broadcast JSON state frame at 10 Hz (system status, gesture, diagnostics).
+ *    5. Broadcast JSON wave frame at 20 Hz (raw envelope + filtered + raw-full FFT data).
+ *    6. Serve static files (index.html) from the configured directory.
  *
- *    1. Maps /dev/shm/cpcu_ipc as an IPC consumer (same as cpcu_tui).
- *    2. Listens on HTTP/WS at the configured bind address (default
- *       0.0.0.0:8765 — opens to LAN, with a loud startup banner).
- *    3. Serves the static dashboard from web/static/ over HTTP.
- *    4. Upgrades /ws to WebSocket. Each connected browser becomes
- *       a subscriber.
- *    5. On a 100 ms timer (10 Hz), serializes a JSON snapshot of the
- *       IPC state and broadcasts it to every connected client.
- *    6. On a 50 ms timer (20 Hz), serializes a wave-batch JSON
- *       (decimated raw envelope + filtered last window) and
- *       broadcasts it.
- *
- *  No command channel. The bridge is a one-way pump: IPC -> JSON ->
- *  browsers. Browsers cannot affect the running system. See
- *  cpcu_v2/docs/WEB_DASHBOARD.md for the security rationale.
- *
- *  Multi-viewer is supported by Mongoose's connection list — each
- *  WS frame is sent to every websocket-flagged connection in turn.
- *  Practical ceiling tested up to ~16 simultaneous clients on a Pi 5.
- *
- *  ============================================================
- *  CORE ALLOCATION
- *  ============================================================
- *
- *  Runs on Core 0 alongside cpcu_kernel and cpcu_tui. Not realtime-
- *  prio; this is a friendly user-facing service. If the LAN is busy
- *  and `mg_mgr_poll` blocks for a while, only the dashboard refresh
- *  rate suffers — none of the realtime control loops are affected.
- *
- *  ============================================================
- *  RESOURCE BUDGET
- *  ============================================================
- *
- *  - JSON state frame: ~1.5 KB at 10 Hz = 15 KB/s per client.
- *  - JSON wave batch:  ~6 KB at 20 Hz = 120 KB/s per client.
- *  - 8 clients ≈ 1 MB/s total. Well within Pi 5 LAN throughput.
- *  - CPU on Core 0: serialization is the dominant cost. Measured
- *    ~50 us per state frame and ~200 us per wave frame on Pi 4
- *    (faster on Pi 5). At 10 + 20 frame/s = 4.5 ms/s of Core 0
- *    busy time per client. 8 clients = 36 ms/s = 3.6%. Fine.
- *
- *  ============================================================
- *  OFFLINE / NO-MONGOOSE MODE
- *  ============================================================
- *
- *  Until you run `web/vendor/fetch.sh`, there is no
- *  mongoose.{c,h}. CMakeLists.txt detects this and SKIPS the cpcu_ws
- *  target, so the rest of the build still works. The first time you
- *  fetch mongoose, re-run `cmake -S . -B build` and the cpcu_ws
- *  target appears.
+ *  No command channel — browsers cannot affect the running system.
+ *  Runs on Core 0 at default priority (not real-time).
  */
 
 #include "cpcu_ipc.h"
@@ -95,7 +51,7 @@ static char                  g_static_dir[256] = "/opt/cpcu/ws_static";
 /* Per-frame scratch buffers. State frame is small; wave frame is
  * larger because it carries 8 channels × ~50 samples per update. */
 static char                  g_state_buf[2048];
-static char                  g_wave_buf[32768];     /* v2.4.1: doubled to fit raw_full */
+static char                  g_wave_buf[32768];     /* doubled to fit raw_full */
 
 static void on_sig(int s) { (void)s; g_run = 0; }
 
@@ -207,7 +163,7 @@ static void build_state_frame(void)
         jw_kv_u32(&jw, "dsp_max_latency_us",atomic_load(&g_ipc.diag->dsp_max_latency_us));
     jw_obj_end(&jw);
 
-    /* --- v2.4.1: tools — IPC_ToolPresence registry. Each slot a tool
+    /* --- Tools — IPC_ToolPresence registry. Each slot a tool
      *     might be alive in. We emit only alive slots, with a freshness
      *     check on the heartbeat (>2 s old → treat as dead). The tool's
      *     32-byte payload is opaque from the bridge's POV; we surface
@@ -314,7 +270,7 @@ static void build_state_frame(void)
 
 #define WAVE_RAW_DECIM_HZ      50          /* downsample target for raw envelope */
 #define WAVE_RAW_BATCH_SAMPLES 50          /* one second of trailing envelope */
-#define WAVE_RAW_FULL_FS_HZ    2000        /* native ADC rate (v2.4.1) */
+#define WAVE_RAW_FULL_FS_HZ    2000        /* native ADC rate  */
 #define WAVE_RAW_FULL_SAMPLES  256         /* 128 ms @ 2 kHz — FFT window */
 
 /* Per-channel rolling envelope buffer for the raw stream. Each entry
@@ -328,7 +284,7 @@ typedef struct {
 
 static RawChEnv g_raw_env[8];
 
-/* v2.4.1: rolling 256-sample raw window per channel for the Spectrum
+/* rolling 256-sample raw window per channel for the Spectrum
  * tab's browser-side FFT. Stored as int16 (raw ADC value, no centering)
  * so the JSON serializer emits compact numbers. The browser does its
  * own DC-removal + Hann window + FFT. */
@@ -379,7 +335,7 @@ static void update_raw_envelope(void)
         {
             for(int ch = 0; ch < 8; ch++)
             {
-                /* v2.4.1: capture raw value (int16, no centering) into the
+                /* capture raw value (int16, no centering) into the
                  * full-resolution ring for browser-side FFT. */
                 int16_t raw_v = (int16_t)e->samples[s].ch[ch];
                 g_raw_full[ch].history[g_raw_full[ch].head] = raw_v;
@@ -439,7 +395,7 @@ static void build_wave_frame(void)
     }
     jw_arr_end(&jw);
 
-    /* v2.4.1: raw-full channels for the Spectrum tab's browser-side FFT.
+    /* raw-full channels for the Spectrum tab's browser-side FFT.
      * 256 samples per channel @ 2 kHz = 128 ms window, ~7.8 Hz/bin.
      * Sent as int16 (raw 12-bit ADC counts). At 8 ch × 256 samples ×
      * up to 5 chars per int = ~10 KB per wave frame. Browser
@@ -698,3 +654,4 @@ int main(int argc, char **argv)
     fprintf(stderr, "[WS] exited cleanly\n");
     return 0;
 }
+

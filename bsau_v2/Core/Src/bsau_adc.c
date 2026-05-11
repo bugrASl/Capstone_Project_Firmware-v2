@@ -1,25 +1,10 @@
 /**
- *  @file       bsau_adc.c
- *  @brief      BSAU ADC/DMA acquisition module — implementation
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details
- *              Double-buffered ISR strategy:
- *                  Half-complete     scan 0 stable (DMA writing scan 1) -> copy scan 0
- *                  Transfer-complete scan 1 stable (DMA wraps to scan 0) -> copy scan 1,
- *                                    then set g_pkt_ready.
- *              Both halves of the snapshot come from the same adjacent pair,
- *              so the main loop never reads a mixed old/new sample set.
+ *  @file   bsau_adc.c
+ *  @brief  BSAU ADC driver — 8-channel DMA acquisition, battery measurement.
  *
- *              v2.1 changes:
- *                  - HAL_ADC_ConvHalfCpltCallback now also checks g_pkt_ready
- *                    and increments g_adc_dropped if the main loop has not
- *                    yet consumed the prior pair. Closes the tearing race
- *                    where a late main-loop read of scan 0 could overlap
- *                    the next pair's half-complete write of scan 0.
- *                  - 9-channel scan (8 EMG + battery), 2 samples/packet.
- *                  - Style polish: 98-char banners, column-aligned assignments.
+ *  Configures STM32L4 ADC1 for scan-mode acquisition across 8 EMG channels
+ *  plus one battery voltage channel. DMA transfers complete buffers to the
+ *  application layer at the TIM6-driven 2 kHz sample rate.
  */
 
 #include "bsau_adc.h"
@@ -46,7 +31,7 @@ volatile uint8_t    g_pkt_ready         =   0;
 volatile uint32_t   g_adc_dropped       =   0;
 volatile uint32_t   g_adc_error_code    =   0;
 
-/*  v2.2 ADC scan-order remap.
+/* ADC scan-order remap.
  *
  *  Scan sequence (PA4 <-> PB0 swap applied):
  *
@@ -137,7 +122,7 @@ uint16_t BSAU_ADC_GetBattery(void)
  *      Transfer-complete   scan 1 stable (DMA wraps to scan 0) -> copy scan 1,
  *                          publish via g_pkt_ready = 1.
  *
- *  v2.1 race fix:
+ *  race fix:
  *      Both ISRs now gate their writes on !g_pkt_ready. If the main loop
  *      has not yet consumed the prior pair, the new pair is dropped as a
  *      single unit (symmetric handling) and g_adc_dropped is bumped. This
@@ -203,3 +188,4 @@ void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc)
 }
 
 /*==============================================================================================*/
+

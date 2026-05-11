@@ -1,42 +1,16 @@
 /**
- *  @file       cpcu_safety.c
- *  @brief      System-wide safety monitor implementation, v2.3.1.
- *  @author     bugrASl
- *  @date       April 2026
+ *  @file   cpcu_safety.c
+ *  @brief  Safety monitor — 7-source fault detection with deterministic FSM.
  *
- *  v2.3.1 changes (2026-04):
- *      - Cold-start radio grace. boot_us captured in SAFETY_Init;
- *        first_packet_seen flips in SAFETY_FeedPacket. CheckTimeout
- *        gates the fault on (first_packet_seen || grace expired).
- *        See header for the field additions and BOOT_AND_SYNC.md
- *        for the full rationale.
+ *  Monitors radio timeout, battery voltage, DSP stall, I2C bus health,
+ *  ring-buffer overflow, thermal limits, and NRF hardware status.
+ *  Drives a RUNNING -> DEGRADED -> SAFE state machine with hysteresis
+ *  and auto-recovery. Cold-start grace period suppresses radio faults
+ *  during the first 5 seconds after boot.
  *
- *  v2.3 changes (2026-04):
- *      - Ring-overflow fault is now recoverable. Previously the fault
- *        flag was tied to the absolute cumulative count crossing a
- *        threshold. Since io_ring_overflows is monotonic, the flag
- *        latched on first violation and the FSM stayed in SAFE forever
- *        even after the producer/consumer rebalanced. The new logic
- *        applies the threshold to the delta since the last quiescent
- *        baseline, and clears the fault after SAFETY_RING_RECOVER_MS
- *        of no new growth (then re-baselines).
- *      - Public API is unchanged; the helper safety_now_us() uses
- *        CLOCK_MONOTONIC internally so cpcu_io and the testbench did
- *        not have to be modified.
- *
- *  v2.2 changes (2026-04):
- *      - Replaced SAFETY_TryRecover with SAFETY_UpdateState — handles
- *        BOTH transitions into and out of RADIO_SAFE in one place.
- *      - SAFE-exit logic no longer requires last_pkt_rcv_us to be fresh.
- *
- *  Caller contract: see header. Most important parts:
- *      - cpcu_io must call FeedI2C from BOTH the success path AND the
- *        else-branch fallback (where it writes neutrals via PCA), or
- *        i2c.faulted will never clear once tripped.
- *      - cpcu_io must call FeedMotorCMD whenever IPC_ReadMotorCmd
- *        returns true, regardless of safety state.
- *      - cpcu_io must call FeedRingOverflow every loop — the recovery
- *        timer needs a heartbeat.
+ *  Called from cpcu_io.c's main loop in fixed order:
+ *    FeedPacket -> CheckTimeout -> CheckDSP -> FeedRingOverflow ->
+ *    FeedI2C -> FeedTemperature -> UpdateState
  */
 
 #include "cpcu_safety.h"
@@ -47,7 +21,7 @@
 
 /*============= INTERNAL TIMING ============================================*/
 /*
- *  Local CLOCK_MONOTONIC sampler for the v2.3 ring-overflow recovery
+ *  Local CLOCK_MONOTONIC sampler for the ring-overflow recovery
  *  timer. We could have added a now_us argument to FeedRingOverflow,
  *  but the testbench (test/safety_testbench.c) and cpcu_io.c both use
  *  the single-argument form, and keeping that contract avoids a
@@ -68,7 +42,7 @@ void SAFETY_Init(SAFETY_Context *ctx)
     ctx->state              =   RADIO_INIT;
     ctx->last_fault         =   SAFETY_OK;
 
-    /* v2.3.1: anchor the cold-start grace period.
+    /* anchor the cold-start grace period.
      * Note that memset above already cleared first_packet_seen to false. */
     ctx->boot_us            =   safety_now_us();
 }
@@ -136,7 +110,7 @@ static void link_feed(LINK_Stats *l, const WL_Packet *pkt, uint32_t gap,
 void SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
                        uint64_t now_us)
 {
-    /* v2.3.1: any successful FeedPacket call lifts the cold-start grace.
+    /* any successful FeedPacket call lifts the cold-start grace.
      * We don't gate this on FIRST_PACKET — what matters is that we're
      * receiving traffic, not whether the BSAU labelled this as its first.
      * (FIRST_PACKET still controls expected_seq init, below.) */
@@ -150,7 +124,7 @@ void SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
 
     uint32_t gap            =   SAFETY_SeqGap(ctx, pkt->seq);
 
-    /* v2.3.9: suppress link stats during boot grace period.
+    /* suppress link stats during boot grace period.
      * Startup gaps (from BSAU powering up after CPCU) should not poison
      * the link quality window. We still count the gap for diagnostics
      * (the caller increments io_seq_gaps), but we don't feed it into
@@ -223,7 +197,7 @@ void SAFETY_FeedPacket(SAFETY_Context *ctx, const WL_Packet *pkt,
             {
                 ctx->recovery_cnt   =   0;
             }
-            /* v2.3.9: safety net — if we've been in RECOVERING for
+            /* safety net — if we've been in RECOVERING for
              * 10+ seconds with packets flowing, force to RUNNING.
              * Prevents permanent lockout from boot-time gap bursts
              * that poisoned the link stats window. */
@@ -250,7 +224,7 @@ void SAFETY_CheckTimeout(SAFETY_Context *ctx, uint64_t now_us)
     if(ctx->state == RADIO_INIT) return;
     if(ctx->state == RADIO_SAFE) return;     /* recovery handled by UpdateState */
 
-    /* v2.3.1: cold-start grace.
+    /* cold-start grace.
      *
      * If we have never received a packet AND we are still inside the boot
      * grace window, we are not in a fault — we are in initial sync. The
@@ -332,7 +306,7 @@ void SAFETY_FeedI2C(SAFETY_Context *ctx, bool success)
     }
 }
 
-/*============= RING (v2.3 — recoverable) ==================================*/
+/*============= RING (recoverable) ==================================*/
 /**
  *  Trip condition (entry to fault):
  *      (current - baseline) > SAFETY_RING_OVERFLOW_LIMIT
@@ -416,7 +390,7 @@ bool SAFETY_CheckSystem(const SAFETY_Context *ctx)
     return true;
 }
 
-/*============= STATE TRANSITIONS (v2.2) ===================================*/
+/*============= STATE TRANSITIONS ===================================*/
 /**
  *  Single function that owns FSM transitions for non-radio-timing causes.
  *
@@ -533,3 +507,4 @@ const char *SAFETY_RadioStr(RADIO_State s)
         default:                return "???";
     }
 }
+

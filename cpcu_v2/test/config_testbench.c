@@ -1,19 +1,6 @@
 /**
- *  @file       config_testbench.c
- *  @brief      Automated unit tests for cpcu_config (v2.3.3).
- *  @author     bugrASl
- *  @date       April 2026
- *
- *  Exercises the JSON loader against synthetic input files written
- *  to a temp dir. Verifies:
- *      TB-CFG01 — Valid file parses cleanly, fields populate.
- *      TB-CFG02 — Defaults are sane and pass validation.
- *      TB-CFG03 — Missing file returns CFG_ERR_OPEN, doesn't crash.
- *      TB-CFG04 — Wrong schema_version returns CFG_ERR_SCHEMA.
- *      TB-CFG05 — Out-of-range value returns CFG_ERR_RANGE.
- *      TB-CFG06 — min >= max sanity check fires.
- *      TB-CFG07 — Optional fields honoured when present.
- *      TB-CFG08 — Optional fields fall back to defaults when absent.
+ *  @file   config_testbench.c
+ *  @brief  Config loader test harness — JSON parse, validation, defaults, patching.
  */
 
 #include <stdio.h>
@@ -371,9 +358,9 @@ int main(void)
     test_optional_present();
     printf("\n--- TB-CFG08: Optional fields default when absent ---\n");
     test_optional_absent();
-    printf("\n--- TB-CFG09: CFG_PatchFile round-trip (v2.3.6) ---\n");
+    printf("\n--- TB-CFG09: CFG_PatchFile round-trip  ---\n");
     test_patch_round_trip();
-    printf("\n--- TB-CFG10: CFG_PatchFile error paths (v2.3.6) ---\n");
+    printf("\n--- TB-CFG10: CFG_PatchFile error paths  ---\n");
     test_patch_errors();
 
     printf("\n======================================\n");
@@ -381,3 +368,4 @@ int main(void)
     printf("======================================\n");
     return (g_fail == 0) ? 0 : 1;
 }
+

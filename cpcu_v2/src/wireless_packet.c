@@ -1,9 +1,10 @@
 /**
- *  @file       wireless_packet.c 
- *  @brief      Wireless packet codec - 8-channels, metadata, 32-byte payload
- *  @author     bugrASl
- *  @date       10.04.2026
- *  @version    2.1
+ *  @file   wireless_packet.c
+ *  @brief  Wireless packet codec — pack/unpack 32-byte NRF payloads.
+ *
+ *  Shared between BSAU (transmitter) and CPCU (receiver). Encodes 8-channel
+ *  x 2-sample EMG data plus metadata (sequence, flags, retransmit count,
+ *  loss counter, timestamp, battery voltage) into a compact 32-byte frame.
  */
 
 #include "wireless_packet.h"
@@ -65,3 +66,4 @@ void WL_Unpack(const uint8_t *in, WL_Packet *out)
         }
     }
 }
+

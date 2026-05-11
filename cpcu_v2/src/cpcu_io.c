@@ -1,113 +1,16 @@
 /**
- *  @file       cpcu_io.c
- *  @brief      Core 3 — Real-time I/O controller
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.3.7
- *  @details    Deterministic loop:
- *                  1. Busy-poll NRF via spidev         -> read payload
- *                  2. WL_Unpack -> seq/safety/link     -> push to SPSC ring
- *                  3. Rate-limited (50 Hz) PCA servo update via I2C
- *                  4. Safety checks: radio, DSP, I2C, thermal, ring
- *                  5. Heartbeat to shared memory for watchdog
+ *  @file   cpcu_io.c
+ *  @brief  Core 3 real-time I/O controller — NRF receive, safety, servo drive.
  *
- *              v2.3.7 changes:
- *                  - Gripper stall watchdog. When the smoother current
- *                    has been at servo_min[5] (within 5 us) for
- *                    grip_stall_recover_ms continuously, AND the target
- *                    is still asking it to stay there, retreat to
- *                    grip_touch_us. While active, incoming target[5]
- *                    is clamped at grip_touch_us as a floor. Clears on
- *                    target rising above touch+margin for 250 ms, or
- *                    on SAFE. The io_gripper_stalls counter in
- *                    IPC_Diagnostics tracks fires. Hardware-protection
- *                    backstop to dsp's soft-firm clamp; see SOFT_GRIP.md.
- *
- *              v2.3.6 changes:
- *                  - Smoother per-channel velocity / accel / deadband
- *                    are now consumed from IPC_RuntimeConfig at startup
- *                    AND on every config_seq change (i.e. after the
- *                    kernel reloads runtime.json on SIGHUP). The
- *                    apply_runtime_smoother_cfg helper calls SMOOTH_Set*
- *                    for each channel; zero values are skipped (mean
- *                    "use compile-time default"). The seq-compare
- *                    avoids redundant reapplies on the steady-state
- *                    50 Hz tick. See cpcu_v2/docs/SMOOTHER_TUNING.md.
- *
- *              v2.3.4 changes:
- *                  - Edit-mode handshake responder. When the TUI sets
- *                    ipc.ctrl->edit_mode_request = 1, cpcu_io overrides
- *                    incoming motor commands, parks the smoother at
- *                    neutral, and once SMOOTH_AllSettled() goes true
- *                    flips ipc.ctrl->edit_mode_active = 1 to tell the
- *                    TUI it's safe to edit. While active is 1, motor
- *                    commands from cpcu_dsp.py are silently ignored
- *                    (sticky-park). On request -> 0, active drops and
- *                    normal motor-cmd processing resumes. Safety FSM
- *                    has priority — any SAFE transition forces
- *                    edit_mode_active back to 0 unconditionally. Full
- *                    protocol in cpcu_v2/docs/EDIT_MODE.md.
- *
- *              v2.3.3 changes:
- *                  - Reads IPC_RuntimeConfig once per servo tick
- *                    (cfg_cache local). Per-servo bias offsets
- *                    (cfg_cache.servo_bias_us[]) are added to the
- *                    smoothed pulse-width before clamping to
- *                    compile-time hardware limits and writing the PCA.
- *                    Bias is signed (typically +/- 20 us) and is
- *                    intended for static gravity-sag compensation;
- *                    runtime tunable from JSON, picked up on next
- *                    SIGHUP-driven kernel reload. The bias-then-clamp
- *                    order means the runtime config can never escape
- *                    the compile-time safety envelope. See
- *                    cpcu_v2/docs/RUNTIME_CONFIG.md.
- *                  - SMOOTH_MarkWritten now records the BIASED pulse
- *                    width that actually went to the PCA, so the
- *                    deadband logic stays coherent against the true
- *                    hardware state.
- *
- *              v2.3.2 changes:
- *                  - Per-servo PCA writes are now gated on
- *                    SMOOTH_ShouldWrite() to suppress redundant refreshes
- *                    of settled servos. A servo holding its target within
- *                    its hold_deadband_us[] window stops being commanded,
- *                    which kills static jitter caused by the servo's
- *                    internal P controller fighting backlash and gravity
- *                    sag on every 50 Hz tick.
- *                  - SAFETY_FeedI2C is only invoked on ticks that
- *                    actually performed I/O, so a pure-deadband tick
- *                    (all servos settled, no writes) doesn't pollute
- *                    the I²C health counters.
- *                  - SMOOTH_MarkWritten called after each successful
- *                    write to keep the deadband shadow coherent.
- *                  - PCA_SetAllNeutral (SAFE-snap path) and PCA_AllOff
- *                    (I²C-streak path) update the shadow appropriately:
- *                    the SAFE path marks all written; the AllOff path
- *                    clears ever_written so the first post-recovery
- *                    write always goes through.
- *                  - See cpcu_v2/docs/JITTER_MITIGATION.md.
- *
- *              v2.3 changes:
- *                  - Now calls SAFETY_UpdateState() once per loop after the
- *                    Feed/Check calls. The v2.2 architectural change that
- *                    moved battery / thermal / i2c / ring transitions out
- *                    of FeedPacket and into UpdateState was never wired up
- *                    here; without this call the FSM would update boolean
- *                    flags but never move out of RUNNING for non-radio
- *                    faults. SAFETY_CheckSystem already gated on the flags
- *                    so servos were neutralised correctly, but the TUI
- *                    state indicator lied during a battery / thermal /
- *                    ring fault.
- *
- *              v2.2 changes:
- *                  - Uses cpcu_log LOG_* macros everywhere (no more printf)
- *                  - Supports --log flag for per-module CSV output
- *                  - On sustained SPI errors, now calls NRF_FlushRX / NRF_ClearIRQ /
- *                    NRF_PowerDown before re-init (cleaner recovery)
- *                  - Reports NRF_GetStatus + STATUS bits in 1 Hz telemetry
- *                  - Calls PCA_AllOff on graceful shutdown (instead of neutral)
- *                    so no current flows after exit
- *                  - Reports SMOOTH_AllSettled() in telemetry for motion tracking
+ *  Deterministic loop (busy-poll, no blocking):
+ *    1. SPI busy-poll NRF24L01+ for incoming packets.
+ *    2. Unpack, sequence-check, feed safety monitor, push to SPSC ring.
+ *    3. Read motor commands from IPC (DSP publishes targets).
+ *    4. Apply per-servo bias, run trapezoidal smoother, write PCA9685 at 50 Hz.
+ *    5. Gripper stall watchdog: retreat if pinned at mechanical floor.
+ *    6. Safety checks: radio timeout, DSP stall, I2C health, thermal, ring overflow.
+ *    7. Edit-mode handshake: park arm at neutral when TUI requests config editing.
+ *    8. Heartbeat to shared memory every 100 ms.
  */
 
 #include <stdio.h>
@@ -190,7 +93,7 @@ static void on_signal(int s)
     (void)s; g_run = 0;
 }
 
-/* v2.3.6: Apply per-channel smoother values from the runtime config.
+/* Apply per-channel smoother values from the runtime config.
  * Zero values mean "use compile-time default" — we skip those, leaving
  * whatever was set previously (typically the SMOOTH_DEFAULT_* values
  * from SMOOTH_Init). Non-zero values override per-channel.
@@ -352,7 +255,7 @@ int main(int argc, char *argv[])
     uint64_t    t_reinit    =   0;
     uint32_t    i2c_err_streak  =   0;
 
-    /* v2.3.3: runtime config snapshot. We read the IPC region into this
+    /* runtime config snapshot. We read the IPC region into this
      * local copy at the top of every servo-tick (50 Hz), so updates from
      * cpcu_kernel's SIGHUP reload show up within ~20 ms and there's no
      * risk of a torn read mid-write. The seqlock retry logic is in
@@ -370,7 +273,7 @@ int main(int argc, char *argv[])
         LOG_W("IO", "initial config read failed, using defaults");
     }
 
-    /* v2.3.6: Apply runtime smoother config from the loaded snapshot.
+    /* Apply runtime smoother config from the loaded snapshot.
      * Zero values mean "use compile-time default" — see cpcu_smooth.h
      * for SMOOTH_DEFAULT_VELOCITY/_ACCEL/_DEADBAND. We only call the
      * setters when the runtime value is non-zero, so a partly-filled
@@ -382,7 +285,7 @@ int main(int argc, char *argv[])
     uint32_t cfg_seq_seen = cfg_cache.config_seq;
     apply_runtime_smoother_cfg(&smooth, &cfg_cache);
 
-    /* v2.3.9: gravity compensation for weight-bearing joints.
+    /* gravity compensation for weight-bearing joints.
      * Loaded from runtime.json; falls back to hardcoded defaults for
      * S1 (gravity_dir=-1, 30%) and S2 (gravity_dir=+1, 30%). */
     for(int s = 0; s < PCA_SERVO_COUNT; s++)
@@ -397,7 +300,7 @@ int main(int argc, char *argv[])
     if(cfg_cache.gravity_dir[2] == 0)
         SMOOTH_SetGravity(&smooth, 2,  1, 0.30f);
 
-    /* v2.3.7: gripper stall watchdog state. The watchdog fires when
+    /* gripper stall watchdog state. The watchdog fires when
      * the smoother current[5] has been at servo_min[5] (within a
      * small margin) for grip_stall_recover_ms continuously, AND the
      * smoother target is still asking it to stay there. The retreat
@@ -452,10 +355,10 @@ int main(int argc, char *argv[])
         /* 3. Safety: DSP stall check */
         SAFETY_CheckDSP(&safety, t);
 
-        /* 4. Safety: ring buffer overflow (v2.3 — recoverable) */
+        /* 4. Safety: ring buffer overflow (recoverable) */
         SAFETY_FeedRingOverflow(&safety, atomic_load(&ipc.diag->io_ring_overflows));
 
-        /* 5. Safety: drive non-radio FSM transitions (v2.3 — was dead in v2.2).
+        /* 5. Safety: drive non-radio FSM transitions (drives non-radio FSM transitions).
          * UpdateState owns the RUNNING <-> SAFE transitions for battery /
          * thermal / dsp / i2c / ring fault flags. Without this call the
          * boolean flags would update correctly (so SAFETY_CheckSystem()
@@ -464,7 +367,7 @@ int main(int argc, char *argv[])
         SAFETY_UpdateState(&safety, t);
 
         /* 6. Update system state in shared memory.
-         * v2.3.9: DEGRADED and RECOVERING map to IPC_STATE_RUNNING (not INIT)
+         * DEGRADED and RECOVERING map to IPC_STATE_RUNNING (not INIT)
          * because the system IS receiving packets — it's just in a transitional
          * recovery phase. Only SAFE means servos are parked. INIT is reserved
          * for the genuine pre-first-packet state. */
@@ -477,7 +380,7 @@ int main(int argc, char *argv[])
                 default:                ipc_state = IPC_STATE_RUNNING;  break;
             }
 
-            /* v2.3.9: track SAFE entries for diagnostics.
+            /* track SAFE entries for diagnostics.
              * Increment counter on the RUNNING/RECOVERING → SAFE edge. */
             uint32_t prev_state = atomic_load(&ipc.ctrl->system_state);
             if(ipc_state == IPC_STATE_SAFE && prev_state != IPC_STATE_SAFE)
@@ -524,7 +427,7 @@ int main(int argc, char *argv[])
 
             if(SAFETY_CheckSystem(&safety) && pca_ok)
             {
-                /* v2.3.4: Edit-mode handshake.
+                /* Edit-mode handshake.
                  * If the TUI has requested edit mode, override any incoming
                  * motor command with neutral. Once the smoother has walked
                  * to neutral and settled, set edit_mode_active = 1 to tell
@@ -578,7 +481,7 @@ int main(int argc, char *argv[])
                 /* Advance smoother toward targets */
                 SMOOTH_Update(&smooth, servo_dt);
 
-                /* v2.3.7: gripper stall watchdog. Two-state machine.
+                /* gripper stall watchdog. Two-state machine.
                  *
                  * INACTIVE: monitor whether current[5] is at the floor
                  *   (within MARGIN_US). If yes for grip_stall_recover_ms
@@ -670,13 +573,13 @@ int main(int argc, char *argv[])
                 #undef WD_MARGIN_US
                 #undef WD_UNSTALL_DEBOUNCE_US
 
-                /* v2.3.3: refresh runtime config snapshot. If the kernel
+                /* refresh runtime config snapshot. If the kernel
                  * just reloaded JSON (SIGHUP), this picks up the new
                  * values within one servo tick. Failed reads (writer
                  * mid-update) leave cfg_cache untouched. */
                 IPC_ReadRuntimeConfig(&ipc, &cfg_cache);
 
-                /* v2.3.6: detect SIGHUP-driven config changes and
+                /* detect SIGHUP-driven config changes and
                  * re-apply per-channel smoother values when seq has
                  * advanced. The seq-compare avoids reapplying every
                  * tick; on a typical session the apply runs once at
@@ -691,9 +594,9 @@ int main(int argc, char *argv[])
                 }
 
                 /* Write smoothed positions to servos (one I2C burst per
-                 * channel). v2.3.2: gate each write on SMOOTH_ShouldWrite
+                 * channel). Gate each write on SMOOTH_ShouldWrite
                  * to suppress redundant refreshes of settled servos —
-                 * see docs/JITTER_MITIGATION.md. v2.3.3: apply per-servo
+                 * see docs/JITTER_MITIGATION.md. Apply per-servo
                  * bias offset (gravity-sag compensation) to the smoothed
                  * value before clamping & write — see RUNTIME_CONFIG.md.
                  * Servos still in motion, or sitting outside the deadband
@@ -705,7 +608,7 @@ int main(int argc, char *argv[])
                     if(!SMOOTH_ShouldWrite(&smooth, s))
                         continue;       /* deadband — let the servo coast */
 
-                    /* v2.3.3: bias is signed (typ. +/- 20 us). Clamp the
+                    /* bias is signed (typ. +/- 20 us). Clamp the
                      * BIASED value to compile-time hardware limits — the
                      * runtime config can't escape the safety envelope. */
                     int32_t biased = (int32_t)smooth.current[s] +
@@ -749,7 +652,7 @@ int main(int argc, char *argv[])
                     PCA_AllOff(&pca);
                     i2c_err_streak = 0;
 
-                    /* v2.3.2: AllOff clears the PCA's PWM registers, so
+                    /* AllOff clears the PCA's PWM registers, so
                      * what was "last_written" no longer reflects hardware.
                      * Reset the deadband shadow so the first write after
                      * the bus recovers always goes through. */
@@ -766,14 +669,14 @@ int main(int argc, char *argv[])
 
                 PCA_SetAllNeutral(&pca);
 
-                /* v2.3.7: clear gripper stall watchdog so post-recovery
+                /* clear gripper stall watchdog so post-recovery
                  * doesn't have us still pinned at grip_touch_us. The
                  * arm just snapped to neutral; nothing's at the floor. */
                 gripper_stall_active       = false;
                 gripper_at_floor_since_us  = 0;
                 gripper_unstall_since_us   = 0;
 
-                /* v2.3.2: keep the deadband shadow coherent with what's
+                /* keep the deadband shadow coherent with what's
                  * actually latched in the PCA. Without this, the next
                  * SMOOTH_ShouldWrite would see ever_written=true with
                  * last_written != neutral, and write another redundant
@@ -781,7 +684,7 @@ int main(int argc, char *argv[])
                 for(int s = 0; s < PCA_SERVO_COUNT; s++)
                     SMOOTH_MarkWritten(&smooth, s, PCA_SERVO_NEUTRAL);
 
-                /* v2.3.4: edit mode loses to safety. Clear active so the
+                /* edit mode loses to safety. Clear active so the
                  * TUI's banner reverts to LOCKED on next render. The TUI
                  * must re-request after the system recovers. */
                 atomic_store_explicit(&ipc.ctrl->edit_mode_active,
@@ -851,3 +754,4 @@ int main(int argc, char *argv[])
     Log_CloseFiles();
     return 0;
 }
+

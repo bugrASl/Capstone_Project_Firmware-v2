@@ -1,36 +1,6 @@
 /**
- *  @file       cpcu_json.h
- *  @brief      Minimal JSON serializer for cpcu_ws (v2.4.0)
- *  @author     bugrASl
- *
- *  A tiny stream-style JSON writer. Symmetrical with the hand-rolled
- *  parser in cpcu_config.c — same project, same style, no external
- *  deps. Scope is intentionally tiny: produce valid JSON for objects
- *  containing strings, numbers (int/float), booleans, nested objects
- *  and arrays. No streaming reader, no validation, no escaping of
- *  arbitrary Unicode (we only ever emit ASCII anyway).
- *
- *  Usage:
- *      char buf[4096];
- *      JW jw;
- *      jw_init(&jw, buf, sizeof(buf));
- *      jw_obj_begin(&jw);
- *        jw_kv_int(&jw, "system_state", 1);
- *        jw_kv_str(&jw, "gesture", "rest");
- *        jw_kv_arr_f32(&jw, "rms", rms_array, 8);
- *      jw_obj_end(&jw);
- *      // jw.len is the bytes written; jw.overflow is true on truncation
- *
- *  Design choices:
- *    - Single linear buffer, no malloc. Caller owns memory.
- *    - Tracks a depth-stack of "is this the first child?" flags so
- *      commas between siblings get inserted correctly without the
- *      caller worrying about it.
- *    - On overflow, sets jw.overflow=true and stops writing. The
- *      output up to that point is incomplete JSON; the caller must
- *      check overflow before sending.
- *    - Floats serialize as %g with 6 sig figs — fine for dashboard
- *      display, not for archival precision.
+ *  @file   cpcu_json.h
+ *  @brief  Streaming JSON writer API — fixed-buffer serialization for cpcu_ws.
  */
 
 #ifndef CPCU_JSON_H
@@ -89,3 +59,4 @@ void  jw_kv_obj_begin (JW *jw, const char *k);
 void  jw_kv_arr_begin (JW *jw, const char *k);
 
 #endif /* CPCU_JSON_H */
+

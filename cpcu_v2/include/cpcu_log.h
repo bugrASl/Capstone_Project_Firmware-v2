@@ -1,21 +1,6 @@
 /**
- *  @file       cpcu_log.h
- *  @brief      Structured colored logging for CPCU processes
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *
- *  @details    Extends v2.0 with a per-module CSV file sink.
- *              When enabled via Log_EnableFiles(), every LOG_T/D/I/W/E/F
- *              call also writes a row to /var/log/cpcu/log_{module}.csv.
- *              No changes are needed at any existing call site — the
- *              module name the LOG macro already carries becomes the
- *              filename (lowercased).
- *
- *              File I/O is opt-in (off by default) and uses fflush after
- *              every write so no data is lost on SIGKILL. For the Core-3
- *              RT loop, file output is intended only at 1 Hz telemetry
- *              points, never inside the hot busy-poll path.
+ *  @file   cpcu_log.h
+ *  @brief  Logging API — LOG_I/W/E/D/F macros with module tag and CSV sinks.
  */
 
 #ifndef CPCU_LOG_H
@@ -282,3 +267,4 @@ static inline const char *log_level_color(LogLevel level)
 #define LOG_F(module, fmt, ...) LOG(LOG_FATAL,  module, fmt,    ##__VA_ARGS__)
 
 #endif /* CPCU_LOG_H */
+

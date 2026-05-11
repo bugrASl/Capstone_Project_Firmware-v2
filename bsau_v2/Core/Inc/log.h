@@ -1,22 +1,6 @@
 /**
- *  @file       log.h
- *  @brief      Unified debug logging for CPCU (dual-core H7) and BSAU (single-core L4)
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details
- *              Two-channel macro logger: LOG() for structured human-readable lines,
- *              LOG_CSV() for prefixless comma-separated data. Both compile to no-ops
- *              when their respective enable flags are 0, so RELEASE builds emit
- *              zero UART traffic without any source-level #ifs at the call sites.
- *
- *                          Board and mode selection
- *              ────────────────────────────────────────────────────────────────
- *              §1   Board-identity validation  (exactly one LOG_BOARD_*)
- *              §2   Derive LOG_ENABLED / LOG_CSV_ENABLED from mode define
- *              §3   Transport primitives        (LOCK/UNLOCK, HAL handle)
- *              §4   LOG   — structured line    [BOARD - MOD]: func [STAT] msg
- *              §5   LOG_CSV — raw CSV data line
+ *  @file   log.h
+ *  @brief  BSAU logging macros — UART printf with profile-conditional enable.
  */
 
 #ifndef LOG_H
@@ -262,3 +246,4 @@ extern "C" {
 #endif
 
 #endif /* LOG_H */
+

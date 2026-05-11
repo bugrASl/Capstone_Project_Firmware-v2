@@ -1,34 +1,15 @@
 /**
- *  @file       cpcu_kernel.c
- *  @brief      Core 0 — Supervisor process
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.3.3
- *  @details    Responsibilities:
- *                  1. Create shared memory
- *                  2. Load runtime config (JSON) into IPC_RuntimeConfig
- *                  3. fork+exec cpcu_io on Core 3 (SCHED_FIFO 90)
- *                  4. fork+exec cpcu_dsp.py on Cores 1-2 (SCHED_FIFO 80)
- *                  5. Monitor heartbeats, restart dead processes
- *                  6. Pet /dev/watchdog
- *                  7. Periodic telemetry
- *                  8. Reload config on SIGHUP and republish to IPC
+ *  @file   cpcu_kernel.c
+ *  @brief  Core 0 supervisor — creates IPC, spawns child processes, monitors health.
  *
- *              v2.3.3 changes:
- *                  - Loads cpcu_v2/config/runtime.json on startup, populates
- *                    IPC_RuntimeConfig in shared memory. Refuse to start on
- *                    schema mismatch / parse error / missing file (no
- *                    silent fallback to defaults — user must explicitly
- *                    run './launch.sh configure --reset --runtime' to regenerate).
- *                  - SIGHUP triggers a re-parse + IPC re-publish without
- *                    restarting any child processes.
- *                  - See cpcu_v2/docs/CONFIGURATION.md.
- *
- *              v2.2 changes:
- *                  - Uses cpcu_log LOG_* macros everywhere
- *                  - --log flag enables per-module CSV file output
- *                  - The --log flag is transparently forwarded to cpcu_io,
- *                    so kernel and io write to the same /var/log/cpcu/ tree
+ *  Responsibilities:
+ *    1. Create /dev/shm/cpcu_ipc shared memory region.
+ *    2. Load runtime.json into IPC_RuntimeConfig.
+ *    3. Fork+exec cpcu_io (Core 3, SCHED_FIFO 90).
+ *    4. Fork+exec cpcu_dsp.py (Cores 1-2, SCHED_FIFO 80).
+ *    5. Monitor heartbeats; restart dead children.
+ *    6. Pet /dev/watchdog (15 s hardware timeout).
+ *    7. Reload config on SIGHUP without restarting children.
  */
 
 #include <stdio.h>
@@ -61,7 +42,7 @@
 #define CPCU_DSP_SCRIPT_ALT     "./cpcu_dsp.py"
 #define PYTHON3_BIN             "/usr/bin/python3"
 
-/* v2.3.3: runtime config path. The default points to the symlinked
+/* runtime config path. The default points to the symlinked
  * system path that setup_pi.sh creates (-> repo's cpcu_v2/config/runtime.json).
  * Override with --config <path> for testing. */
 #define CONFIG_PATH_DEFAULT     "/opt/cpcu/config.json"
@@ -70,7 +51,7 @@
 /*============= TIMING =====================================================================*/
 
 static volatile sig_atomic_t g_run          =   1;
-static volatile sig_atomic_t g_reload_cfg   =   0;      /* v2.3.3 */
+static volatile sig_atomic_t g_reload_cfg   =   0;      /* */
 
 static void on_sig(int s)
 {
@@ -82,7 +63,7 @@ static void on_sighup(int s)
     (void)s; g_reload_cfg = 1;
 }
 
-/* v2.3.3: Load runtime.json and publish to IPC.
+/* Load runtime.json and publish to IPC.
  * Returns 0 on success, non-zero on parse failure (caller decides
  * whether to abort startup or keep the previous config). */
 static int kern_load_config(IPC_Context *ipc, const char *path)
@@ -117,7 +98,7 @@ static bool g_forward_log_flag = false;
 /**
  *  Spawn a C binary with CPU affinity and real-time priority.
  *
- *  v2.3.9: Uses sched_setscheduler() and sched_setaffinity() in the
+ *  Uses sched_setscheduler() and sched_setaffinity() in the
  *  parent process (cpcu_kernel) BEFORE exec, instead of going through
  *  `taskset → chrt → bin`. The reason is capability inheritance.
  *
@@ -335,7 +316,7 @@ int main(int argc, char *argv[])
     LOG_I("KERN", "=== CPCU Kernel Supervisor (Core 0) v2.3.8 ===");
     signal(SIGINT,  on_sig);
     signal(SIGTERM, on_sig);
-    signal(SIGHUP,  on_sighup);                 /* v2.3.3 */
+    signal(SIGHUP,  on_sighup);                 /* */
 
     /* Create shared memory */
     IPC_Context ipc;
@@ -346,12 +327,12 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* v2.3.8: publish our pid so the TUI live editor can SIGHUP us
+    /* publish our pid so the TUI live editor can SIGHUP us
      * after a Ctrl+S commit. The TUI sees kernel_pid == 0 until
      * IPC_Create returned, so we publish immediately after. */
     atomic_store(&ipc.ctrl->kernel_pid, (uint32_t)getpid());
 
-    /* v2.3.3: load runtime config BEFORE spawning children, so they
+    /* load runtime config BEFORE spawning children, so they
      * see a populated config region from their first IPC read. Try
      * the user-supplied path first; if that fails AND it was the
      * default symlink, try the in-repo path as a graceful fallback
@@ -432,7 +413,7 @@ int main(int argc, char *argv[])
         sleep(1);
         time_t now                  =   time(NULL);
 
-        /* v2.3.3: SIGHUP reload. Re-parse the same path, republish to
+        /* SIGHUP reload. Re-parse the same path, republish to
          * IPC. On parse failure, KEEP the previous config (writers
          * already populated IPC at startup) and log loudly. We don't
          * want a typo in runtime.json to take down a running session. */
@@ -511,3 +492,4 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+

@@ -1,21 +1,16 @@
 /**
- *  @file       cpcu_ipc.h
- *  @brief      Inter-process communication via POSIX shared memory
- *  @author     bugrASl
- *  @date       12.04.2026
- *  @version    2.1
- *  @details    Lock-free SPSC ring buffer + SeqLock motor command buffer
- *              All inter-core communication through /dev/shm/cpcu_ipc.
+ *  @file   cpcu_ipc.h
+ *  @brief  IPC shared memory layout — control block, ring buffer, seqlock regions.
  *
- *                          Shared Memory Layout
- *  ────────────────────────────────────────────────────────────────────────────────────
- *          Offset      Size        Contents
- *          ────────────────────────────────────────────────────────────────────────────
- *          0           192 B       IPC_ControlBlock(3 cache lines: header | head | tail)
- *          192         64 KB       IPC_SensorEntry[1024] (ring buffer, 64 B per entry)
- *          65728       128 B       IPC_MotorCommand (SeqLock protected)
- *          65856       128 B       IPC_Diagnostics (per-core atomic counters)
- *          65984       256 B       IPC_DSPExport (Python DSP -> TUI)
+ *  All inter-process communication through /dev/shm/cpcu_ipc.
+ *
+ *  Layout:
+ *    Offset 0        192 B   IPC_ControlBlock (system state, heartbeats, edit-mode)
+ *    Offset 192      64 KB   IPC_SensorEntry[1024] (SPSC ring buffer)
+ *    Offset 65728    128 B   IPC_MotorCommand (seqlock-protected servo targets)
+ *    Offset 65856    128 B   IPC_Diagnostics (atomic counters)
+ *    Offset 65984    256 B   IPC_DSPExport (gesture, confidence, RMS)
+ *    + IPC_RuntimeConfig, IPC_ToolPresence, IPC_DspFiltered
  */
 
 #ifndef CPCU_IPC_H
@@ -36,7 +31,7 @@ extern "C" {
 #define IPC_SHM_NAME            "/cpcu_ipc"
 #define IPC_SHM_PERMS           0644            /* Owner RW, Group/Others R */
 #define IPC_MAGIC               0x494E4654UL    /* "INFT" - Infinitech */
-#define IPC_VERSION             0x0206          /* v2.4.0 — added IPC_ToolPresence + IPC_DspFiltered for web bridge */
+#define IPC_VERSION             0x0206          /* added IPC_ToolPresence + IPC_DspFiltered for web bridge */
 
 #define IPC_SENSOR_RING_SIZE    1024
 #define IPC_SENSOR_RING_MASK    (IPC_SENSOR_RING_SIZE - 1)
@@ -60,7 +55,7 @@ typedef struct __attribute__((aligned(64)))
     _Atomic uint64_t    io_heartbeat_us;
     _Atomic uint32_t    motor_cmd_ack;
 
-    /* v2.3.4: Edit-mode handshake.
+    /* Edit-mode handshake.
      *   request:  TUI -> world. 1 = "I want edit mode", 0 = "I want to exit".
      *   active:   io+dsp -> TUI. 1 = "we're parked, you may edit",
      *             0 = "we're not in edit mode" (either not requested, or
@@ -77,7 +72,7 @@ typedef struct __attribute__((aligned(64)))
     uint8_t             _pad_edit[5];
     _Atomic uint64_t    edit_mode_request_us;
 
-    /* v2.3.8: kernel pid published for the TUI live editor's Ctrl+S
+    /* kernel pid published for the TUI live editor's Ctrl+S
      * handler — after CFG_PatchFile rewrites runtime.json, the TUI
      * sends SIGHUP to this pid so the kernel re-parses and republishes
      * IPC_RuntimeConfig. cpcu_kernel writes this once at startup;
@@ -155,7 +150,7 @@ typedef struct __attribute__((aligned(128)))
     _Atomic uint32_t    dsp_ring_underflows;
     _Atomic uint32_t    dsp_inferences;
 
-    /* v2.3.7: gripper stall watchdog. Incremented every time the
+    /* gripper stall watchdog. Incremented every time the
      * stall watchdog in cpcu_io.c retreats the gripper from its
      * mechanical floor after grip_stall_recover_ms continuous time
      * pinned there. See SOFT_GRIP.md. Read by the TUI's HEALTH page.
@@ -193,7 +188,7 @@ typedef struct __attribute__((aligned(64)))
 
 _Static_assert( sizeof(IPC_DSPExport) == 256, "IPC_DSPExport must be 256 bytes (4 cache lines)" );
 
-/*============= RUNTIME CONFIG (v2.3.3) ================================================*/
+/*============= RUNTIME CONFIG ================================================*/
 /*
  *  cpcu_kernel reads cpcu_v2/config/runtime.json at startup and on
  *  SIGHUP, populating this region. Other processes (cpcu_io, cpcu_dsp.py
@@ -202,7 +197,7 @@ _Static_assert( sizeof(IPC_DSPExport) == 256, "IPC_DSPExport must be 256 bytes (
  *
  *  All fields are EXPLICITLY-sized so the Python side can mmap & unpack
  *  with `struct` predictably. Pad to a fixed total to keep the IPC
- *  layout deterministic across schema additions within v2.3.x.
+ *  layout deterministic across schema additions across schema additions.
  *
  *  See cpcu_v2/docs/RUNTIME_CONFIG.md for the full schema and the
  *  consumer wiring.
@@ -226,7 +221,7 @@ typedef struct __attribute__((aligned(64)))
     uint16_t            servo_max_us[IPC_CFG_NUM_SERVOS];
 
     /* Per-servo gravity-sag bias offsets (signed us, applied AFTER
-     * smoothing, BEFORE clamping). v2.3.3 first consumer of the
+     * smoothing, BEFORE clamping). First consumer of the
      * runtime-config infrastructure. See JITTER_MITIGATION.md §6. */
     int16_t             servo_bias_us[IPC_CFG_NUM_SERVOS];
 
@@ -235,17 +230,17 @@ typedef struct __attribute__((aligned(64)))
     uint16_t            smooth_accel_us_per_s2[IPC_CFG_NUM_SERVOS];
     uint16_t            smooth_deadband_us[IPC_CFG_NUM_SERVOS];
 
-    /* v2.2: per-servo gravity compensation.
+    /* per-servo gravity compensation.
      *   gravity_dir:       -1 = gravity helps negative, +1 = positive, 0 = off.
      *   gravity_scale_pct: 10-100, velocity multiplier for gravity direction. */
     int16_t             gravity_dir[IPC_CFG_NUM_SERVOS];
     int16_t             gravity_scale_pct[IPC_CFG_NUM_SERVOS];
 
-    /* Gesture velocities (us/s, signed) — v2.3.5 consumer.
+    /* Gesture velocities (us/s, signed) — gesture velocity consumer.
      * Indexed by [class_id][servo_id]. class_id 0 == rest. */
     int16_t             gesture_velocity[IPC_MAX_CLASSES][IPC_CFG_NUM_SERVOS];
 
-    /* DSP/AI thresholds — v2.3.5/v2.3.6 consumers. */
+    /* DSP/AI thresholds */
     uint8_t             interp_conf_floor_pct;              /* 0-100, default 40 */
     uint8_t             interp_conf_ceil_pct;               /* 0-100, default 85 */
     uint8_t             hysteresis_votes;                   /* default 3 */
@@ -255,7 +250,7 @@ typedef struct __attribute__((aligned(64)))
     uint16_t            grip_firm_us;                       /* default 1100 */
     uint16_t            grip_stall_recover_ms;              /* default 2000 */
 
-    /* Pad to a fixed size so future v2.3.x additions don't change the
+    /* Pad to a fixed size so future future additions don't change the
      * IPC layout binary-incompatibly. Reserve generously. */
     uint8_t             _reserved[256];
 } IPC_RuntimeConfig;
@@ -263,7 +258,7 @@ typedef struct __attribute__((aligned(64)))
 _Static_assert(sizeof(IPC_RuntimeConfig) >= 512,
                "IPC_RuntimeConfig must be >= 512 bytes (8 cache lines minimum)");
 
-/*============= IPC_ToolPresence (v2.4.0) ==============================================*/
+/*============= IPC_ToolPresence ==============================================*/
 /*  A small registry of "side tools" that opt into being visible to the
  *  web dashboard. Each tool that wants to publish state owns one slot
  *  identified by tool_id. Slots are not assigned dynamically — each
@@ -271,8 +266,8 @@ _Static_assert(sizeof(IPC_RuntimeConfig) >= 512,
  *  to avoid a hand-shake protocol. The web bridge reads all slots and
  *  shows whichever are alive.
  *
- *  v2.4.0 ships only the *region* — the publisher patches in
- *  pca_testbench and signal_testbench come in v2.4.1 (Layer F of the
+ *  ships only the *region* — the publisher patches in
+ *  pca_testbench and signal_testbench are published by the
  *  web-bridge layered roll-out). Until then, all slots stay
  *  alive=0 and the dashboard's Tools tab shows "no side tools running".
  */
@@ -309,7 +304,7 @@ typedef struct {
 _Static_assert(sizeof(IPC_ToolPresence) == 64 * IPC_TOOL_PRESENCE_SLOTS,
                "IPC_ToolPresence must be 8 * 64 bytes");
 
-/*============= IPC_DspFiltered (v2.4.0) ==============================================*/
+/*============= IPC_DspFiltered ==============================================*/
 /*  Per-channel snapshot of the most recent post-bandpass+notch+envelope
  *  buffer that cpcu_dsp.py computed. The web bridge reads this for the
  *  "filtered" view in the Waves tab and (in the next turn) the Spectrum
@@ -373,9 +368,9 @@ typedef struct
     IPC_MotorCommand    *motor;
     IPC_Diagnostics     *diag;
     IPC_DSPExport       *dsp_export;
-    IPC_RuntimeConfig   *config;            /* v2.3.3 */
-    IPC_ToolPresence    *tool_presence;     /* v2.4.0 */
-    IPC_DspFiltered     *dsp_filtered;      /* v2.4.0 */
+    IPC_RuntimeConfig   *config;            /* */
+    IPC_ToolPresence    *tool_presence;     /* */
+    IPC_DspFiltered     *dsp_filtered;      /* */
     int                 shm_fd;
 } IPC_Context;
 
@@ -397,7 +392,7 @@ void        IPC_WriteMotorCmd(IPC_Context *ctx, const uint16_t servo_us[IPC_NUM_
 bool        IPC_ReadMotorCmd(IPC_Context *ctx, uint16_t servo_us[IPC_NUM_SERVOS],
                              uint8_t *gesture_id, uint8_t *confidence, uint32_t *last_ack);
 
-/* Runtime Config (SeqLock, v2.3.3).
+/* Runtime Config (SeqLock, current version).
  * Writers (cpcu_kernel only) call IPC_WriteRuntimeConfig. Readers
  * (cpcu_io, cpcu_dsp.py) call IPC_ReadRuntimeConfig — it copies the
  * full struct out under a torn-read-retry loop. The copy is cheap
@@ -412,3 +407,4 @@ uint32_t    IPC_RuntimeConfigSeq  (IPC_Context *ctx);    /* cheap polling check 
 #endif
 
 #endif  /* CPCU_IPC_H */                          
+

@@ -1,0 +1,97 @@
+<svg viewBox="0 0 1100 750" xmlns="http://www.w3.org/2000/svg" font-family="Inter,-apple-system,sans-serif">
+<defs><marker id="a" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><path d="M0,0 L7,2.5 L0,5" fill="#555"/></marker></defs>
+<style>
+text{font-size:11px;fill:#1a1a1a}.title{font-size:18px;font-weight:600}
+.proc{rx:6;fill:#dbeafe;stroke:#2563eb;stroke-width:1.3}
+.dec{fill:#fef9c3;stroke:#ca8a04;stroke-width:1.3}
+.io{fill:#dcfce7;stroke:#16a34a;stroke-width:1.3;rx:6}
+.term{fill:#f3e8ff;stroke:#9333ea;stroke-width:1.3;rx:16}
+.arr{stroke:#555;stroke-width:1.3;fill:none;marker-end:url(#a)}
+.lbl{font-size:10px;fill:#555}.col{font-size:13px;font-weight:600;text-anchor:middle}
+</style>
+<text x="550" y="28" text-anchor="middle" class="title">System Flowchart — Boot to Steady-State Operation</text>
+
+<!-- Column headers -->
+<rect x="30" y="45" width="300" height="24" rx="4" fill="#eff6ff"/><text x="180" y="62" class="col" style="fill:#1e40af">cpcu_kernel (Core 0)</text>
+<rect x="400" y="45" width="300" height="24" rx="4" fill="#f0fdf4"/><text x="550" y="62" class="col" style="fill:#166534">cpcu_io (Core 3)</text>
+<rect x="770" y="45" width="300" height="24" rx="4" fill="#fef3c7"/><text x="920" y="62" class="col" style="fill:#92400e">cpcu_dsp (Cores 1-2)</text>
+
+<!-- Kernel column -->
+<rect x="100" y="85" width="160" height="28" class="term"/><text x="180" y="104" text-anchor="middle">System Power On</text>
+<line x1="180" y1="113" x2="180" y2="133" class="arr"/>
+
+<rect x="100" y="133" width="160" height="28" class="proc"/><text x="180" y="152" text-anchor="middle">launch.sh pre-flight</text>
+<line x1="180" y1="161" x2="180" y2="181" class="arr"/>
+
+<rect x="100" y="181" width="160" height="28" class="proc"/><text x="180" y="200" text-anchor="middle">IPC_Create (66 KB shm)</text>
+<line x1="180" y1="209" x2="180" y2="229" class="arr"/>
+
+<rect x="100" y="229" width="160" height="28" class="proc"/><text x="180" y="248" text-anchor="middle">Load runtime.json → IPC</text>
+<line x1="180" y1="257" x2="180" y2="277" class="arr"/>
+
+<rect x="100" y="277" width="160" height="28" class="proc"/><text x="180" y="296" text-anchor="middle">Open /dev/watchdog</text>
+<line x1="180" y1="305" x2="180" y2="325" class="arr"/>
+
+<rect x="90" y="325" width="180" height="28" class="proc"/><text x="180" y="344" text-anchor="middle">fork+exec cpcu_io (Core 3)</text>
+<line x1="270" y1="339" x2="448" y2="339" class="arr"/>
+
+<line x1="180" y1="353" x2="180" y2="373" class="arr"/>
+<rect x="80" y="373" width="200" height="28" class="proc"/><text x="180" y="392" text-anchor="middle">fork+exec cpcu_dsp (Cores 1-2)</text>
+<line x1="280" y1="387" x2="818" y2="387" class="arr"/>
+
+<line x1="180" y1="401" x2="180" y2="421" class="arr"/>
+<rect x="80" y="421" width="200" height="28" class="io"/><text x="180" y="440" text-anchor="middle" style="font-weight:600">Enter Monitor Loop</text>
+<line x1="180" y1="449" x2="180" y2="469" class="arr"/>
+
+<rect x="60" y="469" width="240" height="90" rx="6" fill="#f9fafb" stroke="#d1d5db"/>
+<text x="180" y="488" text-anchor="middle" style="font-size:11px;font-weight:500">Monitor loop (1 Hz):</text>
+<text x="75" y="505" class="lbl">• waitpid → respawn dead children</text>
+<text x="75" y="519" class="lbl">• heartbeat stale > 2s → SIGKILL + respawn</text>
+<text x="75" y="533" class="lbl">• SIGHUP → reload runtime.json → IPC</text>
+<text x="75" y="547" class="lbl">• pet /dev/watchdog every 5 s</text>
+
+<!-- IO column -->
+<rect x="450" y="325" width="200" height="28" class="proc"/><text x="550" y="344" text-anchor="middle">NRF init (3 retries) + PCA init</text>
+<line x1="550" y1="353" x2="550" y2="373" class="arr"/>
+
+<rect x="450" y="373" width="200" height="28" class="proc"/><text x="550" y="392" text-anchor="middle">SAFETY_Init (5s boot grace)</text>
+<line x1="550" y1="401" x2="550" y2="421" class="arr"/>
+
+<rect x="450" y="421" width="200" height="28" class="proc"/><text x="550" y="440" text-anchor="middle">io_ready = 1</text>
+<line x1="550" y1="449" x2="550" y2="469" class="arr"/>
+
+<rect x="420" y="469" width="260" height="160" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+<text x="550" y="488" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#166534">I/O Loop (busy-poll, no sleep):</text>
+<text x="435" y="507" class="lbl">1. NRF poll → unpack → ring push</text>
+<text x="435" y="521" class="lbl">2. Safety feeds (pkt, timeout, DSP, ring)</text>
+<text x="435" y="535" class="lbl">3. SAFETY_UpdateState</text>
+<text x="435" y="549" class="lbl">4. Read motor cmd (SeqLock)</text>
+<text x="435" y="563" class="lbl">5. Smoother → PCA write (50 Hz)</text>
+<text x="435" y="577" class="lbl">6. Gripper stall watchdog</text>
+<text x="435" y="591" class="lbl">7. Edit-mode handshake</text>
+<text x="435" y="605" class="lbl">8. Heartbeat (100 ms) + thermal (5 s)</text>
+
+<!-- DSP column -->
+<rect x="820" y="373" width="200" height="28" class="proc"/><text x="920" y="392" text-anchor="middle">Load model + runtime config</text>
+<line x1="920" y1="401" x2="920" y2="421" class="arr"/>
+
+<rect x="820" y="421" width="200" height="28" class="proc"/><text x="920" y="440" text-anchor="middle">dsp_ready = 1</text>
+<line x1="920" y1="449" x2="920" y2="469" class="arr"/>
+
+<rect x="790" y="469" width="260" height="140" rx="6" fill="#fefce8" stroke="#ca8a04"/>
+<text x="920" y="488" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#854d0e">DSP Loop (~10 Hz stride):</text>
+<text x="805" y="507" class="lbl">1. Pop sensor batch from ring (max 100)</text>
+<text x="805" y="521" class="lbl">2. ADC → voltage → bandpass → notch</text>
+<text x="805" y="535" class="lbl">3. Sliding window (200 ms / 50 ms stride)</text>
+<text x="805" y="549" class="lbl">4. Feature extract → RF classify</text>
+<text x="805" y="563" class="lbl">5. Velocity integrate (confidence-scaled)</text>
+<text x="805" y="577" class="lbl">6. Gripper soft clamp (grip_firm_us)</text>
+<text x="805" y="591" class="lbl">7. SeqLock write motor cmd → IPC</text>
+
+<!-- IPC bar at bottom -->
+<rect x="60" y="660" width="1000" height="35" rx="8" fill="#fce4ec" stroke="#e91e63" stroke-width="1.5"/>
+<text x="560" y="682" text-anchor="middle" style="font-size:12px;font-weight:600;fill:#880e4f">/dev/shm/cpcu_ipc — all three processes communicate through this 66 KB region</text>
+<line x1="180" y1="559" x2="180" y2="660" class="arr" stroke-dasharray="4,3"/>
+<line x1="550" y1="629" x2="550" y2="660" class="arr" stroke-dasharray="4,3"/>
+<line x1="920" y1="609" x2="920" y2="660" class="arr" stroke-dasharray="4,3"/>
+</svg>

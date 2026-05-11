@@ -1,0 +1,109 @@
+<svg viewBox="0 0 1100 650" xmlns="http://www.w3.org/2000/svg" font-family="Inter, -apple-system, sans-serif">
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#555"/></marker>
+    <marker id="ahb" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#2563eb"/></marker>
+  </defs>
+  <style>
+    text { font-size: 12px; fill: #1a1a1a; }
+    .title { font-size: 18px; font-weight: 600; }
+    .subtitle { font-size: 11px; fill: #666; }
+    .box { rx: 8; fill: #fff; stroke: #d1d5db; stroke-width: 1.5; }
+    .box-bsau { fill: #fef3c7; stroke: #d97706; }
+    .box-core3 { fill: #dbeafe; stroke: #2563eb; }
+    .box-core12 { fill: #dcfce7; stroke: #16a34a; }
+    .box-core0 { fill: #f3e8ff; stroke: #9333ea; }
+    .box-ipc { fill: #fce4ec; stroke: #e91e63; }
+    .box-servo { fill: #fff3e0; stroke: #ef6c00; }
+    .label { font-size: 13px; font-weight: 600; }
+    .item { font-size: 10.5px; fill: #374151; }
+    .conn { stroke: #555; stroke-width: 1.5; fill: none; marker-end: url(#ah); }
+    .conn-radio { stroke: #2563eb; stroke-width: 2; stroke-dasharray: 6,3; fill: none; marker-end: url(#ahb); }
+  </style>
+
+  <text x="550" y="30" text-anchor="middle" class="title">InfiniTech Prosthetic Hand — System Block Diagram</text>
+  <text x="550" y="48" text-anchor="middle" class="subtitle">BSAU (STM32L432KC) → 2.4 GHz NRF → CPCU (Raspberry Pi 5) → 6-DoF Servo Arm</text>
+
+  <!-- BSAU -->
+  <rect x="30" y="80" width="200" height="260" class="box box-bsau"/>
+  <text x="130" y="102" text-anchor="middle" class="label">BSAU</text>
+  <text x="130" y="118" text-anchor="middle" class="subtitle">STM32L432KC · Cortex-M4F · 80 MHz</text>
+  <text x="45" y="145" class="item">8× Electrode + InAmp (200 V/V)</text>
+  <text x="45" y="163" class="item">ADC1 · 32× oversample · 2 kHz</text>
+  <text x="45" y="181" class="item">DMA circular buffer</text>
+  <text x="45" y="199" class="item">WL_Pack (12-bit codec)</text>
+  <text x="45" y="217" class="item">NRF24L01+ PTX · SPI1 · 5 MHz</text>
+  <text x="45" y="235" class="item">Battery monitor + status LED</text>
+  <text x="45" y="260" class="item" style="fill:#92400e">Battery: 2S LiPo · ~66 h life</text>
+  <text x="45" y="278" class="item" style="fill:#92400e">Non-fatal NRF init + recovery</text>
+
+  <!-- Radio link -->
+  <line x1="230" y1="210" x2="330" y2="210" class="conn-radio"/>
+  <text x="280" y="195" text-anchor="middle" style="font-size:10px; fill:#2563eb">2.4 GHz ISM</text>
+  <text x="280" y="228" text-anchor="middle" style="font-size:10px; fill:#2563eb">2 Mbps · 32 B · 1000 pkt/s</text>
+
+  <!-- Core 3 -->
+  <rect x="330" y="80" width="230" height="260" class="box box-core3"/>
+  <text x="445" y="102" text-anchor="middle" class="label">Core 3 — RT I/O</text>
+  <text x="445" y="118" text-anchor="middle" class="subtitle">SCHED_FIFO 90 · isolated · C</text>
+  <text x="345" y="145" class="item">NRF24L01+ SPI driver (8 MHz)</text>
+  <text x="345" y="163" class="item">WL_Unpack + sequence check</text>
+  <text x="345" y="181" class="item">SPSC ring producer</text>
+  <text x="345" y="199" class="item">Safety monitor (7 fault sources)</text>
+  <text x="345" y="217" class="item">Trapezoidal servo smoother</text>
+  <text x="345" y="235" class="item">Hold-pose deadband</text>
+  <text x="345" y="253" class="item">Gripper stall watchdog</text>
+  <text x="345" y="271" class="item">PCA9685 I²C servo driver</text>
+  <text x="345" y="289" class="item">Edit-mode handshake responder</text>
+  <text x="345" y="307" class="item">Heartbeat writer (100 ms)</text>
+
+  <!-- Cores 1-2 -->
+  <rect x="580" y="80" width="230" height="240" class="box box-core12"/>
+  <text x="695" y="102" text-anchor="middle" class="label">Cores 1–2 — DSP/ML</text>
+  <text x="695" y="118" text-anchor="middle" class="subtitle">SCHED_FIFO 80 · isolated · Python</text>
+  <text x="595" y="145" class="item">SPSC ring consumer</text>
+  <text x="595" y="163" class="item">ADC → voltage (−1.65 V bias)</text>
+  <text x="595" y="181" class="item">Bandpass 20–450 Hz (Butterworth)</text>
+  <text x="595" y="199" class="item">50 Hz notch (Q=30)</text>
+  <text x="595" y="217" class="item">Feature extraction (7 feat × N ch)</text>
+  <text x="595" y="235" class="item">RandomForest classifier (100 trees)</text>
+  <text x="595" y="253" class="item">Confidence-scaled velocity integrator</text>
+  <text x="595" y="271" class="item">Noise gate + gesture → servo map</text>
+  <text x="595" y="289" class="item">SeqLock motor command writer</text>
+
+  <!-- Core 0 -->
+  <rect x="830" y="80" width="240" height="240" class="box box-core0"/>
+  <text x="950" y="102" text-anchor="middle" class="label">Core 0 — Linux</text>
+  <text x="950" y="118" text-anchor="middle" class="subtitle">CFS scheduler · non-RT</text>
+  <text x="845" y="145" class="item">cpcu_kernel (supervisor)</text>
+  <text x="845" y="163" class="item">  Fork+exec children</text>
+  <text x="845" y="181" class="item">  Heartbeat monitor + respawn</text>
+  <text x="845" y="199" class="item">  /dev/watchdog (15 s)</text>
+  <text x="845" y="217" class="item">  SIGHUP config reload</text>
+  <text x="845" y="240" class="item">cpcu_tui (ncurses, 7 pages)</text>
+  <text x="845" y="258" class="item">cpcu_ws (web dashboard, :8765)</text>
+  <text x="845" y="276" class="item">SSH · systemd · logging</text>
+
+  <!-- IPC bar -->
+  <rect x="330" y="370" width="740" height="45" class="box box-ipc"/>
+  <text x="700" y="395" text-anchor="middle" class="label" style="fill:#c2185b">/dev/shm/cpcu_ipc — 66 KB shared memory</text>
+  <text x="700" y="410" text-anchor="middle" class="item" style="fill:#880e4f">CtrlBlock 192B | Ring 64KB | MotorCmd 128B | Diag 128B | DSPExport 256B | Config | Tools | Filtered</text>
+
+  <!-- IPC connections -->
+  <line x1="445" y1="340" x2="445" y2="370" class="conn"/>
+  <line x1="695" y1="320" x2="695" y2="370" class="conn"/>
+  <line x1="950" y1="320" x2="950" y2="370" class="conn"/>
+
+  <!-- Servo bar -->
+  <rect x="330" y="440" width="460" height="50" class="box box-servo"/>
+  <text x="560" y="462" text-anchor="middle" class="label" style="fill:#e65100">PCA9685 I²C Bus — 50 Hz PWM · 6 channels</text>
+  <text x="560" y="478" text-anchor="middle" class="item" style="fill:#bf360c">S0 Base · S1 Upper · S2 Last · S3 Jnt-1 · S4 Jnt-2 · S5 Gripper</text>
+  <line x1="445" y1="415" x2="445" y2="440" class="conn"/>
+
+  <!-- Power note -->
+  <text x="330" y="520" class="item" style="fill:#555">Power: USB-C 27W (logic) + 6V/3A separate (servos) · Common GND required</text>
+
+  <!-- Boot grace note -->
+  <rect x="30" y="370" width="280" height="45" rx="6" fill="#ecfdf5" stroke="#10b981" stroke-width="1"/>
+  <text x="170" y="392" text-anchor="middle" style="font-size:11px; fill:#065f46; font-weight:500">Boot grace: power on in any order</text>
+  <text x="170" y="406" text-anchor="middle" style="font-size:10px; fill:#065f46">5 s cold-start tolerance before radio fault arms</text>
+</svg>

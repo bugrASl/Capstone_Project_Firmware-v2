@@ -1,4 +1,8 @@
-/* USER CODE BEGIN Header */
+/**
+ *  @file   main.h
+ *  @brief  BSAU main header — HAL includes, error handler, pin definitions.
+ */
+
 /**
   ******************************************************************************
   * @file           : main.h
@@ -99,3 +103,4 @@ void Error_Handler(void);
 #endif
 
 #endif /* __MAIN_H */
+

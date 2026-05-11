@@ -1,22 +1,6 @@
 /**
- *  @file       editor_testbench.c
- *  @brief      Unit tests for cpcu_tui_editor (v2.3.8)
- *  @author     bugrASl
- *
- *  Exercises ED_HandleKey + ED_Init + ED_RevertAll + ED_DirtyCount
- *  without ncurses. The tests don't render, only manipulate state and
- *  verify the field table tracks correctly.
- *
- *  ED_Render is exercised on hardware (visual check) — there's no
- *  good way to unit-test ncurses output without bringing up a pty
- *  and parsing ANSI escapes, which is a lot of scaffolding for a
- *  function that's mostly mvprintw calls.
- *
- *  Note: this testbench does NOT initialize ncurses. ED_Render uses
- *  ncurses functions, so we must not call it from these tests. The
- *  state-transition tests work fine without ncurses because all the
- *  state lives in g_ed and g_ed_fields globals owned by the editor
- *  module, not the screen.
+ *  @file   editor_testbench.c
+ *  @brief  TUI editor test harness — key dispatch, field navigation, save protocol.
  */
 
 #include "cpcu_tui_editor.h"
@@ -329,7 +313,7 @@ static void test_save_roundtrip(void)
 int main(void)
 {
     printf("======================================\n");
-    printf("  TB-ED — cpcu_tui_editor unit tests (v2.3.8)\n");
+    printf("  TB-ED — cpcu_tui_editor unit tests \n");
     printf("======================================\n");
 
     test_init_loads();
@@ -348,3 +332,4 @@ int main(void)
     printf("======================================\n");
     return (g_fail == 0) ? 0 : 1;
 }
+

@@ -1,18 +1,6 @@
 /**
- *  @file       nrf24l01_linux.h
- *  @brief      NRF24L01+ Linux Driver (spidev + gpiod)
- *  @author     bugrASl
- *  @date       11.04.2026
- *  @version    1.0
- *  @details
- *                          SPI WIRING
- *  ────────────────────────────────────────────────────────────     
- *  SPI0    CE0(GPIO8)      ->  NRF_CSN
- *  SPI0    SCLK(GPIO11)    ->  NRF_SCK
- *  SPI0    MOSI            ->  NRF_MOSI
- *  SPI0    MISO            ->  NRF_MISO
- *  GPIO    25              ->  NRF_CE
- *  GPIO    24              ->  NRF_IRQ
+ *  @file   nrf24l01_linux.h
+ *  @brief  NRF24L01+ Linux SPI driver API — handle, init, receive, power control.
  */
 
 #ifndef NRF24L01_LINUX_H
@@ -144,3 +132,4 @@ void        NRF_CE_Low(NRF_Handle *h);
 #endif
 
 #endif /* NRF24L01_LINUX_H */
+

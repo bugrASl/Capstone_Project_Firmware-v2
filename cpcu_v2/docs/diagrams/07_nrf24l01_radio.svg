@@ -1,0 +1,57 @@
+<svg viewBox="0 0 850 400" xmlns="http://www.w3.org/2000/svg" font-family="Inter,-apple-system,sans-serif">
+<defs><marker id="a" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><path d="M0,0 L7,2.5 L0,5" fill="#555"/></marker></defs>
+<style>text{font-size:11px;fill:#1a1a1a}.title{font-size:18px;font-weight:600}.box{rx:8;stroke-width:1.5}</style>
+
+<text x="425" y="28" text-anchor="middle" class="title">NRF24L01+ Radio — SPI Driver + Receive Loop</text>
+
+<!-- Hardware block -->
+<rect x="30" y="55" width="250" height="120" class="box" fill="#dbeafe" stroke="#2563eb"/>
+<text x="155" y="77" text-anchor="middle" style="font-size:13px;font-weight:600;fill:#1d4ed8">Raspberry Pi SPI0</text>
+<text x="45" y="100" style="font-size:10.5px;fill:#374151">/dev/spidev0.0 @ 8 MHz</text>
+<text x="45" y="116" style="font-size:10.5px;fill:#374151">GPIO 25 (CE) via /dev/gpiochip4</text>
+<text x="45" y="132" style="font-size:10.5px;fill:#374151">MOSI / MISO / SCK / CSN</text>
+<text x="45" y="148" style="font-size:10.5px;fill:#374151">CE held HIGH for RX mode</text>
+
+<rect x="350" y="55" width="250" height="120" class="box" fill="#fef3c7" stroke="#d97706"/>
+<text x="475" y="77" text-anchor="middle" style="font-size:13px;font-weight:600;fill:#92400e">NRF24L01+</text>
+<text x="365" y="100" style="font-size:10.5px;fill:#374151">2.4 GHz ISM · Channel 108</text>
+<text x="365" y="116" style="font-size:10.5px;fill:#374151">2 Mbps Enhanced ShockBurst</text>
+<text x="365" y="132" style="font-size:10.5px;fill:#374151">PRX mode · CRC-16 · Auto-ACK</text>
+<text x="365" y="148" style="font-size:10.5px;fill:#374151">Addr: 0xE7×5 · 15 retries</text>
+
+<line x1="280" y1="115" x2="348" y2="115" stroke="#555" stroke-width="2" marker-end="url(#a)"/>
+<text x="314" y="108" text-anchor="middle" style="font-size:9px;fill:#555">SPI</text>
+
+<!-- From BSAU -->
+<rect x="660" y="70" width="160" height="50" class="box" fill="#fef9c3" stroke="#ca8a04"/>
+<text x="740" y="95" text-anchor="middle" style="font-size:11px;font-weight:600;fill:#854d0e">BSAU TX</text>
+<text x="740" y="110" text-anchor="middle" style="font-size:9.5px;fill:#555">1000 pkt/s · 32 B</text>
+<line x1="660" y1="95" x2="602" y2="95" stroke="#2563eb" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#a)"/>
+<text x="631" y="88" text-anchor="middle" style="font-size:9px;fill:#2563eb">2.4 GHz</text>
+
+<!-- Receive flow -->
+<rect x="30" y="210" width="790" height="160" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+<text x="425" y="232" text-anchor="middle" style="font-size:13px;font-weight:600;fill:#166534">Receive Loop (inside cpcu_io, busy-poll)</text>
+
+<rect x="50" y="248" width="120" height="40" rx="6" fill="#fff" stroke="#16a34a"/><text x="110" y="272" text-anchor="middle" style="font-size:10px">NRF_DataAvail?</text>
+<line x1="170" y1="268" x2="195" y2="268" class="arr" stroke="#16a34a" marker-end="url(#a)"/>
+
+<rect x="197" y="248" width="110" height="40" rx="6" fill="#fff" stroke="#16a34a"/><text x="252" y="272" text-anchor="middle" style="font-size:10px">ReadPayload 32B</text>
+<line x1="307" y1="268" x2="325" y2="268" class="arr" stroke="#16a34a" marker-end="url(#a)"/>
+
+<rect x="327" y="248" width="100" height="40" rx="6" fill="#fff" stroke="#16a34a"/><text x="377" y="272" text-anchor="middle" style="font-size:10px">WL_Unpack</text>
+<line x1="427" y1="268" x2="445" y2="268" class="arr" stroke="#16a34a" marker-end="url(#a)"/>
+
+<rect x="447" y="248" width="100" height="40" rx="6" fill="#fff" stroke="#16a34a"/><text x="497" y="272" text-anchor="middle" style="font-size:10px">Seq gap check</text>
+<line x1="547" y1="268" x2="565" y2="268" class="arr" stroke="#16a34a" marker-end="url(#a)"/>
+
+<rect x="567" y="248" width="110" height="40" rx="6" fill="#fff" stroke="#16a34a"/><text x="622" y="272" text-anchor="middle" style="font-size:10px">SAFETY_Feed</text>
+<line x1="677" y1="268" x2="695" y2="268" class="arr" stroke="#16a34a" marker-end="url(#a)"/>
+
+<rect x="697" y="248" width="110" height="40" rx="6" fill="#fff" stroke="#16a34a"/><text x="752" y="272" text-anchor="middle" style="font-size:10px">IPC_PushSensor</text>
+
+<!-- Recovery note -->
+<text x="50" y="320" style="font-size:10.5px;fill:#374151;font-weight:500">Init: 3 retries with 200 ms POR delay. Non-fatal — IO continues without radio, retries every 3 s.</text>
+<text x="50" y="336" style="font-size:10.5px;fill:#374151;font-weight:500">Recovery: FlushRX → FlushTX → ClearIRQ → PowerDown → 50 ms → Re-init. Status bits cleared on each poll.</text>
+<text x="50" y="352" style="font-size:10.5px;fill:#374151;font-weight:500">FIRST_PACKET flag: BSAU sets on first TX after any init. CPCU uses it to sync sequence counter.</text>
+</svg>

@@ -1,15 +1,8 @@
 /**
- *  @file       cpcu_tui_editor.h
- *  @brief      TUI live editor for runtime.json (v2.3.8)
- *  @author     bugrASl
- *
- *  This module owns the editor state, key handling, rendering, and
- *  Ctrl+S commit logic for the TUI's CONFIG page editor. Activated
- *  while the v2.3.4 edit-mode handshake reports EDITING (arm parked).
- *  Saves via v2.3.6 CFG_PatchFile.
- *
- *  See cpcu_v2/docs/TUI_EDITOR.md for the design doc.
+ *  @file   cpcu_tui_editor.h
+ *  @brief  TUI live editor API — field model, key handler, save protocol.
  */
+
 #ifndef CPCU_TUI_EDITOR_H
 #define CPCU_TUI_EDITOR_H
 
@@ -95,3 +88,4 @@ const ED_Field *ED_GetField(int idx);
 int             ED_GetFieldCount(void);
 
 #endif /* CPCU_TUI_EDITOR_H */
+

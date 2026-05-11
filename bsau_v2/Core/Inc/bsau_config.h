@@ -1,27 +1,6 @@
 /**
- *  @file       bsau_config.h
- *  @brief      BSAU build-mode selector (single point of configuration)
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details
- *              Uncomment EXACTLY ONE mode below, rebuild. log.h enforces
- *              mutual exclusion at compile time (see §2 of log.h).
- *
- *              Build modes:
- *                ────────────────────────────────────────────────────────────
- *                BSAU_MODE_RELEASE       LOG=off  CSV=off   Production
- *                BSAU_MODE_DEBUG         LOG=on   CSV=on    Dev (stats + decimated CSV)
- *                BSAU_MODE_TEST_ADC_CSV  LOG=off  CSV=on    Binary ADC stream (SerialPlot)
- *                BSAU_MODE_TEST_PKT_LOG  LOG=on   CSV=off   WL codec round-trip verify
- *                BSAU_MODE_TEST_CSV      LOG=off  CSV=on    ASCII CSV capture (no radio)
- *                BSAU_MODE_TEST_DFT_LOG  LOG=on   CSV=off   Goertzel DFT frequency verify
- *                BSAU_MODE_TEST_NRF_LOG  LOG=on   CSV=off   NRF self-test + TX loop
- *                BSAU_MODE_DATASET       LOG=off  CSV=on    Dual-path: RELEASE TX loop
- *                                                           + 8-col ASCII CSV on UART
- *                                                           for simultaneous dataset
- *                                                           capture on BSAU side (raw)
- *                                                           and CPCU side (filtered)
+ *  @file   bsau_config.h
+ *  @brief  BSAU compile-time configuration — profile selection, channel count, timing.
  */
 
 #ifndef BSAU_CONFIG_H
@@ -67,3 +46,4 @@
 /*==============================================================================================*/
 
 #endif /* BSAU_CONFIG_H */
+

@@ -1,0 +1,101 @@
+<svg viewBox="0 0 900 600" xmlns="http://www.w3.org/2000/svg" font-family="'Courier New',monospace">
+<style>.bg{fill:#1a1a1a}.fg{fill:#e6e6e6;font-size:12px}.dim{fill:#666;font-size:12px}.grn{fill:#5dcaa5;font-size:12px}.red{fill:#f09595;font-size:12px}.yel{fill:#fac775;font-size:12px}.cyn{fill:#7bb6f0;font-size:12px}.bold{font-weight:700}.hdr{fill:#333}.bar{fill:#444;rx:2}</style>
+<rect width="900" height="600" class="bg"/>
+
+<!-- Title bar -->
+<rect x="0" y="0" width="900" height="22" class="hdr"/>
+<text x="450" y="15" text-anchor="middle" class="grn bold" style="font-size:13px"> CPCU MONITOR — InfiniTech Prosthetic Hand </text>
+
+<!-- Tab bar -->
+<text x="10" y="38" class="cyn bold">1:OVER</text>
+<text x="90" y="38" class="dim">2:RADIO</text>
+<text x="170" y="38" class="dim">3:DSP</text>
+<text x="240" y="38" class="dim">4:WAVES</text>
+<text x="320" y="38" class="dim">5:HEALTH</text>
+<text x="410" y="38" class="dim">6:DATASET</text>
+<text x="510" y="38" class="dim">7:CONFIG</text>
+<rect x="0" y="44" width="900" height="1" fill="#333"/>
+
+<!-- Page 1: Overview -->
+<text x="10" y="66" class="fg bold">SYSTEM</text>
+<text x="200" y="66" class="fg bold">RADIO LINK</text>
+
+<text x="10" y="84" class="dim">State:</text><text x="80" y="84" class="grn bold">RUNNING</text>
+<text x="10" y="100" class="dim">Uptime:</text><text x="80" y="100" class="fg">01:23:45</text>
+<text x="10" y="116" class="dim">IO ready:</text><text x="80" y="116" class="grn">YES</text>
+<text x="10" y="132" class="dim">DSP ready:</text><text x="80" y="132" class="grn">YES</text>
+<text x="10" y="148" class="dim">NRF init:</text><text x="80" y="148" class="grn">OK</text>
+
+<text x="200" y="84" class="dim">Packets/s:</text><text x="290" y="84" class="fg">998</text>
+<text x="200" y="100" class="dim">Total pkts:</text><text x="290" y="100" class="fg">5432100</text>
+<text x="200" y="116" class="dim">Seq gaps:</text><text x="290" y="116" class="fg">3</text>
+<text x="200" y="132" class="dim">Loss rate:</text><text x="290" y="132" class="grn">0.001%</text>
+
+<rect x="0" y="160" width="900" height="1" fill="#333"/>
+
+<!-- EMG channels -->
+<text x="10" y="180" class="fg bold">EMG CHANNELS</text>
+<text x="10" y="198" class="dim">ch0</text><rect x="40" y="189" width="130" height="12" class="bar"/><rect x="40" y="189" width="81" height="12" fill="#5dcaa5" rx="2"/><text x="180" y="199" class="dim">62%</text>
+<text x="10" y="214" class="dim">ch1</text><rect x="40" y="205" width="130" height="12" class="bar"/><rect x="40" y="205" width="23" height="12" fill="#5dcaa5" rx="2"/><text x="180" y="215" class="dim">18%</text>
+<text x="10" y="230" class="dim">ch2</text><rect x="40" y="221" width="130" height="12" class="bar"/><rect x="40" y="221" width="10" height="12" fill="#5dcaa5" rx="2"/><text x="180" y="231" class="dim"> 8%</text>
+<text x="10" y="246" class="dim">ch3</text><rect x="40" y="237" width="130" height="12" class="bar"/><rect x="40" y="237" width="29" height="12" fill="#5dcaa5" rx="2"/><text x="180" y="247" class="dim">22%</text>
+
+<text x="240" y="198" class="dim">ch4</text><rect x="270" y="189" width="130" height="12" class="bar"/><rect x="270" y="189" width="58" height="12" fill="#7bb6f0" rx="2"/><text x="410" y="199" class="dim">45%</text>
+<text x="240" y="214" class="dim">ch5</text><rect x="270" y="205" width="130" height="12" class="bar"/><rect x="270" y="205" width="16" height="12" fill="#7bb6f0" rx="2"/><text x="410" y="215" class="dim">12%</text>
+<text x="240" y="230" class="dim">ch6</text><rect x="270" y="221" width="130" height="12" class="bar"/><rect x="270" y="221" width="7" height="12" fill="#7bb6f0" rx="2"/><text x="410" y="231" class="dim"> 5%</text>
+<text x="240" y="246" class="dim">ch7</text><rect x="270" y="237" width="130" height="12" class="bar"/><rect x="270" y="237" width="12" height="12" fill="#7bb6f0" rx="2"/><text x="410" y="247" class="dim"> 9%</text>
+
+<rect x="0" y="258" width="900" height="1" fill="#333"/>
+
+<!-- Servos -->
+<text x="10" y="278" class="fg bold">SERVOS (µs)</text><text x="350" y="278" class="fg bold">BATTERY</text>
+<text x="10" y="296" class="dim">S0 Base </text><text x="90" y="296" class="fg">1720</text><rect x="135" y="287" width="180" height="12" class="bar"/><rect x="135" y="287" width="101" height="12" fill="#5dcaa5" rx="2"/><text x="145" y="297" style="fill:#1a1a1a;font-size:9px">████████████O████████</text>
+<text x="10" y="312" class="dim">S1 Upper</text><text x="90" y="312" class="fg">1700</text>
+<text x="10" y="328" class="dim">S2 Last </text><text x="90" y="328" class="fg">1680</text>
+<text x="10" y="344" class="dim">S3 Jnt-1</text><text x="90" y="344" class="fg">1710</text>
+<text x="10" y="360" class="dim">S4 Jnt-2</text><text x="90" y="360" class="fg">1690</text>
+<text x="10" y="376" class="dim">S5 Grip </text><text x="90" y="376" class="yel">1100</text><text x="140" y="376" class="yel" style="font-size:10px">[firm clamp]</text>
+
+<text x="350" y="296" class="dim">Voltage:</text><text x="430" y="296" class="grn">3.82 V</text>
+<text x="350" y="312" class="dim">Level:</text><text x="430" y="312" class="grn">OK</text>
+<text x="350" y="344" class="dim">Ring fill:</text><text x="430" y="344" class="fg">3 / 1024</text>
+<text x="350" y="360" class="dim">Overflows:</text><text x="430" y="360" class="grn">0</text>
+<text x="350" y="376" class="dim">Grip stalls:</text><text x="430" y="376" class="grn">0</text>
+
+<rect x="0" y="388" width="900" height="1" fill="#333"/>
+
+<!-- Classification -->
+<text x="10" y="408" class="fg bold">ML CLASSIFICATION</text>
+<text x="10" y="428" class="dim">Gesture:</text><text x="80" y="428" class="grn bold" style="font-size:16px">HAND SLOW</text><text x="220" y="428" class="dim">87%</text><text x="280" y="428" class="dim">Inf: 28 ms</text>
+
+<text x="10" y="448" class="dim">REST  </text><rect x="70" y="439" width="100" height="10" class="bar"/><rect x="70" y="439" width="5" height="10" fill="#444" rx="1"/><text x="180" y="448" class="dim"> 5%</text>
+<text x="10" y="462" class="dim">H.SLO </text><rect x="70" y="453" width="100" height="10" class="bar"/><rect x="70" y="453" width="87" height="10" fill="#5dcaa5" rx="1"/><text x="180" y="462" class="grn bold">87% ◄</text>
+<text x="10" y="476" class="dim">H.HRD </text><rect x="70" y="467" width="100" height="10" class="bar"/><rect x="70" y="467" width="3" height="10" fill="#444" rx="1"/><text x="180" y="476" class="dim"> 3%</text>
+<text x="10" y="490" class="dim">H.OPN </text><rect x="70" y="481" width="100" height="10" class="bar"/><rect x="70" y="481" width="2" height="10" fill="#444" rx="1"/><text x="180" y="490" class="dim"> 2%</text>
+
+<text x="240" y="448" class="dim">A.BND&lt;</text><rect x="300" y="439" width="100" height="10" class="bar"/><rect x="300" y="439" width="1" height="10" fill="#444" rx="1"/><text x="410" y="448" class="dim">1%</text>
+<text x="240" y="462" class="dim">A.BND=</text><rect x="300" y="453" width="100" height="10" class="bar"/><text x="410" y="462" class="dim">0%</text>
+<text x="240" y="476" class="dim">A.BND&gt;</text><rect x="300" y="467" width="100" height="10" class="bar"/><rect x="300" y="467" width="1" height="10" fill="#444" rx="1"/><text x="410" y="476" class="dim">1%</text>
+<text x="240" y="490" class="dim">BICEP </text><rect x="300" y="481" width="100" height="10" class="bar"/><text x="410" y="490" class="dim">0%</text>
+
+<!-- Footer -->
+<rect x="0" y="510" width="900" height="1" fill="#333"/>
+<text x="10" y="530" class="dim">Page 1/7 · q:quit  1-7:pages  e:edit(config)  w:wave-type  TAB:toggle · 10 Hz refresh</text>
+
+<!-- Page indicators on right -->
+<rect x="550" y="56" width="340" height="440" rx="8" fill="none" stroke="#333" stroke-dasharray="4,4"/>
+<text x="720" y="76" text-anchor="middle" class="dim" style="font-size:10px">Other pages (press 2-7):</text>
+<text x="570" y="100" class="cyn" style="font-size:11px">2 RADIO/IO    Detailed NRF stats, SPI status</text>
+<text x="570" y="120" class="cyn" style="font-size:11px">3 DSP/AI      8-ch wave grid, inference detail</text>
+<text x="570" y="140" class="cyn" style="font-size:11px">4 WAVES       Full waveform (TAB: single/all)</text>
+<text x="570" y="160" class="cyn" style="font-size:11px">5 HEALTH      All 7 fault src, thermal, ring</text>
+<text x="570" y="180" class="cyn" style="font-size:11px">6 DATASET     EMG capture to CSV for training</text>
+<text x="570" y="200" class="cyn" style="font-size:11px">7 CONFIG      Runtime tuning + live editor</text>
+<text x="570" y="230" class="yel" style="font-size:11px">Press 'e' on CONFIG page to enter</text>
+<text x="570" y="248" class="yel" style="font-size:11px">live edit mode (arm parks at neutral)</text>
+<text x="570" y="266" class="yel" style="font-size:11px">Ctrl+S saves → SIGHUP → kernel reloads</text>
+
+<text x="570" y="300" class="grn" style="font-size:11px">Demo mode: ./launch.sh test-signal-demo</text>
+<text x="570" y="318" class="grn" style="font-size:11px">Synthetic 100 Hz sines, no hardware needed</text>
+<text x="570" y="336" class="grn" style="font-size:11px">Fault injection: F=radio B=batt G=gaps</text>
+</svg>

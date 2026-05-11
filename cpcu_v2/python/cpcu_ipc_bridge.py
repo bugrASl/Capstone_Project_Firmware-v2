@@ -2,7 +2,7 @@
 """
 cpcu_ipc_bridge.py — Python interface to /dev/shm/cpcu_ipc
 
-Mirrors cpcu_ipc.h v2.1 binary layout exactly.
+Mirrors cpcu_ipc.h current binary layout exactly.
 Uses mmap + struct for zero-copy shared memory access.
 
 Author: bugrASl
@@ -24,7 +24,7 @@ import numpy as np
 
 IPC_SHM_PATH            =   "/dev/shm/cpcu_ipc"
 IPC_MAGIC               =   0x494E4654
-IPC_VERSION             =   0x0206          # v2.4.0 — IPC_ToolPresence + IPC_DspFiltered
+IPC_VERSION             =   0x0206          # IPC_ToolPresence + IPC_DspFiltered
 
 RING_SIZE               =   1024
 RING_MASK               =   RING_SIZE - 1
@@ -44,9 +44,9 @@ SZ_MOTOR                =   128         # 2 cache lines
 SZ_DIAG                 =   128         # 2 cache lines
 SZ_EXPORT               =   256         # 4 cache lines
 SZ_RING                 =   SZ_ENTRY * RING_SIZE    # 65536
-SZ_CONFIG               =   512         # IPC_RuntimeConfig (v2.3.3)
-SZ_TOOL_PRESENCE        =   512         # 8 slots × 64 B (v2.4.0)
-SZ_DSP_FILTERED         =   6432        # 32 B header + 8 ch × 200 samples × 4 B (v2.4.0)
+SZ_CONFIG               =   512         # IPC_RuntimeConfig
+SZ_TOOL_PRESENCE        =   512         # 8 slots × 64 B
+SZ_DSP_FILTERED         =   6432        # 32 B header + 8 ch × 200 samples × 4 B
 
 # ══════════════════════════════════════════════════════════════════════
 #  SECTION OFFSETS — sequential in shared memory
@@ -57,10 +57,10 @@ OFF_RING                =   OFF_CTRL + SZ_CTRL                  # 192
 OFF_MOTOR               =   OFF_RING + SZ_RING                  # 65728
 OFF_DIAG                =   OFF_MOTOR + SZ_MOTOR                # 65856
 OFF_EXPORT              =   OFF_DIAG + SZ_DIAG                  # 65984
-OFF_CONFIG              =   OFF_EXPORT + SZ_EXPORT              # 66240 (v2.3.3)
-OFF_TOOL_PRESENCE       =   OFF_CONFIG + SZ_CONFIG              # 66752 (v2.4.0)
-OFF_DSP_FILTERED        =   OFF_TOOL_PRESENCE + SZ_TOOL_PRESENCE # 67264 (v2.4.0)
-SHM_TOTAL               =   OFF_DSP_FILTERED + SZ_DSP_FILTERED   # 73696 (v2.4.0)
+OFF_CONFIG              =   OFF_EXPORT + SZ_EXPORT              # 66240
+OFF_TOOL_PRESENCE       =   OFF_CONFIG + SZ_CONFIG              # 66752
+OFF_DSP_FILTERED        =   OFF_TOOL_PRESENCE + SZ_TOOL_PRESENCE # 67264
+SHM_TOTAL               =   OFF_DSP_FILTERED + SZ_DSP_FILTERED   # 73696
 
 # ══════════════════════════════════════════════════════════════════════
 #  FIELD OFFSETS within IPC_ControlBlock (192 bytes)
@@ -79,7 +79,7 @@ CTRL_STATE              =   8
 CTRL_HEARTBEAT          =   12          # uint64
 CTRL_MOTOR_ACK          =   20          # uint32
 
-# v2.3.4: edit-mode handshake bytes (live in the cache-line 0 reserve region)
+# edit-mode handshake bytes (live in the cache-line 0 reserve region)
 CTRL_EDIT_REQUEST       =   24          # uint8 — TUI -> world
 CTRL_EDIT_ACTIVE        =   25          # uint8 — io  -> TUI
 CTRL_EDIT_DSP_ACK       =   26          # uint8 — dsp -> TUI (ack flag)
@@ -148,7 +148,7 @@ EXPORT_INF_TIME         =   92          # uint32
 EXPORT_UPDATE_SEQ       =   96          # uint32
 
 # ══════════════════════════════════════════════════════════════════════
-#  FIELD OFFSETS within IPC_DspFiltered (v2.4.0)
+#  FIELD OFFSETS within IPC_DspFiltered
 # ══════════════════════════════════════════════════════════════════════
 #  Layout (matches cpcu_ipc.h):
 #    seq(4) + sample_rate_hz(4) + update_us(8) + _pad0(16) = 32 B header
@@ -164,7 +164,7 @@ DSPFILT_NUM_SAMPLES     =   200         # 1 s of envelope @ 200 Hz
 DSPFILT_BYTES_PER_CH    =   DSPFILT_NUM_SAMPLES * 4
 
 # ══════════════════════════════════════════════════════════════════════
-#  FIELD OFFSETS within IPC_ToolPresence slot (v2.4.0)
+#  FIELD OFFSETS within IPC_ToolPresence slot
 # ══════════════════════════════════════════════════════════════════════
 #  Slot layout (64 B):
 #    alive(1) + _pad0(7) + last_heartbeat_us(8) + tool_name[16]
@@ -241,7 +241,7 @@ class IPCBridge:
     def set_dsp_ready(self):        self._w8(OFF_CTRL + CTRL_DSP_READY, 1)
     def read_heartbeat(self):       return self._r64(OFF_CTRL + CTRL_HEARTBEAT)
 
-    # v2.3.4: Edit-mode handshake helpers.
+    # Edit-mode handshake helpers.
     def read_edit_request(self):    return self._r8(OFF_CTRL + CTRL_EDIT_REQUEST)
     def read_edit_active(self):     return self._r8(OFF_CTRL + CTRL_EDIT_ACTIVE)
     def write_edit_request(self, v):
@@ -448,7 +448,7 @@ class IPCBridge:
         self._w32(b + EXPORT_UPDATE_SEQ, seq + 1)
 
     # ══════════════════════════════════════════════════════════════════
-    #  DSP FILTERED BUFFER  ── post-bandpass+notch+envelope (v2.4.0)
+    #  DSP FILTERED BUFFER  ── post-bandpass+notch+envelope
     # ══════════════════════════════════════════════════════════════════
 
     def write_dsp_filtered_window(self, ch_idx, samples_lo, sample_rate_hz=200):

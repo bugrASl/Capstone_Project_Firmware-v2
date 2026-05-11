@@ -1,11 +1,6 @@
 /**
- *  @file       json_testbench.c
- *  @brief      Tests for cpcu_json (v2.4.0)
- *  @author     bugrASl
- *
- *  The tests just emit a few representative JSON shapes and check
- *  by-eye + exact-string comparison. We don't load a JSON parser to
- *  validate (that would be cute but wildly disproportionate).
+ *  @file   json_testbench.c
+ *  @brief  JSON writer test harness — object/array nesting, type serialization.
  */
 
 #include "cpcu_json.h"
@@ -106,7 +101,7 @@ static void t_overflow(void)
 int main(void)
 {
     printf("======================================\n");
-    printf("  TB-JSON — cpcu_json unit tests (v2.4.0)\n");
+    printf("  TB-JSON — cpcu_json unit tests \n");
     printf("======================================\n");
     t_empty_object();
     t_simple_object();
@@ -120,3 +115,4 @@ int main(void)
     printf("======================================\n");
     return g_fail == 0 ? 0 : 1;
 }
+

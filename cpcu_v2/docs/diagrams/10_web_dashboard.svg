@@ -1,0 +1,101 @@
+<svg viewBox="0 0 950 550" xmlns="http://www.w3.org/2000/svg" font-family="Inter,-apple-system,sans-serif">
+<style>text{font-size:11px;fill:#1a1a1a}.title{font-size:18px;font-weight:600}.box{rx:8;stroke-width:1.5}</style>
+
+<text x="475" y="28" text-anchor="middle" class="title">Web Dashboard — Browser-Accessible at http://&lt;pi-ip&gt;:8765</text>
+
+<!-- Browser mockup frame -->
+<rect x="30" y="50" width="890" height="480" rx="10" fill="#fff" stroke="#d1d5db" stroke-width="2"/>
+
+<!-- Browser chrome -->
+<rect x="30" y="50" width="890" height="30" rx="10" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1"/>
+<circle cx="52" cy="65" r="5" fill="#ef4444"/><circle cx="70" cy="65" r="5" fill="#f59e0b"/><circle cx="88" cy="65" r="5" fill="#22c55e"/>
+<rect x="120" y="57" width="300" height="16" rx="4" fill="#fff" stroke="#d1d5db"/>
+<text x="135" y="69" style="font-size:10px;fill:#888">http://raspberrypi.local:8765</text>
+
+<!-- Header -->
+<rect x="30" y="80" width="890" height="35" fill="#fff" stroke-width="0"/>
+<text x="50" y="103" style="font-size:16px;font-weight:600">CPCU Dashboard</text>
+<rect x="200" y="91" width="80" height="20" rx="10" fill="rgba(15,110,86,0.15)"/>
+<text x="240" y="105" text-anchor="middle" style="font-size:11px;fill:#0f6e56;font-weight:500">● connected</text>
+<text x="820" y="105" style="font-size:10px;fill:#888;font-family:monospace">IPC v0x0206 · t=1234.5s</text>
+
+<!-- Tab bar -->
+<rect x="30" y="115" width="890" height="32" fill="#fff"/>
+<line x1="30" y1="146" x2="920" y2="146" stroke="#e5e7eb"/>
+<text x="60" y="136" style="font-size:13px;font-weight:500;fill:#185fa5;border-bottom:2px solid">Overview</text>
+<text x="150" y="136" style="font-size:13px;fill:#888">Waves</text>
+<text x="220" y="136" style="font-size:13px;fill:#888">Spectrum</text>
+<text x="310" y="136" style="font-size:13px;fill:#888">Tools</text>
+<rect x="48" y="144" width="70" height="2" fill="#185fa5"/>
+
+<!-- Overview content -->
+<!-- System card -->
+<rect x="45" y="160" width="410" height="100" rx="6" fill="#fff" stroke="#e5e7eb"/>
+<text x="55" y="178" style="font-size:11px;fill:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:500">SYSTEM</text>
+<text x="55" y="200" style="font-size:11px;fill:#888">state</text><text x="140" y="200" style="font-size:11px;fill:#0f6e56;font-weight:500">running (1)</text>
+<text x="55" y="218" style="font-size:11px;fill:#888">io_ready</text><text x="140" y="218">yes</text>
+<text x="55" y="236" style="font-size:11px;fill:#888">dsp_ready</text><text x="140" y="236">yes</text>
+<text x="55" y="254" style="font-size:11px;fill:#888">io heartbeat</text><text x="140" y="254">45 ms ago</text>
+<text x="250" y="200" style="font-size:11px;fill:#888">edit mode</text><text x="345" y="200" style="font-size:11px;fill:#888">LOCKED</text>
+
+<!-- Gesture card -->
+<rect x="470" y="160" width="445" height="100" rx="6" fill="#fff" stroke="#e5e7eb"/>
+<text x="480" y="178" style="font-size:11px;fill:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:500">CURRENT GESTURE</text>
+<text x="480" y="210" style="font-size:32px;font-weight:500;font-family:monospace">HAND SLOW</text>
+<text x="720" y="210" style="font-size:18px;fill:#888">87 %</text>
+
+<!-- Confidence bars -->
+<text x="480" y="238" style="font-size:10px;fill:#888">class 0</text><rect x="530" y="230" width="120" height="12" rx="3" fill="#e5e7eb"/><rect x="530" y="230" width="6" height="12" rx="3" fill="#185fa5"/>
+<text x="480" y="254" style="font-size:10px;fill:#888">class 1 ◄</text><rect x="530" y="246" width="120" height="12" rx="3" fill="#e5e7eb"/><rect x="530" y="246" width="104" height="12" rx="3" fill="#0f6e56"/>
+
+<!-- Diagnostics grid -->
+<rect x="45" y="275" width="870" height="80" rx="6" fill="#fff" stroke="#e5e7eb"/>
+<text x="55" y="293" style="font-size:11px;fill:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:500">DIAGNOSTICS</text>
+
+<rect x="55" y="302" width="125" height="45" rx="4" fill="#fafafa" stroke="#e5e7eb"/>
+<text x="65" y="316" style="font-size:9px;fill:#888;text-transform:uppercase">RX PACKETS</text>
+<text x="65" y="338" style="font-size:20px;font-weight:500;font-family:monospace">5,432,100</text>
+
+<rect x="190" y="302" width="100" height="45" rx="4" fill="#fafafa" stroke="#e5e7eb"/>
+<text x="200" y="316" style="font-size:9px;fill:#888;text-transform:uppercase">RX DROPPED</text>
+<text x="200" y="338" style="font-size:20px;font-weight:500;font-family:monospace">0</text>
+
+<rect x="300" y="302" width="110" height="45" rx="4" fill="#fafafa" stroke="#e5e7eb"/>
+<text x="310" y="316" style="font-size:9px;fill:#888;text-transform:uppercase">SEQ GAPS</text>
+<text x="310" y="338" style="font-size:20px;font-weight:500;font-family:monospace">3</text>
+
+<rect x="420" y="302" width="115" height="45" rx="4" fill="#fafafa" stroke="#e5e7eb"/>
+<text x="430" y="316" style="font-size:9px;fill:#888;text-transform:uppercase">SAFE ENTRIES</text>
+<text x="430" y="338" style="font-size:20px;font-weight:500;font-family:monospace">0</text>
+
+<rect x="545" y="302" width="120" height="45" rx="4" fill="#fafafa" stroke="#e5e7eb"/>
+<text x="555" y="316" style="font-size:9px;fill:#888;text-transform:uppercase">GRIP STALLS</text>
+<text x="555" y="338" style="font-size:20px;font-weight:500;font-family:monospace">0</text>
+
+<rect x="675" y="302" width="120" height="45" rx="4" fill="#fafafa" stroke="#e5e7eb"/>
+<text x="685" y="316" style="font-size:9px;fill:#888;text-transform:uppercase">DSP MAX µs</text>
+<text x="685" y="338" style="font-size:20px;font-weight:500;font-family:monospace">28,341</text>
+
+<!-- Other tabs description -->
+<rect x="45" y="370" width="870" height="145" rx="8" fill="#f9fafb" stroke="#e5e7eb"/>
+<text x="475" y="392" text-anchor="middle" style="font-size:13px;font-weight:600;fill:#374151">Other Tabs</text>
+
+<rect x="65" y="405" width="260" height="40" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+<text x="75" y="422" style="font-size:12px;font-weight:600;fill:#1d4ed8">Waves</text>
+<text x="75" y="436" style="font-size:10px;fill:#555">8-ch rolling raw + filtered envelopes</text>
+
+<rect x="335" y="405" width="260" height="40" rx="6" fill="#f0fdf4" stroke="#bbf7d0"/>
+<text x="345" y="422" style="font-size:12px;font-weight:600;fill:#166534">Spectrum</text>
+<text x="345" y="436" style="font-size:10px;fill:#555">256-pt FFT + waterfall (browser-side)</text>
+
+<rect x="605" y="405" width="290" height="40" rx="6" fill="#fef3c7" stroke="#fde68a"/>
+<text x="615" y="422" style="font-size:12px;font-weight:600;fill:#92400e">Tools</text>
+<text x="615" y="436" style="font-size:10px;fill:#555">pca_testbench + signal_testbench presence</text>
+
+<text x="65" y="475" style="font-size:10.5px;fill:#555">• Read-only: browsers cannot affect the running system</text>
+<text x="65" y="491" style="font-size:10.5px;fill:#555">• Multi-viewer: up to 16 simultaneous browser clients tested</text>
+<text x="65" y="507" style="font-size:10.5px;fill:#555">• Auto-reconnect with exponential backoff (250 ms → 5 s cap)</text>
+<text x="470" y="475" style="font-size:10.5px;fill:#555">• State frame: 10 Hz JSON broadcast (~1.5 KB/frame)</text>
+<text x="470" y="491" style="font-size:10.5px;fill:#555">• Wave frame: 20 Hz JSON broadcast (~6 KB/frame)</text>
+<text x="470" y="507" style="font-size:10.5px;fill:#555">• Dark/light theme follows prefers-color-scheme</text>
+</svg>

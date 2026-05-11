@@ -1,139 +1,107 @@
 # BSAU — Bio-Signal Acquisition Unit
 
-[![Platform: STM32L432KC](https://img.shields.io/badge/Platform-STM32L432KC-303030.svg)](#hardware)
-[![Toolchain: STM32CubeIDE](https://img.shields.io/badge/Toolchain-STM32CubeIDE-blue.svg)](https://www.st.com/en/development-tools/stm32cubeide.html)
-[![Version: v2.4](https://img.shields.io/badge/Version-v2.4-brightgreen.svg)](#)
-
-**The transmitter half of the prosthetic hand system.** A
-Nucleo-32 STM32L432KC that samples 8 EMG channels at 2 kHz, packs
-them into 32-byte wireless frames, and transmits 1000 packets per
-second over a 2.4 GHz NRF24L01+ link to the CPCU on a Raspberry Pi 5.
-
-> **First time with this repo?** The whole-system walkthrough lives
-> at [`../SYSTEM_GUIDE.md`](../SYSTEM_GUIDE.md). This README is the
-> BSAU-specific quick reference.
+**The transmitter half of the InfiniTech prosthetic hand system.** A battery-powered
+STM32L432KC wearable that captures 8-channel surface EMG, digitizes at 2 kHz, and
+transmits 1000 packets/s to the CPCU over a 2.4 GHz NRF24L01+ radio link.
 
 ---
 
-## What this side does
+## Signal Chain
 
 ```
-PA0..PA7  →  ADC1 (12-bit, 32× OS, 2 kHz scan)  →  DMA double-buffer
-                                                        ↓
-   PB0   →  IN15 (battery, post 2:1 divider) ─────────┐
-                                                        ↓
-                                            BSAU_Run main loop
-                                                        ↓
-                                      WL_Pack (32-byte frame)
-                                                        ↓
-                                NRF24L01+ via SPI1 (5 MHz, 2 Mbps air)
-                                                        ↓
-                                                    CPCU
+  8× Electrode Pair → 8× InAmp (200 V/V) → +1.1V DC bias
+       │
+       ▼
+  STM32L432KC ADC1 (32× oversampling, 2 kHz, DMA circular)
+       │
+       ▼
+  WL_Pack (12-bit codec, 32-byte NRF payload)
+       │
+       ▼
+  NRF24L01+ PTX → 2 Mbps Enhanced ShockBurst → CPCU PRX
 ```
 
-**Key numbers:**
+## Key Numbers
 
-- 8 EMG channels (PA0–PA7) + 1 battery sense (PB0) = 9 channels per scan
-- 2 samples per packet → 1000 pkt/s at 2 kHz scan rate
-- 32× hardware oversampling → ~14.5 ENOB
-- 2 Mbps air rate (was 250 kbps in v1) → 54% radio idle margin
-- 32-byte payload, channel 76, address `E7:E7:E7:E7:E7`
-
----
-
-## Build flavours
-
-BSAU has four compile-time profiles, selected by exactly one
-`#define BSAU_MODE_*` in `Core/Inc/bsau_config.h`:
-
-| Profile | Behaviour |
-|---|---|
-| `BSAU_MODE_RELEASE` | Production. ADC + radio. UART silent. Lowest latency. |
-| `BSAU_MODE_DEBUG`   | ADC + radio + verbose UART logs (LOG_I/W/E/D). Use during bring-up. |
-| `BSAU_MODE_DATASET` | ADC + radio + simultaneous CSV stream over UART. The CSV stream is non-blocking and never starves the radio path; controlled by `BSAU_DATASET_CSV_DECIMATION`. |
-| `BSAU_MODE_TEST_*`  | One of several `BSAU_MODE_TEST_PKT_LOG`, `BSAU_MODE_TEST_NRF`, `BSAU_MODE_TEST_DFT`, `BSAU_MODE_TEST_RAW_FAST`, `BSAU_MODE_TEST_RAW_SLOW` — bring-up testbenches. See `BSAU_TEST_GUIDE.md`. |
-
-To switch: edit `bsau_config.h`, comment out the current
-`#define BSAU_MODE_*`, uncomment the one you want, rebuild, re-flash.
+| Metric | Value |
+|--------|-------|
+| EMG channels | 8 (6 populated on current board) |
+| Sample rate | 2000 Hz per channel |
+| ADC resolution | 12-bit + 32× hardware oversampling (~14.5 ENOB) |
+| Packet rate | 1000 pkt/s |
+| Payload | 32 bytes (8 ch × 2 samples × 12 bits + 8 B metadata) |
+| Battery life | ~66 hours (500 mAh @ 7.58 mA) |
+| Radio | 2.4 GHz, 2 Mbps, CRC-16, auto-ACK, 15 retries |
 
 ---
 
-## v2.4 — NRF init non-fatal
+## Firmware Profiles
 
-**The big v2.4 change.** Pre-v2.4, a failed `NRF_Init()` (radio
-unreachable, brownout, dead chip) called `Error_Handler()` — which
-disables interrupts and spins forever. Result: a bad-rail or dead-NRF
-board would lock up at boot, even though the ADC was fine and the UART
-was fine.
+Set in `bsau_config.h`:
 
-v2.4 introduces a `g_nrf_alive` flag and three file-local helpers:
-
-| Helper | Role |
-|---|---|
-| `nrf_bringup()`     | Bounded-retry `NRF_Init`. Updates `g_nrf_alive`. |
-| `nrf_try_recover()` | Cold recovery: drain FIFOs → power-cycle → bringup. |
-| `nrf_is_healthy()`  | Sanity-check via `RF_CH` / `CONFIG` register read-back. |
-
-The TX path is gated by `if (g_nrf_alive)` — uniform across all four
-profiles, so DATASET, RELEASE, and DEBUG all behave identically when
-the radio is dead. Every `NRF_HEALTH_CHECK_INTERVAL = 500` packets,
-`BSAU_Run` calls `nrf_is_healthy()`; if it fails, `nrf_try_recover()`
-fires once. After a successful recovery, `prev_loss` and `prev_retry`
-are zeroed so stale `OBSERVE_TX` values don't leak into the first new
-packet.
-
-**End user effect:** a board with a sagging radio rail boots, keeps
-ADC + UART alive (and the DATASET CSV stream flowing), and picks up
-the radio link as soon as it becomes reachable.
-
-Full design doc: [`docs/BSAU_ARCHITECTURE.md` §7](docs/BSAU_ARCHITECTURE.md).
+| Profile | Purpose |
+|---------|---------|
+| `BSAU_MODE_RELEASE` | Normal operation — TX only, no UART |
+| `BSAU_MODE_DEBUG` | TX + UART debug prints |
+| `BSAU_MODE_DATASET` | TX + UART CSV output for ML training data capture |
+| `BSAU_MODE_TEST` | Hardware self-test suite (ADC, NRF, SPI, GPIO) |
 
 ---
 
-## Build & flash
+## Packet Format (32 bytes)
 
-Open `InfiniTech_BSAU_Skeleton_v1.0.ioc` in STM32CubeIDE. Build / Run
-buttons handle everything (ST-Link auto-detected over the on-board
-USB connector of the Nucleo-32).
+| Field | Bytes | Description |
+|-------|-------|-------------|
+| Samples | 24 | 8 channels × 2 samples × 12 bits (packed) |
+| Sequence | 1 | 0–255 rolling counter |
+| Flags | 1 | Bit 0: FIRST_PACKET (cold-start sync) |
+| TX retries | 1 | NRF auto-retransmit count |
+| Loss counter | 1 | Cumulative packet loss estimate |
+| Timestamp | 2 | TIM6 capture (µs resolution) |
+| Battery voltage | 2 | Raw 12-bit ADC (PB0, 2:1 divider) |
 
-Wireless packet format (shared with CPCU verbatim — same .c source
-file is linked into both binaries):
+Codec shared with CPCU: `wireless_packet.h` / `wireless_packet.c`.
+
+---
+
+## NRF Recovery
+
+NRF initialization is **non-fatal**. If the radio module fails at startup,
+the MCU continues sampling and retries every 3 seconds via `nrf_try_recover()`.
+This prevents a marginal power rail from bricking the entire acquisition chain.
+
+`WL_FLAG_FIRST_PACKET` is set on the first packet after any NRF init/recovery,
+enabling the CPCU to re-synchronize its sequence counter without declaring a gap fault.
+
+---
+
+## Hardware
+
+| Component | Part | Interface |
+|-----------|------|-----------|
+| MCU | STM32L432KC (Nucleo-L432KC) | — |
+| Radio | NRF24L01+ | SPI1 @ 5 MHz |
+| Power | 2S LiPo (7.4 V nominal) | LM7805 +5 V, LM1117 +3.3 V, LM7905 −5 V |
+| Analog front-end | 8× TL074 op-amp channels | Gain 200 V/V, DC bias +1.1 V |
+
+---
+
+## File Map
 
 ```
-Byte    Field       Size    Description
-[0]     seq         1 B     Sequence number (0–255, wraps)
-[1]     flags       1 B     Status flags + 2-bit battery level
-[2]     tx_retry    1 B     NRF ARC_CNT (from previous TX)
-[3]     pkt_loss    1 B     NRF PLOS_CNT (cumulative, saturates at 15)
-[4–5]   timestamp   2 B     TIM2 µs counter, little-endian
-[6–7]   vbat_raw    2 B     12-bit battery ADC (high-nibble aligned)
-[8–19]  sample[0]   12 B    8 channels × 12-bit packed
-[20–31] sample[1]   12 B    8 channels × 12-bit packed
+bsau_v2/
+├── Core/Src/
+│   ├── main.c              ← Entry point, HAL init, profile dispatch
+│   ├── bsau_app.c          ← Application layer (sampling, TX, LED)
+│   ├── bsau_adc.c          ← ADC + DMA driver
+│   ├── bsau_test.c         ← Hardware self-test suite
+│   ├── nrf24l01.c          ← NRF24L01+ SPI driver
+│   └── nrf24l01_test.c     ← NRF register validation
+├── Core/Inc/
+│   ├── bsau_app.h, bsau_adc.h, bsau_config.h, bsau_test.h
+│   ├── nrf24l01.h, nrf24l01_test.h, main.h, log.h
+│   └── (STM32 HAL headers)
+└── README.md
 ```
 
-Flag bits: `FIRST_PACKET`, `CLIPPING`, `ELEC_OFF`, `ADC_OVRN`,
-`TX_SAT`, `CAL` + 2-bit battery level (`OK / LOW / CRIT / CHARG`).
-
----
-
-## Documentation
-
-- **[`docs/BSAU_ARCHITECTURE.md`](docs/BSAU_ARCHITECTURE.md)** (v2.4)
-  — every BSAU design decision: ADC pipeline, DMA double-buffer
-  strategy, NRF non-fatal init flow, packet format derivation, profile
-  matrix.
-- **[`docs/BSAU_RUN_GUIDE.md`](docs/BSAU_RUN_GUIDE.md)** (v2.4) —
-  bring-up, profile selection, DATASET workflow, troubleshooting.
-- **[`docs/BSAU_TEST_GUIDE.md`](docs/BSAU_TEST_GUIDE.md)** (v2.4) —
-  TB-100..TB-309 procedures + Part B testbench reference.
-
-For the whole-system walkthrough (both BSAU and CPCU together):
-[`../SYSTEM_GUIDE.md`](../SYSTEM_GUIDE.md).
-For the receiver side: [`../cpcu_v2/README.md`](../cpcu_v2/README.md).
-
----
-
-## License
-
-Part of the InfiniTech Prosthetic Hand project. MIT — see
-[`../LICENSE`](../LICENSE).
+Build with STM32CubeIDE. Flash via ST-Link or drag-and-drop to the Nucleo mass storage.

@@ -1,0 +1,108 @@
+<svg viewBox="0 0 1000 580" xmlns="http://www.w3.org/2000/svg" font-family="Inter, -apple-system, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#555"/></marker>
+  </defs>
+  <style>
+    text { font-size: 12px; fill: #1a1a1a; }
+    .title { font-size: 18px; font-weight: 600; }
+    .state { rx: 12; stroke-width: 2; }
+    .label { font-size: 13px; font-weight: 600; text-anchor: middle; }
+    .edge { stroke: #555; stroke-width: 1.5; fill: none; marker-end: url(#a); }
+    .edgelbl { font-size: 10px; fill: #555; }
+    .fault-box { rx: 6; fill: #fef2f2; stroke: #ef4444; stroke-width: 1; }
+    .fault-txt { font-size: 11px; fill: #991b1b; }
+    .ok-box { rx: 6; fill: #f0fdf4; stroke: #22c55e; stroke-width: 1; }
+  </style>
+
+  <text x="500" y="30" text-anchor="middle" class="title">Safety Monitor — Radio FSM + 7 Fault Sources</text>
+
+  <!-- FSM States -->
+  <rect x="80" y="80" width="120" height="50" class="state" fill="#e0e7ff" stroke="#6366f1"/>
+  <text x="140" y="110" class="label" style="fill:#4338ca">INIT</text>
+
+  <rect x="280" y="80" width="140" height="50" class="state" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="350" y="110" class="label" style="fill:#15803d">RUNNING</text>
+
+  <rect x="500" y="80" width="140" height="50" class="state" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="570" y="110" class="label" style="fill:#854d0e">DEGRADED</text>
+
+  <rect x="500" y="180" width="140" height="50" class="state" fill="#fef3c7" stroke="#d97706"/>
+  <text x="570" y="210" class="label" style="fill:#92400e">RECOVERING</text>
+
+  <rect x="740" y="80" width="120" height="50" class="state" fill="#fee2e2" stroke="#ef4444"/>
+  <text x="800" y="110" class="label" style="fill:#dc2626">SAFE</text>
+
+  <!-- FSM Edges -->
+  <line x1="200" y1="105" x2="278" y2="105" class="edge"/>
+  <text x="239" y="97" class="edgelbl">1st packet</text>
+
+  <line x1="420" y1="105" x2="498" y2="105" class="edge"/>
+  <text x="459" y="97" class="edgelbl">750 ms silence</text>
+
+  <line x1="640" y1="105" x2="738" y2="105" class="edge"/>
+  <text x="689" y="97" class="edgelbl">1500 ms total</text>
+
+  <path d="M570,130 L570,178" class="edge"/>
+  <text x="580" y="160" class="edgelbl">pkt arrives</text>
+
+  <path d="M500,205 Q350,205 350,132" class="edge"/>
+  <text x="400" y="195" class="edgelbl">10 good pkts</text>
+
+  <!-- 5s boot grace -->
+  <rect x="60" y="160" width="180" height="40" rx="6" fill="#ecfdf5" stroke="#10b981"/>
+  <text x="150" y="177" text-anchor="middle" style="font-size:11px; fill:#065f46; font-weight:500">5 s boot grace</text>
+  <text x="150" y="192" text-anchor="middle" style="font-size:9.5px; fill:#065f46">Radio timeout suppressed until 1st pkt or 5 s</text>
+
+  <!-- SAFE auto-recovery -->
+  <path d="M800,130 Q800,250 420,250 Q350,250 350,132" class="edge" stroke-dasharray="4,3"/>
+  <text x="620" y="265" class="edgelbl">SAFE → RUNNING: 3 s clear + all faults resolved</text>
+
+  <!-- 7 Fault Sources -->
+  <text x="500" y="320" text-anchor="middle" style="font-size: 14px; font-weight: 600;">7 Fault Sources → SAFETY_CheckSystem()</text>
+
+  <rect x="30" y="345" width="130" height="55" class="fault-box"/>
+  <text x="95" y="365" text-anchor="middle" class="fault-txt" style="font-weight:600">Radio</text>
+  <text x="95" y="380" text-anchor="middle" class="fault-txt">750 ms silence</text>
+  <text x="95" y="393" text-anchor="middle" style="font-size:9px; fill:#666">→ 10 good pkts</text>
+
+  <rect x="170" y="345" width="130" height="55" class="fault-box"/>
+  <text x="235" y="365" text-anchor="middle" class="fault-txt" style="font-weight:600">Battery</text>
+  <text x="235" y="380" text-anchor="middle" class="fault-txt">V ≤ 2.7 critical</text>
+  <text x="235" y="393" text-anchor="middle" style="font-size:9px; fill:#666">→ V ≥ 3.0</text>
+
+  <rect x="310" y="345" width="130" height="55" class="fault-box"/>
+  <text x="375" y="365" text-anchor="middle" class="fault-txt" style="font-weight:600">DSP Stall</text>
+  <text x="375" y="380" text-anchor="middle" class="fault-txt">No cmd 2000 ms</text>
+  <text x="375" y="393" text-anchor="middle" style="font-size:9px; fill:#666">→ next command</text>
+
+  <rect x="450" y="345" width="130" height="55" class="fault-box"/>
+  <text x="515" y="365" text-anchor="middle" class="fault-txt" style="font-weight:600">I²C Bus</text>
+  <text x="515" y="380" text-anchor="middle" class="fault-txt">5 consecutive fail</text>
+  <text x="515" y="393" text-anchor="middle" style="font-size:9px; fill:#666">→ next success</text>
+
+  <rect x="590" y="345" width="130" height="55" class="fault-box"/>
+  <text x="655" y="365" text-anchor="middle" class="fault-txt" style="font-weight:600">Thermal</text>
+  <text x="655" y="380" text-anchor="middle" class="fault-txt">CPU > 82°C</text>
+  <text x="655" y="393" text-anchor="middle" style="font-size:9px; fill:#666">→ CPU < 70°C</text>
+
+  <rect x="730" y="345" width="130" height="55" class="fault-box"/>
+  <text x="795" y="365" text-anchor="middle" class="fault-txt" style="font-weight:600">Ring Overflow</text>
+  <text x="795" y="380" text-anchor="middle" class="fault-txt">100 Δ overflows</text>
+  <text x="795" y="393" text-anchor="middle" style="font-size:9px; fill:#666">→ 5 s quiescence</text>
+
+  <rect x="870" y="345" width="120" height="55" class="fault-box"/>
+  <text x="930" y="365" text-anchor="middle" class="fault-txt" style="font-weight:600">NRF HW</text>
+  <text x="930" y="380" text-anchor="middle" class="fault-txt">SPI mismatch</text>
+  <text x="930" y="393" text-anchor="middle" style="font-size:9px; fill:#666">→ re-init OK</text>
+
+  <!-- Result -->
+  <rect x="300" y="430" width="180" height="40" class="ok-box"/>
+  <text x="390" y="455" text-anchor="middle" style="font-size:12px; fill:#166534; font-weight:600">All OK → Servos active</text>
+
+  <rect x="530" y="430" width="180" height="40" class="fault-box"/>
+  <text x="620" y="455" text-anchor="middle" style="font-size:12px; fill:#991b1b; font-weight:600">Any fail → Servos neutral</text>
+
+  <!-- Auto-clear -->
+  <text x="500" y="510" text-anchor="middle" style="font-size:11px; fill:#666">Diagnostic counters auto-clear after 300 s of no new faults.</text>
+  <text x="500" y="528" text-anchor="middle" style="font-size:11px; fill:#666">SAFE entry counter incremented on each RUNNING→SAFE transition. Clears on reboot.</text>
+</svg>

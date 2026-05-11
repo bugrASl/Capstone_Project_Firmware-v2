@@ -1,24 +1,6 @@
 /**
- *  @file       bsau_test.c
- *  @brief      BSAU hardware test module — implementation
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details    All five test-mode entry points live here. Selection is
- *              driven by the BSAU_MODE_TEST_* define in bsau_config.h;
- *              bsau_app.c delegates Init and Run to this file when any
- *              of those modes is active. RELEASE / DEBUG / DATASET do
- *              NOT delegate here.
- *
- *              v2.1 changes:
- *                  - Style polish: 98-char banners, Allman throughout,
- *                    column alignment, @version 2.1 / @date April 2026.
- *                  - No semantic changes to any of the test logic — the
- *                    packet-codec, ADC-stream, DFT, CSV-collect and NRF
- *                    harness paths are all preserved byte-for-byte in
- *                    behavior. v2.1 packet-format fields (tx_retry,
- *                    pkt_loss, timestamp, vbat_raw) and the 2-bit BATT
- *                    level were already integrated in v2.0 of this file.
+ *  @file   bsau_test.c
+ *  @brief  BSAU hardware test suite — ADC, NRF, SPI, GPIO self-tests.
  */
 
 #include "bsau_test.h"
@@ -203,7 +185,7 @@ static void test_adc_stream_send(void)
 {
     /*
      *  Frame format: [seq_lo][seq_hi] + [ADC_DMA_BUF_SIZE × uint16 LE]
-     *  v2.1: Total = 2 + 36 = 38 bytes (9 ch × 2 samp × 2 B = 36).
+     *  Total = 2 + 36 = 38 bytes (9 ch × 2 samp × 2 B = 36).
      */
     uint8_t frame[2 + ADC_DMA_BUF_SIZE * sizeof(uint16_t)];
 
@@ -962,3 +944,4 @@ void BSAU_Test_Run(void)
 }
 
 /*==============================================================================================*/
+

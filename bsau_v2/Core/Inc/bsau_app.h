@@ -1,23 +1,6 @@
 /**
- *  @file       bsau_app.h
- *  @brief      BSAU application module — public interface and master configuration
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details
- *              Exposes exactly two functions called from main.c USER CODE
- *              sections. In test mode, BSAU_Init() and BSAU_Run() delegate
- *              internally to the test harness via #if guards in bsau_app.c —
- *              main.c itself never changes.
- *
- *              v2.1 changes:
- *                  - 8 EMG channels (PA0-PA7, IN5-IN12) + 1 battery (PB0, IN15)
- *                    = 9 total per scan.
- *                  - 2 samples per packet (was 3) → 1000 pkt/s at 2 kHz.
- *                  - 32× oversampling (was 4×) → ~14.5 ENOB.
- *                  - 2 Mbps air rate (was 250 kbps) → 54 % radio idle.
- *                  - Packet format bumped to v2.1 (adds timestamp + vbat_raw
- *                    + tx_retry + pkt_loss; see wireless_packet.h).
+ *  @file   bsau_app.h
+ *  @brief  BSAU application API — init, main loop entry, profile-specific callbacks.
  */
 
 #ifndef BSAU_APP_H
@@ -94,3 +77,4 @@ void    BSAU_Run   (void);
 #endif
 
 #endif /* BSAU_APP_H */
+

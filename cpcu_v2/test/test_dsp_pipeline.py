@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 test_dsp_pipeline.py — DSP pipeline validation against cpcu_dsp.py
-                       v2.3 (April 2026).
+                       Current version.
 
 @author bugrASl
 
@@ -30,25 +30,25 @@ What this test covers:
        WINDOW_SAMPLES_HI=400, NUM_SERVOS=6.
 
 History:
-    v2.3 (April 2026) — Replaces the v2.0 test which imported from a
+    Replaces the legacy test which imported from a
     long-removed `get_features` API and expected a 7-feature vector
     [mav, rms, wl, zc, ssc, var, log_det]. The team's training pipeline
     settled on 4 features [rms, var, wl, env_mean] (see feature_ex.py
     in their training repo); this test was not updated for that change
-    until v2.3. The legacy test is preserved alongside this file as
-    test_dsp_pipeline.py.legacy_v2.0 for reference.
+    until now. The legacy test is preserved alongside this file as
+    test_dsp_pipeline_legacy for for reference.
 """
 
 import os
 import sys
 import numpy as np
 
-# Add the directory holding cpcu_dsp.py to import path. v2.7 moved Python
+# Add the directory holding cpcu_dsp.py to import path. The restructure moved Python
 # modules from scripts/ to python/; we add both so this test works on
 # either layout.
 HERE                =   os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', 'python'))    # v2.7 layout
-sys.path.insert(0, os.path.join(HERE, '..', 'scripts'))   # v2.6 fallback
+sys.path.insert(0, os.path.join(HERE, '..', 'python'))    # current layout
+sys.path.insert(0, os.path.join(HERE, '..', 'scripts'))   # legacy fallback
 
 g_pass              =   0
 g_fail              =   0
@@ -333,7 +333,7 @@ def test_constants():
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  TB-DSP11 — Velocity-mode runtime config loader (v2.3.5)
+#  TB-DSP11 — Velocity-mode runtime config loader
 # ══════════════════════════════════════════════════════════════════════
 
 def test_runtime_config_loader_defaults():
@@ -497,13 +497,13 @@ def test_runtime_config_jsonc_comments():
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  TB-DSP17 — Soft-grip clamp (v2.3.7)
+#  TB-DSP17 — Soft-grip clamp
 # ══════════════════════════════════════════════════════════════════════
 
 def test_grip_firm_us_loaded():
     """grip_firm_us is parsed from runtime.json into the loader's
     5th return value, defaulting to 1100 when absent or invalid."""
-    print("\n--- TB-DSP17: grip_firm_us loader (v2.3.7) ---")
+    print("\n--- TB-DSP17: grip_firm_us loader ---")
     import cpcu_dsp, tempfile, os
 
     # Default when absent
@@ -565,7 +565,7 @@ def test_grip_firm_us_loaded():
 
 def main():
     print("=" * 60)
-    print("  TB-DSP — cpcu_dsp.py pipeline validation (v2.3.7)")
+    print("  TB-DSP — cpcu_dsp.py pipeline validation")
     print("=" * 60)
 
     test_api_surface()

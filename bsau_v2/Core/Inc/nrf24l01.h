@@ -1,27 +1,6 @@
 /**
- *  @file       nrf24l01.h
- *  @brief      Unified NRF24L01+ driver for STM32 HAL — TX and RX roles
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details
- *              Single driver serving both sides of the InfiniTech wireless link:
- *
- *                  BSAU (STM32L432KC) — Transmitter:   #define NRF_ROLE_TX
- *                  CPCU (STM32H755ZI) — Receiver:      #define NRF_ROLE_RX
- *
- *              Exactly one role must be defined BEFORE including this header.
- *              Common code (SPI access, pin control, register map, init)
- *              is always compiled; TX-only and RX-only sections use #if
- *              to keep flash usage tight on resource-constrained parts.
- *
- *              v2.1 changes:
- *                  - RF_SETUP: 250 kbps → 2 Mbps (RF_DR_HIGH instead of RF_DR_LOW)
- *                  - SETUP_RETR: ARD 1500 µs → 500 µs (0x5F → 0x1F)
- *                  - TX timeout: 75 ms → 20 ms (worst case at 2 Mbps = 12.1 ms)
- *                  - CE pulse in NRF_Transmit now uses DWT->CYCCNT for a
- *                    calibrated µs delay (was a volatile-loop ~5-7 µs, below
- *                    datasheet minimum Tpece2csn ≥ 10 µs)
+ *  @file   nrf24l01.h
+ *  @brief  NRF24L01+ STM32 HAL driver API — register map, init, TX/RX, status.
  */
 
 #ifndef NRF24L01_H
@@ -195,3 +174,4 @@ void        NRF_GetTxStats      (NRF_Handle *hnrf, uint8_t *lost_pkts, uint8_t *
 #endif
 
 #endif /* NRF24L01_H */
+

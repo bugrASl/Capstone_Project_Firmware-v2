@@ -1,0 +1,93 @@
+<svg viewBox="0 0 1000 480" xmlns="http://www.w3.org/2000/svg" font-family="Inter, -apple-system, sans-serif">
+  <defs>
+    <marker id="a2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#16a34a"/></marker>
+  </defs>
+  <style>
+    text { font-size: 12px; fill: #1a1a1a; }
+    .title { font-size: 18px; font-weight: 600; }
+    .stage { rx: 8; fill: #f0fdf4; stroke: #16a34a; stroke-width: 1.5; }
+    .slbl { font-size: 11px; font-weight: 600; fill: #166534; text-anchor: middle; }
+    .sdet { font-size: 9.5px; fill: #555; text-anchor: middle; }
+    .pipe { stroke: #16a34a; stroke-width: 2; fill: none; marker-end: url(#a2); }
+  </style>
+
+  <text x="500" y="30" text-anchor="middle" class="title">DSP / ML Pipeline — Cores 1–2 (Python, SCHED_FIFO 80)</text>
+
+  <!-- Stage boxes -->
+  <rect x="20" y="60" width="110" height="65" class="stage"/>
+  <text x="75" y="82" class="slbl">Ring Pop</text>
+  <text x="75" y="96" class="sdet">pop_sensor_batch</text>
+  <text x="75" y="108" class="sdet">max=100 entries</text>
+
+  <rect x="150" y="60" width="110" height="65" class="stage"/>
+  <text x="205" y="82" class="slbl">ADC → Volts</text>
+  <text x="205" y="96" class="sdet">raw × 3.3/4095</text>
+  <text x="205" y="108" class="sdet">− 1.65 V bias</text>
+
+  <rect x="280" y="60" width="110" height="65" class="stage"/>
+  <text x="335" y="82" class="slbl">Bandpass</text>
+  <text x="335" y="96" class="sdet">20–450 Hz</text>
+  <text x="335" y="108" class="sdet">4th Butterworth</text>
+
+  <rect x="410" y="60" width="110" height="65" class="stage"/>
+  <text x="465" y="82" class="slbl">Notch</text>
+  <text x="465" y="96" class="sdet">50 Hz</text>
+  <text x="465" y="108" class="sdet">Q = 30</text>
+
+  <rect x="540" y="60" width="110" height="65" class="stage"/>
+  <text x="595" y="82" class="slbl">Window</text>
+  <text x="595" y="96" class="sdet">200 ms sliding</text>
+  <text x="595" y="108" class="sdet">50 ms stride</text>
+
+  <rect x="670" y="60" width="110" height="65" class="stage"/>
+  <text x="725" y="82" class="slbl">Features</text>
+  <text x="725" y="96" class="sdet">7 feat × N ch</text>
+  <text x="725" y="108" class="sdet">MAV RMS WL ZC...</text>
+
+  <rect x="800" y="60" width="110" height="65" class="stage"/>
+  <text x="855" y="82" class="slbl">Classify</text>
+  <text x="855" y="96" class="sdet">StandardScaler</text>
+  <text x="855" y="108" class="sdet">RF 100 trees</text>
+
+  <!-- Arrows -->
+  <line x1="130" y1="92" x2="148" y2="92" class="pipe"/>
+  <line x1="260" y1="92" x2="278" y2="92" class="pipe"/>
+  <line x1="390" y1="92" x2="408" y2="92" class="pipe"/>
+  <line x1="520" y1="92" x2="538" y2="92" class="pipe"/>
+  <line x1="650" y1="92" x2="668" y2="92" class="pipe"/>
+  <line x1="780" y1="92" x2="798" y2="92" class="pipe"/>
+
+  <!-- Velocity integration section -->
+  <rect x="150" y="170" width="760" height="100" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="530" y="192" text-anchor="middle" style="font-size:14px; font-weight:600; fill:#1e40af">Velocity-Mode Integration (per inference tick ~10 Hz)</text>
+
+  <text x="170" y="218" style="font-size:11px; fill:#1e3a5f; font-family:monospace">target[s] += rate[s] × dt × confidence_scale</text>
+
+  <text x="170" y="242" style="font-size:10.5px; fill:#374151">• Confidence below 40% → scale = 0 (freeze)</text>
+  <text x="170" y="256" style="font-size:10.5px; fill:#374151">• Confidence above 85% → scale = 1 (full speed)</text>
+  <text x="170" y="270" style="font-size:10.5px; fill:#374151">• Between → linear interpolation</text>
+
+  <text x="560" y="242" style="font-size:10.5px; fill:#374151">• "rest" class → snap to neutral (freeze)</text>
+  <text x="560" y="256" style="font-size:10.5px; fill:#374151">• Gripper clamped at grip_firm_us (soft-grip policy)</text>
+  <text x="560" y="270" style="font-size:10.5px; fill:#374151">• Per-servo rates configurable in runtime.json</text>
+
+  <line x1="855" y1="125" x2="855" y2="168" class="pipe"/>
+
+  <!-- Output -->
+  <rect x="300" y="300" width="400" height="50" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="500" y="322" text-anchor="middle" style="font-size:13px; font-weight:600; fill:#166534">SeqLock Write → IPC_MotorCommand</text>
+  <text x="500" y="338" text-anchor="middle" style="font-size:10.5px; fill:#374151">servo_us[6] + gesture_id + confidence → cpcu_io reads at 50 Hz</text>
+  <line x1="530" y1="270" x2="530" y2="298" class="pipe"/>
+
+  <!-- Timing -->
+  <rect x="50" y="380" width="900" height="80" rx="8" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="500" y="402" text-anchor="middle" style="font-size:13px; font-weight:600; fill:#374151">Timing Budget</text>
+  <text x="170" y="425" text-anchor="middle" style="font-size:11px; fill:#555">Inference period: 100 ms</text>
+  <text x="170" y="442" text-anchor="middle" style="font-size:11px; fill:#555">Typical time: ~30 ms</text>
+  <text x="400" y="425" text-anchor="middle" style="font-size:11px; fill:#555">Headroom: 70% (GC disabled)</text>
+  <text x="400" y="442" text-anchor="middle" style="font-size:11px; fill:#555">Ring depth: 1024 ms buffer</text>
+  <text x="650" y="425" text-anchor="middle" style="font-size:11px; fill:#555">Model: RF 100 trees, depth 10</text>
+  <text x="650" y="442" text-anchor="middle" style="font-size:11px; fill:#555">Input: 7 features × N channels</text>
+  <text x="850" y="425" text-anchor="middle" style="font-size:11px; fill:#555">Output: 10 classes</text>
+  <text x="850" y="442" text-anchor="middle" style="font-size:11px; fill:#555">Deploy: joblib pkl</text>
+</svg>

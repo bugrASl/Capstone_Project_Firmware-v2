@@ -1,25 +1,14 @@
 /**
- *  @file       cpcu_smooth.c
- *  @brief      Per-servo trapezoidal motion profile smoother.
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.2
+ *  @file   cpcu_smooth.c
+ *  @brief  Per-servo trapezoidal motion smoother with hold-pose deadband.
  *
- *  v2.2 (2026-05, CPCU v2.3.8):
- *      - Fixed end-of-travel spike. The position integrator was using
- *        plain Euler (pos += new_vel * dt), which under-counts distance
- *        during decel, causing the decel_dist check to oscillate between
- *        decel and accel phases near the target — then overshoot and snap.
- *        Switched to trapezoidal integration (average of old and new
- *        velocity), which makes the discrete decel distance match the
- *        continuous v²/(2a) formula exactly. No more spike.
+ *  Converts step-function motor commands into smooth trapezoidal profiles
+ *  (acceleration-limited ramp to velocity, then deceleration to target).
+ *  Hold-pose deadband suppresses redundant PCA writes when a servo has
+ *  settled, eliminating static jitter from the servo's internal P controller.
  *
- *  v2.1 (2026-04, CPCU v2.3.2):
- *      - Hold-pose deadband. SMOOTH_ShouldWrite() and SMOOTH_MarkWritten()
- *        added; cpcu_io.c gates PCA writes on ShouldWrite. Prevents the
- *        "1 µs jitter loop" where a settled servo's internal controller
- *        was being re-triggered by every 50 Hz refresh.
- *        See cpcu_v2/docs/JITTER_MITIGATION.md.
+ *  Gravity compensation biases velocity asymmetrically for weight-bearing
+ *  joints (faster when fighting gravity, slower when assisted).
  */
 
 #include "cpcu_smooth.h"
@@ -42,14 +31,14 @@ void SMOOTH_Init(SMOOTH_Context *ctx, uint16_t start_us)
         ctx->enabled[i]          = true;
         ctx->settled[i]          = true;
 
-        /* v2.1 deadband state. start_us has not been written yet
+        /* deadband state. start_us has not been written yet
          * — ever_written stays false until cpcu_io confirms the
          * first PCA write via SMOOTH_MarkWritten. */
         ctx->hold_deadband_us[i] = SMOOTH_DEFAULT_DEADBAND;
         ctx->last_written_us[i]  = 0;
         ctx->ever_written[i]     = false;
 
-        /* v2.2 gravity compensation — disabled by default */
+        /* gravity compensation — disabled by default */
         ctx->gravity_dir[i]      = 0;
         ctx->gravity_scale[i]    = 1.0f;
     }
@@ -156,7 +145,7 @@ void SMOOTH_Update(SMOOTH_Context *ctx, uint32_t dt_us)
         float a        = (float)ctx->max_accel[i];
         float v_max    = (float)ctx->max_velocity[i];
 
-        /* v2.2: gravity compensation. When moving in the gravity-assisted
+        /* gravity compensation. When moving in the gravity-assisted
          * direction, reduce max velocity so the smoother commands a slower
          * trajectory. The servo's internal PID can then track without the
          * arm weight causing overshoot. */
@@ -266,7 +255,7 @@ bool SMOOTH_AllSettled(const SMOOTH_Context *ctx)
     return true;
 }
 
-/*============= v2.1 DEADBAND ==============================================*/
+/*============= DEADBAND ==============================================*/
 /*
  *  Three-rule logic in SMOOTH_ShouldWrite:
  *
@@ -286,7 +275,7 @@ bool SMOOTH_AllSettled(const SMOOTH_Context *ctx)
  *  PWM signal -> no re-trigger.
  *
  *  When deadband_us == 0 the channel always writes (deadband disabled,
- *  pre-v2.1 behaviour).
+ *  legacy behaviour).
  */
 
 void SMOOTH_SetDeadband(SMOOTH_Context *ctx, int channel, uint16_t deadband_us)
@@ -320,3 +309,4 @@ void SMOOTH_MarkWritten(SMOOTH_Context *ctx, int channel, uint16_t written_us)
     ctx->last_written_us[channel] = written_us;
     ctx->ever_written[channel]    = true;
 }
+

@@ -1,27 +1,6 @@
 /**
- *  @file       cpcu_tui.h
- *  @brief      Shared header for the cpcu_tui multi-file build (v3.4).
- *  @author     bugrASl
- *  @date       April 2026
- *
- *  v3.4 split layout:
- *      cpcu_tui.c          main(), key dispatch, splash, boot, demo_full_reset
- *      cpcu_tui_render.c   drawing primitives, helpers, all draw_page_*,
- *                          draw_header, draw_footer, layout_update,
- *                          waveform line-trace renderer
- *      cpcu_tui_data.c     demo state machine (init / push / tick),
- *                          dataset capture state machine, waveform
- *                          ring-buffer maintenance
- *
- *  All cross-file shared state is declared here as extern and defined in
- *  exactly one .c file (the one that conceptually owns it). Module-private
- *  state stays inside its owning .c with file-scope `static`.
- *
- *  Owners:
- *      cpcu_tui.c          g_run, current_page, demo_mode, show_splash
- *      cpcu_tui_render.c   g_term_w/h, g_tui_w, g_col_r, g_bar_w, g_slider_w
- *      cpcu_tui_data.c     wave_sel_ch, wave_detail, ds_state, ds_mode,
- *                          ds_label_idx, ds_path, ds_samples, demo_*
+ *  @file   cpcu_tui.h
+ *  @brief  TUI shared header — page IDs, layout globals, render/data prototypes.
  */
 
 #ifndef CPCU_TUI_H
@@ -209,3 +188,4 @@ void          draw_waveform           (int row, int col, int width, int height,
                                        int ch_idx, int color_pair);
 
 #endif /* CPCU_TUI_H */
+

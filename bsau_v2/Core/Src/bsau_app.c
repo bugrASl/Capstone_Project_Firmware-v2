@@ -1,67 +1,12 @@
 /**
- *  @file       bsau_app.c
- *  @brief      BSAU application module — implementation
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.4
- *  @details
- *                          What this file owns
- *              ────────────────────────────────────────────────────────────────
- *              BSAU_Init()     NVIC sanity, TIM2 timestamp counter, NRF init
- *                              with retry, ADC pipeline bring-up.
- *                              v2.4: NRF init failure is no longer fatal —
- *                              the chip is marked offline, the system boots
- *                              anyway, and the periodic health check in
- *                              BSAU_Run brings the radio up as soon as it
- *                              becomes reachable.
- *              BSAU_Run()      WFI -> WL_Packet fill (v2.1 format) -> WL_Pack
- *                              -> NRF_Transmit. Optional per-packet CSV emit
- *                              in DATASET mode, optional decimated CSV emit
- *                              in DEBUG mode. The radio path is gated by
- *                              g_nrf_alive: if the chip is dead, packets
- *                              are still assembled (so DATASET CSV keeps
- *                              flowing) but TX is skipped until recovery.
+ *  @file   bsau_app.c
+ *  @brief  BSAU application layer — ADC sampling, NRF transmission, LED status.
  *
- *                          v2.4 changes (April 2026)
- *              ────────────────────────────────────────────────────────────────
- *              1.  Non-fatal NRF init. Previous behaviour was to call
- *                  Error_Handler() (which __disable_irq + while(1)) when all
- *                  init retries failed. The system now keeps running and
- *                  retries the chip from BSAU_Run's existing health check
- *                  loop, so a board that powered up before the radio rail
- *                  finished settling, or with a transiently faulty SPI bus,
- *                  will recover automatically once conditions clear.
- *              2.  Single recovery helper nrf_try_recover() shared by every
- *                  profile (DATASET / RELEASE / DEBUG). The previous
- *                  inline block was duplicated logic and skipped some
- *                  edge cases (e.g. didn't invalidate prev_loss/prev_retry
- *                  after recovery so OBSERVE_TX cruft from before the
- *                  reset leaked into the first new packet).
- *              3.  TX path is gated by g_nrf_alive; profile-specific
- *                  blocks (DATASET vs RELEASE/DEBUG) just choose between
- *                  blocking and non-blocking transmit, the rest of the
- *                  loop (sample assembly, CSV emit, stats logging,
- *                  health check) is profile-independent.
- *
- *                          v2.2 changes (April 2026)
- *              ────────────────────────────────────────────────────────────────
- *              Fixes the "DATASET-mode UART freezes when CPCU enters SAFE"
- *              bug. The fix in DATASET mode is twofold:
- *                  1. Emit the CSV line BEFORE the radio TX, so UART output
- *                     is never gated by the radio.
- *                  2. Use NRF_TransmitNoBlock — fire-and-forget. The TX
- *                     FIFO is 3-deep, well within budget at 1 kHz packet
- *                     rate even with 100 % MAX_RT.
- *
- *                          Packet assembly stride (critical)
- *              ────────────────────────────────────────────────────────────────
- *              The ADC DMA buffer contains ADC_DMA_CHANNELS values per scan
- *              (= 9: 8 EMG on PA0-PA7 + 1 battery on PB0). WL_NUM_CHANNELS
- *              is 8. The main loop indexes:
- *                  g_adc_snapshot[s * ADC_DMA_CHANNELS + c]    EMG ch c of scan s
- *                  g_adc_snapshot[s * ADC_DMA_CHANNELS + ADC_BATT_INDEX]
- *                                                              battery of scan s
- *              so stride is ADC_DMA_CHANNELS (= 9), NOT WL_NUM_CHANNELS.
+ *  Runs on STM32L432KC. Samples 8 EMG channels at 2 kHz via DMA-driven ADC,
+ *  packs samples into 32-byte NRF packets, transmits at 1000 pkt/s.
+ *  Supports RELEASE, DEBUG, DATASET, and TEST profiles via bsau_config.h.
+ *  NRF init is non-fatal: if the radio fails, the MCU continues sampling
+ *  and retries periodically via nrf_try_recover().
  */
 
 #include "bsau_app.h"
@@ -89,11 +34,11 @@
 
 static NRF_Handle           g_hnrf;
 
-/*  v2.4: liveness flag drives whether the TX path runs. The bring-up /
+/* liveness flag drives whether the TX path runs. The bring-up /
  *  recovery helpers below are the only writers; everything else reads.   */
 static bool                 g_nrf_alive                 =   false;
 
-/*  v2.3: nrf_addr is file-scope so the periodic health check / recovery
+/* nrf_addr is file-scope so the periodic health check / recovery
  *  helper can re-init the chip if the user yanks the nRF module and
  *  plugs it back in.                                                     */
 static const uint8_t        nrf_addr[NRF_ADDR_WIDTH]    =   NRF_ADDRESS;
@@ -109,7 +54,7 @@ static const uint8_t        nrf_addr[NRF_ADDR_WIDTH]    =   NRF_ADDRESS;
 #define NRF_INIT_RETRIES            2U
 #define NRF_RETRY_BACKOFF_MS        100U
 
-/*  v2.3: how often the BSAU_Run loop sanity-checks the nRF chip.
+/* how often the BSAU_Run loop sanity-checks the nRF chip.
  *  Cost: one ReadReg every N packets. At 1 kHz packet rate and N=500,
  *  that's ~2 SPI reads per second.                                       */
 #define NRF_HEALTH_CHECK_INTERVAL   500U
@@ -118,7 +63,7 @@ static const uint8_t        nrf_addr[NRF_ADDR_WIDTH]    =   NRF_ADDRESS;
 /**
  *  Single-shot init with bounded retry. Updates g_nrf_alive in place.
  *  Returns the final NRF_Status — caller decides whether the result is
- *  fatal (initial bring-up: no longer is, v2.4), or just informational
+ *  fatal (initial bring-up: no longer is, or just informational
  *  (BSAU_Run health check: log and try again next interval).
  */
 static NRF_Status nrf_bringup(void)
@@ -214,7 +159,7 @@ void BSAU_Init(void)
     }
     LOG("APP", "TIM2_Start", "OK", "1 MHz free-running counter live");
 
-    /*-------------- NRF initialization (non-fatal, v2.4) --------------------------------------*/
+    /*-------------- NRF initialization (non-fatal --------------------------------------*/
     /*
      *  POR delay first, then bounded-retry bring-up. If every retry
      *  still fails we *do not* call Error_Handler() — instead we boot
@@ -355,7 +300,7 @@ void BSAU_Run(void)
         WL_Pack(&pkt, raw);
 
         /*-------------- DATASET-only: emit CSV BEFORE radio TX --------------------------------*/
-        /*  v2.2: UART output must not be gated by the radio link.        */
+        /* UART output must not be gated by the radio link.        */
 #if defined(BSAU_MODE_DATASET)
         if (pkt_count % BSAU_DATASET_CSV_DECIMATION == 0)
         {
@@ -369,7 +314,7 @@ void BSAU_Run(void)
 
         /*-------------- Radio transmit (gated by liveness) ------------------------------------*/
         /*
-         *  v2.4: profile picks blocking vs non-blocking transmit. The
+         *  profile picks blocking vs non-blocking transmit. The
          *  outer g_nrf_alive guard is shared so a dead radio short-
          *  circuits the TX in every profile and we never block the
          *  loop on an absent chip.
@@ -418,7 +363,7 @@ void BSAU_Run(void)
                 g_nrf_alive ? "UP" : "DOWN");
         }
 
-        /*-------------- v2.4: NRF chip-presence + recovery ------------------------------------*/
+        /*-------------- NRF chip-presence + recovery ------------------------------------*/
         /*
          *  Two paths:
          *    a) Chip is alive — run the cheap register sanity check; on
@@ -476,3 +421,4 @@ void BSAU_Run(void)
 }
 
 /*==============================================================================================*/
+

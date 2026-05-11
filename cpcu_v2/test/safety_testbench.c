@@ -1,33 +1,6 @@
 /**
- *  @file       safety_testbench.c
- *  @brief      Automated CI testbench for cpcu_safety — verifies all 5
- *              fault paths transition at the correct thresholds.
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    1.0
- *
- *  @details    Drives SAFETY_Context directly with synthetic inputs and
- *              simulated time. No hardware, no shared memory, no threads.
- *              Runs in < 50 ms and is safe to wire into `run_tests.sh 1`
- *              alongside test_codec.
- *
- *              Test matrix:
- *                TB-SAF01  Radio loss timeout (RUNNING -> DEGRADED -> SAFE)
- *                TB-SAF02  Low battery fault (vbat_raw below critical V)
- *                TB-SAF03  Sequence gap storm (degrades link quality)
- *                TB-SAF04  Ring overflow (sustained > 100 overflows)
- *                TB-SAF05  PCA9685 I2C error streak (>= 5 consecutive)
- *                TB-SAF06  Happy-path baseline (nothing faults)
- *                TB-SAF07  Recovery after radio comes back
- *
- *              Each test reports:
- *                  [PASS] TB-SAFnn desc                (observed=X  target=Y)
- *                  [FAIL] TB-SAFnn desc  WHY           (observed=X  target=Y)
- *
- *              Exit code: 0 if all pass, non-zero otherwise.
- *
- *  Build:      linked against cpcu_safety.c + cpcu_codec
- *  Run:        ./safety_testbench
+ *  @file   safety_testbench.c
+ *  @brief  Safety FSM test harness — exercises all 7 fault paths with synthetic inputs.
  */
 
 #include <stdio.h>
@@ -163,7 +136,7 @@ static void test_radio_loss_timeout(void)
  *  that's raw = 2.7 / 3.3 / 2 * 4095 = 1675. We pick 1600 to be safely
  *  below.
  *
- *  v2.3 contract:
+ *  contract:
  *      - SAFETY_FeedPacket sets battery.critical = true and last_fault =
  *        SAFETY_ERR_BATTERY but does NOT change the FSM state.
  *      - SAFETY_UpdateState moves RUNNING → SAFE on battery.critical.
@@ -171,8 +144,8 @@ static void test_radio_loss_timeout(void)
  *      - SAFETY_UpdateState then waits SAFETY_SAFE_RECOVER_MS = 3 s of
  *        all-clear before moving SAFE → RUNNING.
  *
- *  Pre-v2.2 the FSM transition was inline in FeedPacket and SAFE was
- *  terminal. The old TB-SAF02e expected that; v2.2 deliberately made
+ *  Previously the FSM transition was inline in FeedPacket and SAFE was
+ *  terminal. The old TB-SAF02e expected that; The refactor deliberately made
  *  battery recoverable, and TB-SAF02e is rewritten here to test the
  *  recovery instead.
  */
@@ -192,7 +165,7 @@ static void test_low_battery(void)
     build_healthy_packet(&pkt, 50, 1600);
     SAFETY_FeedPacket(&ctx, &pkt, t0 + 1000);
 
-    /* v2.3: state transition for battery is in UpdateState, not FeedPacket. */
+    /* state transition for battery is in UpdateState, not FeedPacket. */
     SAFETY_UpdateState(&ctx, t0 + 1000);
 
     CHECK("TB-SAF02b", "critical vbat: state=SAFE",
@@ -210,7 +183,7 @@ static void test_low_battery(void)
           "fault=%s", SAFETY_StatusStr(ctx.last_fault));
 
     /*
-     *  v2.3: battery is RECOVERABLE (was terminal in v2.0).
+     *  battery is RECOVERABLE (was previously terminal).
      *  Feed a healthy packet → battery.critical clears via hysteresis,
      *  but state stays SAFE until SAFETY_SAFE_RECOVER_MS = 3 s of
      *  all-clear has elapsed.
@@ -229,7 +202,7 @@ static void test_low_battery(void)
           "critical=%d  vbat=%.2fV", ctx.battery.critical, ctx.battery.voltage);
 
     /*  Advance time past SAFETY_SAFE_RECOVER_MS = 3 s to verify the
-     *  v2.3 SAFE → RUNNING exit. We only need to call UpdateState — no
+     *  SAFE → RUNNING exit. We only need to call UpdateState — no
      *  more packets — because the safe_clear_since_us timer was started
      *  on the previous call when all flags were clear.                  */
     SAFETY_UpdateState(&ctx, t0 + 2000 + 3100ULL * 1000ULL);
@@ -443,9 +416,9 @@ static void test_recovery(void)
           "expected=true");
 }
 
-/*============= TB-SAF09 : Boot-grace period (v2.3.1) ======================================*/
+/*============= TB-SAF09 : Boot-grace period ======================================*/
 /*
- *  v2.3.1 introduced a cold-start grace period for the radio fault.
+ *  introduced a cold-start grace period for the radio fault.
  *  SAFETY_CheckTimeout suppresses the radio timeout until either
  *      (a) the first valid packet has been received, OR
  *      (b) SAFETY_RADIO_BOOT_GRACE_MS has elapsed since SAFETY_Init.
@@ -533,7 +506,7 @@ static void test_boot_grace(void)
     /* Sub-test (d): defensive — boot grace doesn't somehow leak into
      * established-RUNNING behaviour. After warm_up (which sets
      * first_packet_seen via 20 packets), CheckTimeout must behave
-     * identically to pre-v2.3.1. This re-runs the TB-SAF01b/c flow. */
+     * identically to before boot-grace. This re-runs the TB-SAF01b/c flow. */
     {
         SAFETY_Context ctx;
         SAFETY_Init(&ctx);
@@ -586,7 +559,7 @@ int main(void)
     printf("\n--- TB-SAF07: Recovery ---\n");
     test_recovery();
 
-    printf("\n--- TB-SAF09: Boot grace period (v2.3.1) ---\n");
+    printf("\n--- TB-SAF09: Boot grace period  ---\n");
     test_boot_grace();
 
     printf("\n======================================\n");
@@ -597,3 +570,4 @@ int main(void)
 }
 
 /*==========================================================================================*/
+

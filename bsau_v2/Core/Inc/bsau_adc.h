@@ -1,18 +1,6 @@
 /**
- *  @file       bsau_adc.h
- *  @brief      BSAU ADC/DMA acquisition module — public interface
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details
- *              Public globals published by this module are filled by the
- *              DMA half-complete and complete ISRs (see bsau_adc.c). The main
- *              loop consumes g_adc_snapshot[] once per g_pkt_ready == 1 pulse.
- *
- *              v2.1 changes:
- *                  - Half-complete ISR now also checks g_pkt_ready and
- *                    increments g_adc_dropped if the main loop has not yet
- *                    consumed the prior pair (closes the scan-0 tearing race).
+ *  @file   bsau_adc.h
+ *  @brief  BSAU ADC API — channel read, battery measurement, DMA buffer access.
  */
 
 #ifndef BSAU_ADC_H
@@ -44,3 +32,4 @@ uint16_t    BSAU_ADC_GetBattery  (void);
 #endif
 
 #endif /* BSAU_ADC_H */
+

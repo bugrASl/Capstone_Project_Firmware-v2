@@ -1,28 +1,15 @@
 /**
- *  @file       cpcu_tui_render.c
- *  @brief      TUI render layer — drawing primitives, helpers, page draws.
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    3.4 (multi-file split)
+ *  @file   cpcu_tui_render.c
+ *  @brief  TUI rendering — layout computation, page drawing, waveform plots.
  *
- *  Owns all interaction with ncurses and the layout globals
- *  (g_term_w/h, g_tui_w, g_col_r, g_bar_w, g_slider_w). Reads — never
- *  writes — the data buffers maintained by cpcu_tui_data.c (sensor
- *  ring waveform buffer, dataset capture state, demo synthesis state)
- *  and the main-module state (current_page, demo_mode).
- *
- *  Split structure:
- *      §1 Layout & shared constants (g_term_*, SERVO_NAMES, etc.)
- *      §2 State→string + signal helpers (state_str, batt_str, ZCR, RMS)
- *      §3 Drawing primitives (draw_lv, draw_bar, draw_slider, draw_section,
- *         draw_hline, now_ms)
- *      §4 Tab-bar + footer (draw_header, draw_footer)
- *      §5 Page renderers (one block per page)
- *      §6 Waveform line-trace (draw_waveform — used by Page 4)
+ *  Owns all terminal layout globals (g_term_w/h, g_tui_w, g_col_r, g_bar_w).
+ *  Provides draw_page_*() for each TUI page, draw_header/footer, bar/slider
+ *  primitives, and the ASCII waveform renderer. Layout auto-scales to
+ *  terminal dimensions on every frame via layout_update().
  */
 
 #include "cpcu_tui.h"
-#include "cpcu_tui_editor.h"        /* v2.3.8 — ED_Render */
+#include "cpcu_tui_editor.h"        /* ED_Render */
 
 #include <ctype.h>
 #include <math.h>
@@ -1299,7 +1286,7 @@ void draw_page_health(int r, IPC_Context *ipc,
     else
         ADD_ROW("IO loop",     0, "hb %u ms, poll %u us", hb_age_ms, max_poll);
 
-    /* 4. IPC ring (v2.3: ring overflows are recoverable; only flag a sustained burst) */
+    /* 4. IPC ring (ring overflows are recoverable; only flag a sustained burst) */
     if(overflows > 100)
         ADD_ROW("IPC ring",    2, "%u overflows  (DSP can't keep up)", overflows);
     else if(ring_fill > 900 || overflows > 0)
@@ -1366,7 +1353,7 @@ void draw_page_health(int r, IPC_Context *ipc,
     else
         ADD_ROW("SAFE trips",  2, "%u  (persistent instability)", safe_ents);
 
-    /* 11. v2.3.7 gripper stall watchdog. Counts every time cpcu_io
+    /* 11. Gripper stall watchdog. Counts every time cpcu_io
      * had to retreat the gripper from grip_firm because it had been
      * pinned at the floor for grip_stall_recover_ms. Single fires
      * are normal during heavy gripping; persistent fires suggest
@@ -1692,7 +1679,7 @@ void draw_page_dataset(int r, IPC_Context *ipc)
  */
 void draw_page_config(int r, IPC_Context *ipc)
 {
-    /*==================== EDIT-MODE BANNER (v2.3.4) ====================*/
+    /*==================== EDIT-MODE BANNER ====================*/
     /*  Shows the current handshake state. The banner consumes one row
      *  at the very top of the CONFIG page so it's always visible while
      *  editing.
@@ -1749,7 +1736,7 @@ void draw_page_config(int r, IPC_Context *ipc)
     attroff(COLOR_PAIR(banner_color) | A_BOLD);
     r += 2;
 
-    /* v2.3.8: in EDITING state, render the live editor instead of the
+    /* in EDITING state, render the live editor instead of the
      * spec-sheet view. The editor's key bindings are handled in
      * cpcu_tui.c's main loop; here we only draw. Outside EDITING the
      * spec sheet renders (the user is viewing, not editing). */
@@ -1881,6 +1868,8 @@ void draw_footer(int r)
             mvprintw(r, 1, "1-7:pages  UP/DN:ch  TAB:detail  q:quit  10 Hz");
         else if(current_page == PAGE_DATASET)
             mvprintw(r, 1, "1-7:pg  LEFT/RIGHT:label  s,SPACE:start/stop  r:cancel  t:raw/filt  q:quit");
+        else if(current_page == PAGE_CONFIG)
+            mvprintw(r, 1, "1-7:pages  e:edit mode  q:quit  |  Ctrl+S:save  ESC:cancel  r:revert field");
         else
             mvprintw(r, 1, "1-7:pages  q:quit  10 Hz  |  read-only (zero RT impact)");
     }
@@ -1913,3 +1902,4 @@ void draw_footer(int r)
 }
 
 /*==========================================================================================*/
+

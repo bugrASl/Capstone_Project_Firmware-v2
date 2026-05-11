@@ -1,15 +1,6 @@
 /**
- *  @file       test_codec.c
- *  @brief      Codec + IPC unit test suite — no hardware required.
- *  @author     bugrASl
- *  @date       April 2026
- *
- *  Covers: TB-C100 (round-trip), TB-C101 (vbat exhaustive),
- *          TB-C102 (seq gap), TB-C103 (timestamp jitter),
- *          TB-C104 (timestamp wrap), TB-C106 (battery voltage).
- *
- *  Build:  gcc -O2 -o test_codec test_codec.c wireless_packet.c -lm
- *  Run:    ./test_codec
+ *  @file   test_codec.c
+ *  @brief  Codec unit test — WL_Pack/WL_Unpack round-trip on all packet fields.
  */
 
 #include "wireless_packet.h"
@@ -300,3 +291,4 @@ int main(void)
 
     return g_fail > 0 ? 1 : 0;
 }
+

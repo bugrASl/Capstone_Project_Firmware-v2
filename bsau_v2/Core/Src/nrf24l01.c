@@ -1,34 +1,10 @@
 /**
- *  @file       nrf24l01.c
- *  @brief      Unified NRF24L01+ driver for STM32 HAL — TX and RX roles
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    2.1
- *  @details
- *              Single driver serving both sides of the InfiniTech wireless link.
+ *  @file   nrf24l01.c
+ *  @brief  NRF24L01+ STM32 HAL driver — SPI register access, TX/RX, power control.
  *
- *                          Code structure
- *              ────────────────────────────────────────────────────────────────
- *              §1   Internal: DWT µs delay     (always compiled, CE pulse)
- *              §2   Pin control                (header-inline; none here)
- *              §3   SPI register access        (always compiled)
- *              §4   Common utility             (always compiled)
- *              §5   NRF_Init                   (always compiled; role-branches)
- *              §6   RX-only                    (compiled if NRF_ROLE_RX)
- *              §7   TX-only                    (compiled if NRF_ROLE_TX)
- *
- *              v2.1 changes:
- *                  - RF_SETUP: 250 kbps -> 2 Mbps (RF_DR_HIGH instead of RF_DR_LOW).
- *                  - SETUP_RETR: ARD 1500 µs -> 500 µs (0x5F -> 0x1F).
- *                  - TX timeout: 75 ms -> 20 ms (worst case at 2 Mbps = 12.1 ms).
- *                  - CE pulse in NRF_Transmit / NRF_TransmitNoBlock now uses
- *                    DWT->CYCCNT for a calibrated 12 µs delay. Was a
- *                    `for (volatile int i = 0; i < 100; i++){}` loop that
- *                    measured ~5-7 µs at 80 MHz -O0, below the datasheet
- *                    minimum Tpece2csn ≥ 10 µs. At -O2 the loop could drop
- *                    further. DWT is deterministic across optimization levels.
- *                  - Style unification: Allman braces throughout (was K&R in
- *                    v2.0), tabs -> spaces (was mixed), 98-char banners.
+ *  Bare-metal driver for the BSAU side. Uses STM32 HAL SPI functions and
+ *  direct GPIO for CE/CSN pin control. Configures Enhanced ShockBurst at
+ *  2 Mbps with CRC16 and auto-acknowledgement.
  */
 
 #include "nrf24l01.h"
@@ -211,7 +187,7 @@ NRF_Status NRF_Init(NRF_Handle *hnrf, SPI_HandleTypeDef *hspi,
     }
 
     /*-------------- Radio parameters (shared TX / RX) -----------------------------------------
-     *  v2.1: 2 Mbps (RF_DR_HIGH=1, RF_DR_LOW=0), 0 dBm TX power.
+     *  2 Mbps (RF_DR_HIGH=1, RF_DR_LOW=0), 0 dBm TX power.
      *  RF_SETUP = 0x0F.
      *-------------------------------------------------------------------------------------------*/
     NRF_WriteReg(hnrf, NRF_REG_RF_CH,      channel);
@@ -224,7 +200,7 @@ NRF_Status NRF_Init(NRF_Handle *hnrf, SPI_HandleTypeDef *hspi,
 
     /*
      *  Auto-retransmit: 500 µs ARD, 15 retries.
-     *  v2.1: 0x1F (was 0x5F for 1500 µs ARD at 250 kbps).
+     *  0x1F (was 0x5F for 1500 µs ARD at 250 kbps).
      *  At 2 Mbps with no ACK payload, 500 µs is the datasheet minimum ARD.
      */
     NRF_WriteReg(hnrf, NRF_REG_SETUP_RETR, 0x1F);
@@ -343,7 +319,7 @@ NRF_Status NRF_Transmit(NRF_Handle *hnrf, const uint8_t *data)
 
     /*
      *  Pulse CE high for ≥ 10 µs (datasheet 6.1.6 Tpece2csn).
-     *  v2.1: DWT-calibrated 12 µs, ~20 % margin. Replaces the v2.0
+     *  DWT-calibrated 12 µs, ~20 % margin. Replaces the old
      *  `for (volatile int i = 0; i < 100; i++){}` loop which measured
      *  only ~5-7 µs at 80 MHz -O0 (below the datasheet minimum) and
      *  could shrink further at higher optimization levels.
@@ -354,7 +330,7 @@ NRF_Status NRF_Transmit(NRF_Handle *hnrf, const uint8_t *data)
 
     /*
      *  Poll for completion: TX_DS or MAX_RT.
-     *  v2.1 at 2 Mbps: T_OA = 164.5 µs, worst case with 15 retries ≈ 12.1 ms.
+     *  at 2 Mbps: T_OA = 164.5 µs, worst case with 15 retries ≈ 12.1 ms.
      *  Timeout at 20 ms gives ~1.65× headroom.
      */
     uint32_t start                      =   HAL_GetTick();
@@ -428,3 +404,4 @@ void NRF_GetTxStats(NRF_Handle *hnrf, uint8_t *lost_pkts, uint8_t *retx_pkts)
 #endif  /* NRF_ROLE_TX */
 
 /*==============================================================================================*/
+

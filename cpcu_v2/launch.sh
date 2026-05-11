@@ -900,79 +900,87 @@ cpcu_ws_is_stub() {
 }
 
 cmd_ws() {
-    [ -x "${BIN_DIR}/cpcu_ws" ] || fatal "${BIN_DIR}/cpcu_ws not found — run './launch.sh build'"
+    log "${C_BLD}Web Dashboard Setup${C_RST}"
+    echo
 
-    # If the installed cpcu_ws is a stub (built without Mongoose), it
-    # won't actually serve HTTP. Catch this here instead of letting
-    # the user wait, point a browser at it, and discover that the
-    # banner printed "BUILT WITHOUT MONGOOSE" while nothing bound to
-    # the port. Offer to fix it in one prompt.
-    if cpcu_ws_is_stub; then
-        warn "cpcu_ws is a STUB build — Mongoose was not vendored when this was compiled."
-        warn "  As a stub it prints diagnostics but does NOT serve HTTP/WS."
-        log "  Fix it with: ${C_BLD}./launch.sh vendor${C_RST}"
-        log "    (downloads Mongoose, then does a clean rebuild — ~30 sec total)"
-        if [ -t 0 ] && [ -t 1 ]; then
-            read -rp "  Run vendor + rebuild now? [Y/n] " ans
-            case "${ans}" in
-                ""|y|Y|yes)
-                    cmd_vendor
-                    log "Continuing with the freshly-built cpcu_ws..."
-                    ;;
-                *)
-                    err "Aborting. Run './launch.sh vendor' when you're ready."
-                    exit 1
-                    ;;
-            esac
-        else
-            err "Non-interactive shell — can't prompt. Run './launch.sh vendor' manually."
-            exit 1
+    # ── Step 1: Check if the project is built at all ──
+    if [ ! -x "${BIN_DIR}/cpcu_ws" ] && [ ! -x "${BIN_DIR}/cpcu_kernel" ]; then
+        log "Step 1/4: ${C_YEL}Project not built yet.${C_RST}"
+        if [ ! -d /opt/cpcu ]; then
+            log "  /opt/cpcu doesn't exist — running one-time Pi setup first."
+            log "  This installs build tools, enables SPI/I2C, and isolates CPU cores."
+            echo
+            cmd_setup
+            echo
         fi
+        log "  Building the project (cmake + make + install)..."
+        cmd_build
+        echo
+    else
+        log "Step 1/4: ${C_GRN}Project built.${C_RST}"
     fi
 
+    # ── Step 2: Check if Mongoose is vendored ──
+    if [ ! -x "${BIN_DIR}/cpcu_ws" ] || cpcu_ws_is_stub; then
+        log "Step 2/4: ${C_YEL}Mongoose not vendored — downloading...${C_RST}"
+        log "  Mongoose is the embedded HTTP/WebSocket library (~26K lines)."
+        log "  Fetching from GitHub and rebuilding cpcu_ws..."
+        echo
+        cmd_vendor
+        echo
+    else
+        log "Step 2/4: ${C_GRN}Mongoose vendored and cpcu_ws built.${C_RST}"
+    fi
+
+    # ── Step 3: Resolve static files directory ──
     local static_dir
     if [ -d /opt/cpcu/ws_static ]; then
         static_dir=/opt/cpcu/ws_static
     elif [ -d "${CPCU_ROOT}/web/static" ]; then
         static_dir="${CPCU_ROOT}/web/static"
     else
-        fatal "Web static dir not found (looked at /opt/cpcu/ws_static and ${CPCU_ROOT}/web/static)"
+        fatal "Web static directory not found. Re-run './launch.sh build'."
     fi
+    log "Step 3/4: ${C_GRN}Static files at ${static_dir}${C_RST}"
 
-    # cpcu_ws reads from /dev/shm/cpcu_ipc — it needs the kernel to
-    # have created that region. Mirror the run_tui / run_signal
-    # pattern: if the kernel isn't already up, spawn it in a tmux
-    # session (KERNEL + SHELL), then put cpcu_ws in a third window.
-    # ./launch.sh stop tears everything down cleanly.
+    # ── Step 4: Start the dashboard ──
+    local pi_ip
+    pi_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    local pi_host
+    pi_host="${HOSTNAME:-$(hostname 2>/dev/null)}"
+
+    log "Step 4/4: ${C_GRN}Starting web dashboard...${C_RST}"
+    echo
+    echo -e "  ${C_BLD}╔══════════════════════════════════════════════════════════╗${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}                                                          ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}   Open in any browser on the same network:               ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}                                                          ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}      ${C_GRN}${C_BLD}http://${pi_ip}:8765${C_RST}                          ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}                                                          ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}   or: ${C_CYN}http://${pi_host}.local:8765${C_RST}  (if mDNS works)   ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}                                                          ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}   Anyone on your LAN can view (read-only, multi-viewer). ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}   To restrict: --bind ws://127.0.0.1:8765                ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}║${C_RST}                                                          ${C_BLD}║${C_RST}"
+    echo -e "  ${C_BLD}╚══════════════════════════════════════════════════════════╝${C_RST}"
+    echo
+
+    # If kernel not running, start it in tmux alongside the dashboard
     if [ ! -e /dev/shm/cpcu_ipc ]; then
         if ! require_tmux; then
-            err "tmux not installed — install via './launch.sh setup',"
-            err "  or start cpcu_kernel manually first then re-run './launch.sh ws'."
+            err "tmux not installed — run './launch.sh setup' to install it."
             exit 1
         fi
-        log "Mode: WS (tmux: KERNEL + SHELL + WS)"
-        log "Dashboard at http://$(hostname -I | awk '{print $1}'):8765"
-        log "  (or http://${HOSTNAME}.local:8765 if mDNS is enabled)"
-        log "Static dir: ${static_dir}"
-        log "${C_YEL}Note:${C_RST} default bind is 0.0.0.0 — anyone on your LAN can view."
-        log "      Pass --bind ws://127.0.0.1:8765 to restrict to localhost."
-
+        log "Starting kernel + web dashboard in tmux..."
+        log "  Ctrl-b 0 = KERNEL  |  Ctrl-b 1 = SHELL  |  Ctrl-b 2 = WS"
         tmux_create_with_kernel || fatal "Couldn't bring up kernel"
         tmux_add_window "WS" "${BIN_DIR}/cpcu_ws --static \"${static_dir}\" $*"
         tmux_attach_at "WS"
         return $?
     fi
 
-    # Shared memory already exists — kernel is running somewhere
-    # (existing tmux session, systemd, or another launch.sh
-    # invocation). Run cpcu_ws in the foreground attached to that
-    # kernel; the user manages the kernel lifecycle separately.
-    log "Starting cpcu_ws (web bridge) — Ctrl+C to stop"
-    log "Dashboard at http://$(hostname -I | awk '{print $1}'):8765"
-    log "  (or http://${HOSTNAME}.local:8765 if mDNS is enabled)"
-    log "Static dir: ${static_dir}"
-    log "${C_YEL}Note:${C_RST} default bind is 0.0.0.0 — anyone on your LAN can view."
-    log "      Pass --bind ws://127.0.0.1:8765 to restrict to localhost."
+    # Kernel already running — attach directly
+    log "Kernel already running. Starting cpcu_ws in foreground (Ctrl+C to stop)."
     exec "${BIN_DIR}/cpcu_ws" --static "${static_dir}" "$@"
 }
 

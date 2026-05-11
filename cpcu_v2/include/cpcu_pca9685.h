@@ -1,54 +1,6 @@
 /**
- *  @file       cpcu_pca9685.h
- *  @brief      PCA9685 16-channel 12-bit PWM Linux Driver
- *  @author     bugrASl
- *  @date       April 2026
- *  @version    1.1
- *  @details
- *                      I2C WIRING
- *  ────────────────────────────────────────────────────────────
- *  GPIO2   SDA1        ->  PCA_SDA (I2C data, 400Khz, fast mode)
- *  GPIO3   SCL1        ->  PCA_SCL (I2C clock)
- *  3.3V    3V3         ->  PCA_VCC
- *  GND     GND         ->  PCA_GND
- *
- *                      SERVO PWM
- *  ────────────────────────────────────────────────────────────
- *  PWM Frequency       :   50Hz (20ms period)
- *  Resolution          :   4096 steps per 20ms ->  step = 4.88us
- *  Servo Range         :   Per-servo (empirical limits, see config below)
- *
- *                      LOGICAL <-> PHYSICAL CHANNEL MAP (v1.1)
- *  ────────────────────────────────────────────────────────────
- *  The 6 servos are wired to NON-CONTIGUOUS PCA9685 output terminals.
- *  Callers always pass the logical index 0..5 to PCA_SetServo,
- *  PCA_SetAllServos, etc. — the driver translates to the physical
- *  PCA channel internally via PCA_SERVO_CHANNEL.
- *
- *  Logical | Name      | Servo | Pulse range  | PCA terminal
- *  --------|-----------|-------|--------------|--------------
- *   S0     | Base      | MG995 |  498-2500 us | CH0
- *   S1     | Upper     | MG995 | 1074-1953 us | CH1
- *   S2     | Last      | MG995 | 1074-1953 us | CH11
- *   S3     | Joint-1   | SG90  | 1001-2002 us | CH8
- *   S4     | Joint-2   | SG90  | 1001-2002 us | CH5
- *   S5     | Gripper   | SG90  |  976-1733 us | CH4
- *
- *  v1.1 changes:
- *      - Added PCA_SERVO_CHANNEL table for non-contiguous wiring.
- *      - PCA_SetServo, PCA_SetAllServos, PCA_SetAllNeutral now take
- *        LOGICAL servo indices (0..PCA_SERVO_COUNT-1), not raw PCA
- *        channels. PCA_SetPWM still takes raw 0..15 for arbitrary
- *        access (used by pca_testbench register-poking, etc).
- *      - Old v1.0 callers passing logical 0..5 to PCA_SetServo see
- *        their commands routed to the correct physical terminal.
- *        Old buggy callers passing raw 0..5 to PCA_SetServo (and
- *        relying on logical==physical) automatically get the fix.
- *
- *                      I2C
- *  ────────────────────────────────────────────────────────────
- *  Default :   0x40            (all address pins are low)
- *  Range   :   0x40 to 0x7F    (62 devices on same bus)
+ *  @file   cpcu_pca9685.h
+ *  @brief  PCA9685 PWM servo driver API — per-servo limits, pulse conversion.
  */
 
 #ifndef CPCU_PCA9685_H
@@ -157,7 +109,7 @@ typedef struct
     uint8_t     prescaler;
     uint16_t    servo_min[PCA_SERVO_COUNT];
     uint16_t    servo_max[PCA_SERVO_COUNT];
-    uint8_t     servo_channel[PCA_SERVO_COUNT];     /* logical -> physical map (v1.1) */
+    uint8_t     servo_channel[PCA_SERVO_COUNT];     /* logical -> physical map */
 } PCA_Handle;
 
 /*============= API ============================================*/
@@ -197,3 +149,4 @@ static inline uint16_t PCA_CountsToPulse(uint16_t counts)
 #endif
 
 #endif /* CPCU_PCA9685_H */
+

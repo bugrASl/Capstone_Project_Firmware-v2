@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cpcu_dsp.py — Live DSP + ML pipeline for the CPCU. v2.3 (April 2026).
+cpcu_dsp.py — Live DSP + ML inference pipeline for the CPCU.
 
 Mirrors the offline Python pipeline developed by the DSP/AI team
 (proccess.py + feature_ex.py + model.py + predict.py), but reads from
@@ -231,7 +231,7 @@ NUM_SERVOS              =   6
 DRAIN_PERIOD_S          =   0.020       # 50 Hz
 DRAIN_BATCH             =   200
 
-# v2.3.5: hardware safety envelope (compile-time mins/maxes from
+# hardware safety envelope (compile-time mins/maxes from
 # cpcu_pca9685.h). dsp clamps published targets to these, cpcu_io
 # clamps again on its side after applying servo_bias_us. Both clamps
 # are needed: dsp's clamp gives the user immediate feedback in the
@@ -240,7 +240,7 @@ DRAIN_BATCH             =   200
 SERVO_MIN_US            =   [ 498, 1074, 1074, 1001, 1001,  976]
 SERVO_MAX_US            =   [2500, 1953, 1953, 2002, 2002, 1733]
 
-# v2.3.7: gripper soft-firm clamp. The integrator is prevented from
+# gripper soft-firm clamp. The integrator is prevented from
 # closing the gripper below this position even if a velocity-mode
 # gesture is held longer. One-sided — opening direction is unaffected.
 # Loaded from runtime.json's grip_firm_us (default 1100). Range
@@ -257,10 +257,10 @@ GRIP_FIRM_US_DEFAULT    =   1100
 # the entry simply never fires.
 # Any model.classes_ entry NOT in this map falls back to all-neutral.
 #
-# v2.3.5: this map is now the FALLBACK for "freeze-mode" gestures only.
+# this map is now the FALLBACK for "freeze-mode" gestures only.
 # Velocity-mode gestures use GESTURE_BEHAVIOR (loaded from runtime.json,
 # see VELOCITY_MODE.md). Any class without a velocity entry falls back
-# to GESTURE_SERVO_MAP[label] as a fixed pose, preserving v2.3.4
+# to GESTURE_SERVO_MAP[label] as a fixed pose, preserving legacy
 # behaviour.
 GESTURE_SERVO_MAP       =   {
     "rest":         [1500, 1500, 1500, 1500, 1500, 1500],
@@ -269,14 +269,14 @@ GESTURE_SERVO_MAP       =   {
     "hand_open":    [1500, 1500, 1500, 1500, 1500, 1700],
 }
 
-# v2.3.5: gesture-behaviour map. Keys are class names, values are
+# gesture-behaviour map. Keys are class names, values are
 # dicts with:
 #   "mode": "freeze" | "velocity"
 #   "rate": [int]*NUM_SERVOS    (us/s, signed, only used when mode=velocity)
 #
 # "rest" is always freeze (target unchanged, hold pose).
 # Other classes default to freeze if absent from the velocity map
-# in runtime.json — keeping v2.3.4 behaviour as the safe default.
+# in runtime.json — keeping legacy behaviour as the safe default.
 #
 # Loaded from runtime.json's "gesture_velocity" object on startup.
 # Format in JSON:
@@ -300,13 +300,13 @@ INTERP_CONF_CEIL        =   0.85        # 85%
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  RUNTIME CONFIG LOADER  (v2.3.5)
+#  RUNTIME CONFIG LOADER
 # ══════════════════════════════════════════════════════════════════════
-# v2.3.3 introduced cpcu_v2/config/runtime.json and the C-side parser
+# The kernel reads cpcu_v2/config/runtime.json and the C-side parser
 # in cpcu_config.c, mirrored to IPC_RuntimeConfig in shared memory.
 # That covers everything cpcu_io needs (servo limits, deadband, bias).
 #
-# This v2.3.5 step needs the gesture-velocity rows, which are
+# This step needs the gesture-velocity rows, which are
 # string-keyed by class name and so don't fit cleanly into the C
 # parser's flat-array model. So dsp loads its own slice of the JSON
 # directly. Same file, different consumer.
@@ -318,7 +318,7 @@ INTERP_CONF_CEIL        =   0.85        # 85%
 #   2. Velocity rows for unknown classes (not in model.classes_) are
 #      silently ignored. Adding a class to JSON doesn't crash dsp.
 #   3. Classes WITHOUT a velocity row stay in freeze mode (the safe
-#      v2.3.4 default).
+#      default).
 
 RUNTIME_CONFIG_PATH_DEFAULT  =  "/opt/cpcu/config.json"
 RUNTIME_CONFIG_PATH_FALLBACK = "config/runtime.json"
@@ -328,7 +328,7 @@ def load_dsp_runtime_config(model_classes, path=None):
     """Read the dsp-side slice of runtime.json.
 
     Returns (interp_floor, interp_ceil, hysteresis_votes, behavior_map,
-             grip_firm_us). The grip_firm_us was added in v2.3.7 and
+             grip_firm_us). The grip_firm_us is
              is the soft floor cpcu_dsp.py clamps the gripper integrator
              at — see SOFT_GRIP.md.
 
@@ -419,7 +419,7 @@ def load_dsp_runtime_config(model_classes, path=None):
                 mode = "velocity" if any(v != 0 for v in clean) else "freeze"
                 behavior[cls_name] = {"mode": mode, "rate": clean}
 
-        # v2.3.7: gripper soft-firm clamp. dsp uses this in velocity
+        # gripper soft-firm clamp. dsp uses this in velocity
         # mode to prevent hand_flex from integrating past a safe
         # firm-hold position. Range-checked against the loader's
         # JSON validation (800..2200). Default 1100 from CFG_Defaults.
@@ -641,10 +641,10 @@ def run_inference(verbose=False):
     consecutive_count   =   0
     last_active_class   =   0
 
-    # v2.3.4 — edit-mode handshake state
+    # edit-mode handshake state
     edit_mode_seen      =   False
 
-    # v2.3.5 — velocity-mode integrator state.
+    # velocity-mode integrator state.
     # current_target_us[s] is the dsp's authoritative target for each
     # servo. cpcu_io's smoother trapezoidally walks toward whatever we
     # publish. Initialized to neutral on every fresh boot — there is
@@ -713,7 +713,7 @@ def run_inference(verbose=False):
                 _cleaned, _env, feats = process_window(w_hi)
                 features_flat.extend(feats)
                 rms_per_ch[ch]      =   feats[0]
-                # v2.4.0: publish envelope into IPC_DspFiltered for the
+                # publish envelope into IPC_DspFiltered for the
                 # web dashboard. _env is ~40 samples @ TARGET_FS_HZ
                 # (= 200 Hz). The bridge appends them to a 200-sample
                 # rolling buffer (= 1 s of trailing envelope per channel),
@@ -769,7 +769,7 @@ def run_inference(verbose=False):
                 inference_time_us       =   inference_us,
             )
 
-            # v2.3.4: Edit-mode handshake.
+            # Edit-mode handshake.
             # If the TUI has requested edit mode, stop publishing motor
             # commands. cpcu_io ignores them anyway (sticky-park) but
             # not flooding IPC keeps the diagnostic tracelog clean.
@@ -803,7 +803,7 @@ def run_inference(verbose=False):
                     if verbose:
                         print("[DSP] edit-mode exited -> resuming", flush=True)
 
-                # v2.3.5: fault-recovery snap. If cpcu_io has been forced
+                # fault-recovery snap. If cpcu_io has been forced
                 # SAFE since our last integration step, target snaps back
                 # to neutral so we begin re-integration from a known pose
                 # when the system recovers. Without this, a fault during
@@ -845,7 +845,7 @@ def run_inference(verbose=False):
                 # Behaviour lookup: freeze (target unchanged) or
                 # velocity (integrate target += rate * dt * scale).
                 # Unknown class falls back to fixed-pose from
-                # GESTURE_SERVO_MAP (preserves v2.3.4 behaviour).
+                # GESTURE_SERVO_MAP (preserves legacy behaviour).
                 beh             =   behavior_map.get(current_state)
                 if beh is None:
                     # Class predicted but not in our behaviour map.
@@ -872,7 +872,7 @@ def run_inference(verbose=False):
                         # this clamp is for dsp's own sanity.
                         new_v   =   max(SERVO_MIN_US[s],
                                         min(SERVO_MAX_US[s], new_v))
-                        # v2.3.7: gripper soft-firm clamp. The integrator
+                        # gripper soft-firm clamp. The integrator
                         # is prevented from closing the gripper past the
                         # configured firm-hold position even if the
                         # gesture is held longer. ONE-SIDED — opening
