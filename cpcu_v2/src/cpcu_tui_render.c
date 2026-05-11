@@ -807,7 +807,10 @@ void draw_page_overview(int r, IPC_Context *ipc,
             if(conf < 0.0f) conf = 0.0f;
             if(conf > 1.0f) conf = 1.0f;
             mvprintw(row, col, "%-6s", CLS_NAMES[c]);
-            draw_bar(row, col + 7, 12, conf,
+            int cls_bar_w = g_bar_w / 2;
+            if(cls_bar_w < 10) cls_bar_w = 10;
+            if(cls_bar_w > 30) cls_bar_w = 30;
+            draw_bar(row, col + 7, cls_bar_w, conf,
                      c == active ? CP_MAGENTA : CP_BAR_FILL, CP_BAR_EMPTY);
         }
         r += 6;
@@ -822,7 +825,10 @@ void draw_page_overview(int r, IPC_Context *ipc,
             float fr = rv / 0.5f;
             if(fr > 1.0f) fr = 1.0f;
             mvprintw(row, col, "ch%d ", ch);
-            draw_bar(row, col + 4, 14, fr, CP_CYAN, CP_BAR_EMPTY);
+            int rms_bar_w = g_bar_w / 2;
+            if(rms_bar_w < 10) rms_bar_w = 10;
+            if(rms_bar_w > 30) rms_bar_w = 30;
+            draw_bar(row, col + 4, rms_bar_w, fr, CP_CYAN, CP_BAR_EMPTY);
             printw(" %.4f V", rv);
         }
     }

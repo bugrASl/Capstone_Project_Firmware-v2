@@ -428,6 +428,17 @@ int main(int argc, char *argv[])
                 break;
 
             case 'q': case 'Q': g_run = 0; break;
+
+            case KEY_RESIZE:
+                /* Terminal resized (SIGWINCH). Sync ncurses with new size.
+                 * Essential for tmux: session starts at 80x24 (detached),
+                 * then expands when the user attaches from a larger terminal. */
+                endwin();
+                refresh();
+                clear();
+                layout_update();
+                break;
+
             default: break;
         }
 
