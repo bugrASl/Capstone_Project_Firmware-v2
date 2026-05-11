@@ -281,7 +281,7 @@ tmux_create_with_kernel() {
     log "Creating tmux session '$SESSION_NAME', spawning KERNEL..."
     log "  Kernel log: ${kernel_log}"
 
-    tmux new-session -d -s "$SESSION_NAME" -n "KERNEL" \
+    tmux new-session -d -s "$SESSION_NAME" -n "KERNEL" -x "$(tput cols)" -y "$(tput lines)" \
         "bash -c 'cd ${BIN_DIR} && exec taskset -c 0 ./cpcu_kernel --log 2>&1 | tee -a ${kernel_log}'"
 
     # Wait briefly for the new session to be reachable. tmux's set-option
