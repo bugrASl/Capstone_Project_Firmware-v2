@@ -281,7 +281,16 @@ tmux_create_with_kernel() {
     log "Creating tmux session '$SESSION_NAME', spawning KERNEL..."
     log "  Kernel log: ${kernel_log}"
 
-    tmux new-session -d -s "$SESSION_NAME" -n "KERNEL" -x "$(tput cols)" -y "$(tput lines)" \
+    # Get terminal dimensions from stty (most reliable source).
+    # Default to 80x24 if not running from a real terminal.
+    local _cols _rows
+    _cols=$(stty size 2>/dev/null | awk '{print $2}')
+    _rows=$(stty size 2>/dev/null | awk '{print $1}')
+    _cols=${_cols:-80}
+    _rows=${_rows:-24}
+
+    tmux new-session -d -s "$SESSION_NAME" -n "KERNEL" \
+        -x "$_cols" -y "$_rows" \
         "bash -c 'cd ${BIN_DIR} && exec taskset -c 0 ./cpcu_kernel --log 2>&1 | tee -a ${kernel_log}'"
 
     # Wait briefly for the new session to be reachable. tmux's set-option
@@ -693,7 +702,7 @@ run_tui_tmux() {
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
     local tui_log
     tui_log=$(make_log_path "tui")
-    tmux_add_window "TUI" "bash -c '${tui_bin} 2>&1 | tee -a ${tui_log}'"
+    tmux_add_window "TUI" "${tui_bin}"
     if [ "${WITH_WS:-0}" = "1" ]; then
         local ws_log
         ws_log=$(make_log_path "ws")
@@ -719,7 +728,7 @@ run_collect_tmux() {
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
     local tui_log
     tui_log=$(make_log_path "tui")
-    tmux_add_window "TUI" "bash -c '${tui_bin} 2>&1 | tee -a ${tui_log}'"
+    tmux_add_window "TUI" "${tui_bin}"
     if [ "${WITH_WS:-0}" = "1" ]; then
         local ws_log
         ws_log=$(make_log_path "ws")
@@ -755,7 +764,7 @@ run_signal_tmux() {
     tmux_create_with_kernel || fatal "Couldn't bring up kernel"
     local sig_log
     sig_log=$(make_log_path "signal")
-    tmux_add_window "SIGNAL" "bash -c '${sig_bin} 2>&1 | tee -a ${sig_log}'"
+    tmux_add_window "SIGNAL" "${sig_bin}"
     if [ "${WITH_WS:-0}" = "1" ]; then
         local ws_log
         ws_log=$(make_log_path "ws")
