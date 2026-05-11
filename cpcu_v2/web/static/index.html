@@ -289,26 +289,36 @@ canvas { display: block; width: 100%; height: 100%; }
         <h2>Channel</h2>
         <div id="spec-ch-buttons" style="display: flex; gap: 4px; flex-wrap: wrap;"></div>
     </div>
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
         <div class="card">
-            <h2>Static spectrum (latest)</h2>
+            <h2>Raw spectrum (0 &ndash; 1000 Hz)</h2>
             <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
                 <canvas id="spec-static-canvas"></canvas>
             </div>
-            <p style="font-size: 12px; color: var(--fg-muted); margin: 8px 0 0;">
-                256-pt FFT, Hann window, raw 12-bit ADC at 2 kHz.
-                Resolution ≈ 7.8 Hz/bin. Watch for spike at 50 Hz (mains hum).
-            </p>
+            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Full-band 256-pt FFT, Hann window, raw ADC at 2 kHz. Res &asymp; 7.8 Hz/bin.</p>
         </div>
         <div class="card">
-            <h2>Waterfall (last 60s)</h2>
+            <h2>Filtered spectrum (20 &ndash; 450 Hz)</h2>
+            <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
+                <canvas id="spec-filtered-canvas"></canvas>
+            </div>
+            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Same FFT, bins outside 20-450 Hz zeroed. Shows what the DSP pipeline sees.</p>
+        </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div class="card">
+            <h2>Raw waterfall (last 60s)</h2>
             <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
                 <canvas id="spec-water-canvas"></canvas>
             </div>
-            <p style="font-size: 12px; color: var(--fg-muted); margin: 8px 0 0;">
-                Time grows downward. Brighter = more energy at that frequency.
-                Bands show drift; flicker shows intermittent contact.
-            </p>
+            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Time grows downward. Brighter = more energy.</p>
+        </div>
+        <div class="card">
+            <h2>Filtered waterfall (20 &ndash; 450 Hz)</h2>
+            <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
+                <canvas id="spec-filtered-water-canvas"></canvas>
+            </div>
+            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Bandpass view. Compare with raw to see PLI rejection.</p>
         </div>
     </div>
 </section>
@@ -357,7 +367,7 @@ const wsURL = (location.protocol === 'https:' ? 'wss://' : 'ws://')
 let ws = null;
 let reconnectMs = 250;
 let waveStream = 'raw';
-let waveZoomCh = -1;  /* -1 = all channels, 0-7 = zoomed */
+let waveZoomCh = -1;  /* -1=all, 0-7=zoomed into one channel */
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -523,36 +533,34 @@ function renderWaves() {
     const plotW = W - padL - padR;
     const trackH = (H - padT - padB) / N_CH;
 
-    /* Per-channel background stripes + separator lines + label.
-     * Alternating backgrounds make channels easy to distinguish.
-     * Click a channel label to zoom into single-channel view. */
-    waveCtx.font = '12px monospace';
-    const visibleChs = (waveZoomCh >= 0) ? [waveZoomCh] : Array.from({length: N_CH}, (_, i) => i);
-    const chH = H / visibleChs.length;
+    /* Visible channels: all 8 or just the zoomed one */
+    const visChs = (waveZoomCh >= 0) ? [waveZoomCh] : Array.from({length: N_CH}, (_, i) => i);
+    const chH = (H - padT - padB) / visChs.length;
 
-    for(let i = 0; i < visibleChs.length; i++) {
-        const ch = visibleChs[i];
-        const yTop = i * chH;
+    /* Per-channel: alternating bg + thick separator + zero line + label */
+    for(let idx = 0; idx < visChs.length; idx++) {
+        const ch = visChs[idx];
+        const yTop = padT + idx * chH;
 
         /* Alternating background */
-        if(i % 2 === 1) {
-            waveCtx.fillStyle = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.025)';
+        if(idx % 2 === 1) {
+            waveCtx.fillStyle = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)';
             waveCtx.fillRect(padL, yTop, plotW, chH);
         }
 
-        /* Separator line between channels */
-        if(i > 0) {
-            waveCtx.strokeStyle = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)';
-            waveCtx.lineWidth = 1;
+        /* Thick solid separator between channels */
+        if(idx > 0) {
+            waveCtx.strokeStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)';
+            waveCtx.lineWidth = 2;
             waveCtx.beginPath();
-            waveCtx.moveTo(padL, yTop);
-            waveCtx.lineTo(padL + plotW, yTop);
+            waveCtx.moveTo(0, yTop);
+            waveCtx.lineTo(W, yTop);
             waveCtx.stroke();
         }
 
-        /* Zero line (midpoint of each channel) */
+        /* Zero line */
         const yMid = yTop + chH / 2;
-        waveCtx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+        waveCtx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
         waveCtx.lineWidth = 0.5;
         waveCtx.beginPath();
         waveCtx.moveTo(padL, yMid);
@@ -560,9 +568,16 @@ function renderWaves() {
         waveCtx.stroke();
 
         /* Channel label */
-        waveCtx.fillStyle = (waveZoomCh === ch) ? (isDark ? '#5DCAA5' : '#0F6E56') : (isDark ? '#999' : '#666');
+        waveCtx.fillStyle = isDark ? '#aaa' : '#555';
         waveCtx.font = (waveZoomCh >= 0) ? 'bold 14px monospace' : '12px monospace';
-        waveCtx.fillText('ch' + ch + (waveZoomCh === ch ? ' [click to unzoom]' : ''), 4, yMid + 4);
+        waveCtx.fillText('ch' + ch, 4, yMid + 4);
+    }
+
+    /* Zoom hint */
+    if(waveZoomCh >= 0) {
+        waveCtx.fillStyle = isDark ? '#FAC775' : '#854F0B';
+        waveCtx.font = '11px sans-serif';
+        waveCtx.fillText('Zoomed ch' + waveZoomCh + ' — click anywhere to show all channels', padL + 8, padT + 14);
     }
 
     /* Wave traces. Both raw and filtered are normalized to [0..1]
@@ -572,19 +587,19 @@ function renderWaves() {
      * can compare amplitude. */
     const drawStream = (data, color, n_samples) => {
         if(!data) return;
-        for(let i = 0; i < visibleChs.length; i++) {
-            const ch = visibleChs[i];
+        for(let idx = 0; idx < visChs.length; idx++) {
+            const ch = visChs[idx];
             const series = data[ch];
             if(!series || !series.length) continue;
             waveCtx.strokeStyle = color;
-            waveCtx.lineWidth = (waveZoomCh >= 0) ? 1.8 : 1.2;
+            waveCtx.lineWidth = (waveZoomCh >= 0) ? 2 : 1.2;
             waveCtx.beginPath();
-            const yTop = i * chH;
-            for(let j = 0; j < series.length; j++) {
-                const x = padL + (j / (series.length - 1)) * plotW;
-                const v = series[j] == null ? 0 : Math.abs(series[j]);
+            const yTop = padT + idx * chH;
+            for(let i = 0; i < series.length; i++) {
+                const x = padL + (i / (series.length - 1)) * plotW;
+                const v = series[i] == null ? 0 : Math.abs(series[i]);
                 const y = yTop + chH - Math.min(v * chH, chH * 0.95);
-                if(j === 0) waveCtx.moveTo(x, y);
+                if(i === 0) waveCtx.moveTo(x, y);
                 else waveCtx.lineTo(x, y);
             }
             waveCtx.stroke();
@@ -606,15 +621,14 @@ function renderWaves() {
     }
 }
 
-/* Click on wave canvas to zoom into a channel (or unzoom) */
+/* Click wave canvas to zoom into a single channel, click again to unzoom */
 document.getElementById('wave-canvas').addEventListener('click', (e) => {
     const rect = e.target.getBoundingClientRect();
     const y = e.clientY - rect.top;
-    const H = rect.height;
     if(waveZoomCh >= 0) {
-        waveZoomCh = -1;  /* unzoom */
+        waveZoomCh = -1;
     } else {
-        const ch = Math.floor(y / (H / 8));
+        const ch = Math.floor((y / rect.height) * 8);
         if(ch >= 0 && ch < 8) waveZoomCh = ch;
     }
     renderWaves();
@@ -921,8 +935,156 @@ function renderSpec() {
 }
 
 window.addEventListener('resize', () => {
-    if($('#panel-spectrum').classList.contains('active')) renderSpec();
+    if($('#panel-spectrum').classList.contains('active')) { renderSpec(); renderFilteredSpec(); renderFilteredWater(); }
 });
+
+/* ============================================================
+ * Filtered spectrum (20-450 Hz bandpass view)
+ * ============================================================ */
+const specFilteredHist = Array.from({length: 8}, () => []);
+
+function renderFilteredSpec() {
+    const can = document.getElementById('spec-filtered-canvas');
+    if(!can || !can.offsetParent) return;
+    const dpr = devicePixelRatio || 1;
+    const r = can.parentElement.getBoundingClientRect();
+    const W = r.width, H = r.height;
+    can.width = W * dpr; can.height = H * dpr;
+    can.style.width = W + 'px'; can.style.height = H + 'px';
+    const ctx = can.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    const ch = specCh;
+    if(!specMag[ch] || !specMag[ch].length) return;
+
+    const binHz = FS_HZ / N_FFT;
+    const mags = specMag[ch].map((v, i) => {
+        const f = i * binHz;
+        return (f >= 20 && f <= 450) ? v : 0;
+    });
+
+    const padL = 48, padR = 16, padB = 32, padT = 8;
+    const pW = W - padL - padR, pH = H - padT - padB;
+    const maxM = Math.max(...mags, 1);
+    const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+
+    /* Bandpass highlight region */
+    const x20 = padL + (20 / (FS_HZ / 2)) * pW;
+    const x450 = padL + (450 / (FS_HZ / 2)) * pW;
+    ctx.fillStyle = isDark ? 'rgba(15,110,86,0.08)' : 'rgba(15,110,86,0.05)';
+    ctx.fillRect(x20, padT, x450 - x20, pH);
+
+    /* Grid */
+    ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
+    ctx.fillStyle = isDark ? '#888' : '#666';
+    ctx.font = '11px monospace';
+    [20, 50, 100, 200, 300, 450].forEach(f => {
+        const x = padL + (f / (FS_HZ / 2)) * pW;
+        ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + pH); ctx.stroke();
+        ctx.fillText(f + '', x - 8, H - 8);
+    });
+    ctx.fillText('0', padL - 4, H - 8);
+    ctx.fillText('Hz', W - 24, H - 8);
+
+    /* Bandpass boundary dashed lines */
+    ctx.strokeStyle = '#0F6E56'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+    [20, 450].forEach(f => {
+        const x = padL + (f / (FS_HZ / 2)) * pW;
+        ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + pH); ctx.stroke();
+    });
+    ctx.setLineDash([]);
+
+    /* Spectrum line */
+    ctx.strokeStyle = '#0F6E56'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for(let i = 0; i < mags.length; i++) {
+        const x = padL + (i / mags.length) * pW;
+        const y = padT + pH - (mags[i] / maxM) * pH;
+        if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    /* 50 Hz marker */
+    const bin50 = Math.round(50 / binHz);
+    if(bin50 < mags.length && mags[bin50] > maxM * 0.05) {
+        const x50 = padL + (bin50 / mags.length) * pW;
+        const y50 = padT + pH - (mags[bin50] / maxM) * pH;
+        ctx.fillStyle = '#ea580c'; ctx.font = '10px sans-serif';
+        ctx.fillText('50Hz', x50 + 3, y50 - 5);
+    }
+}
+
+function renderFilteredWater() {
+    const can = document.getElementById('spec-filtered-water-canvas');
+    if(!can || !can.offsetParent) return;
+    const dpr = devicePixelRatio || 1;
+    const r = can.parentElement.getBoundingClientRect();
+    const W = r.width, H = r.height;
+    can.width = W * dpr; can.height = H * dpr;
+    can.style.width = W + 'px'; can.style.height = H + 'px';
+    const ctx = can.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    const ch = specCh;
+    const hist = specFilteredHist[ch];
+    if(!hist.length) return;
+
+    const padL = 40, padR = 16, padT = 20, padB = 32;
+    const pW = W - padL - padR, pH = H - padT - padB;
+    const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const rowH = Math.max(pH / hist.length, 1);
+
+    for(let row = 0; row < hist.length; row++) {
+        const bins = hist[row];
+        if(!bins) continue;
+        const binW = pW / bins.length;
+        for(let b = 0; b < bins.length; b++) {
+            const v = Math.min(bins[b] * 3, 1);
+            if(v < 0.01) continue;
+            const hue = 260 - v * 200;
+            ctx.fillStyle = 'hsl(' + hue + ',80%,' + (20 + v * 50) + '%)';
+            ctx.fillRect(padL + b * binW, padT + row * rowH, Math.ceil(binW), Math.ceil(rowH));
+        }
+    }
+
+    /* Labels */
+    ctx.fillStyle = isDark ? '#888' : '#666'; ctx.font = '11px monospace';
+    ctx.fillText('now', 4, padT + 8);
+    ctx.fillText('-30s', 4, padT + pH - 2);
+    [100, 200, 500].forEach(f => {
+        ctx.fillText(f + '', padL + (f / (FS_HZ / 2)) * pW - 8, H - 8);
+    });
+    ctx.fillText('0', padL - 4, H - 8);
+
+    /* 50 Hz line */
+    const x50 = padL + (50 / (FS_HZ / 2)) * pW;
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(x50, padT); ctx.lineTo(x50, padT + pH); ctx.stroke();
+}
+
+/* Hook into spectrum update to build filtered history */
+const _origPushSpec = pushSpecFrames;
+pushSpecFrames = function(d) {
+    _origPushSpec(d);
+    if(!d.raw_full) return;
+    const binHz = FS_HZ / N_FFT;
+    for(let ch = 0; ch < 8; ch++) {
+        if(!specMag[ch]) continue;
+        const filt = specMag[ch].map((v, i) => {
+            const f = i * binHz;
+            return (f >= 20 && f <= 450) ? v : 0;
+        });
+        const mx = Math.max(...filt, 0.001);
+        specFilteredHist[ch].unshift(filt.map(v => v / mx));
+        if(specFilteredHist[ch].length > WATERFALL_ROWS) specFilteredHist[ch].pop();
+    }
+    if($('#panel-spectrum').classList.contains('active')) {
+        renderFilteredSpec();
+        renderFilteredWater();
+    }
+};
 
 /* ============================================================
  * Tools tab — render IPC_ToolPresence slots (v2.4.1)
