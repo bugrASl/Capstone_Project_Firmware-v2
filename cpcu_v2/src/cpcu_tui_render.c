@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 /*============= §1 LAYOUT GLOBALS (definitions) ============================================*/
 /*
@@ -34,6 +36,21 @@ int  g_slider_w  =   20;
 
 void layout_update(void)
 {
+    /* Query actual terminal size from the OS. ncurses' internal stdscr
+     * dimensions can be stale when tmux resizes the pane (detach/attach,
+     * manual resize) because SIGWINCH delivery to ncurses is unreliable
+     * inside tmux. This ioctl always returns the real dimensions. */
+    struct winsize ws;
+    if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 &&
+       ws.ws_row > 0 && ws.ws_col > 0)
+    {
+        if(ws.ws_row != g_term_h || ws.ws_col != g_term_w)
+        {
+            resizeterm(ws.ws_row, ws.ws_col);
+            clear();
+        }
+    }
+
     getmaxyx(stdscr, g_term_h, g_term_w);
     g_tui_w     =   g_term_w;
     if(g_tui_w  <   TUI_MIN_WIDTH)      g_tui_w = TUI_MIN_WIDTH;
