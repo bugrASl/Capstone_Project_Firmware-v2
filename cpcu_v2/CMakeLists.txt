@@ -312,6 +312,13 @@ install(FILES
 ## Model placeholder directory
 install(DIRECTORY DESTINATION /opt/cpcu/models)
 
+# Install any ML model files (*.pkl, *.joblib) from models/ to /opt/cpcu/models/
+file(GLOB MODEL_FILES "${CMAKE_CURRENT_SOURCE_DIR}/models/*.pkl"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/models/*.joblib")
+if(MODEL_FILES)
+    install(FILES ${MODEL_FILES} DESTINATION /opt/cpcu/models)
+endif()
+
 ## Web dashboard static files -> /opt/cpcu/ws_static
 ## (cpcu_ws and launch.sh both look for this directory)
 if(EXISTS "${CMAKE_SOURCE_DIR}/web/static")

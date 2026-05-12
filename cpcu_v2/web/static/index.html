@@ -297,13 +297,7 @@ canvas { display: block; width: 100%; height: 100%; }
             </div>
             <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Full-band 256-pt FFT, Hann window, raw ADC at 2 kHz. Res &asymp; 7.8 Hz/bin.</p>
         </div>
-        <div class="card">
-            <h2>Filtered spectrum (0 &ndash; 100 Hz, post-DSP)</h2>
-            <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
-                <canvas id="spec-filtered-canvas"></canvas>
-            </div>
-            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">FFT of real DSP output (200 Hz). The 50 Hz notch should appear as a dip vs raw.</p>
-        </div>
+
     </div>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
         <div class="card">
@@ -313,13 +307,7 @@ canvas { display: block; width: 100%; height: 100%; }
             </div>
             <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Time grows downward. Brighter = more energy.</p>
         </div>
-        <div class="card">
-            <h2>Filtered waterfall (0 &ndash; 100 Hz)</h2>
-            <div style="position: relative; height: calc(50vh - 160px); min-height: 240px;">
-                <canvas id="spec-filtered-water-canvas"></canvas>
-            </div>
-            <p style="font-size:12px;color:var(--fg-muted);margin:8px 0 0">Post-DSP waterfall. Bright band at 50 Hz in raw should be dimmed here.</p>
-        </div>
+
     </div>
 </section>
 
@@ -772,7 +760,7 @@ function pushSpecFrames(d) {
      * These are at 200 Hz (downsampled by cpcu_dsp.py), so Nyquist = 100 Hz.
      * The filtered spectrum shows 0-100 Hz — you can directly see the
      * 50 Hz notch rejection compared to the raw spectrum. */
-    if(d.filtered && d.filtered_present) {
+    if(d.filtered && d.filtered.length > 0 && d.filtered[0] && d.filtered[0].length > 5) {
         for(let _ch = 0; _ch < 8; _ch++) {
             const fSamples = d.filtered[_ch];
             if(!fSamples || fSamples.length < 10) continue;
@@ -986,7 +974,12 @@ function renderFilteredSpec() {
 
     const ch = specCh;
     const hist = specFilteredHist[ch];
-    if(!hist || !hist.length) return;
+    if(!hist || !hist.length) {
+        ctx.fillStyle = matchMedia("(prefers-color-scheme: dark)").matches ? "#888" : "#666";
+        ctx.font = "13px sans-serif";
+        ctx.fillText("Waiting for DSP filtered data...", 20, H/2);
+        return;
+    }
     const latest = hist[0];  /* most recent FFT row */
     if(!latest || !latest.length) return;
 

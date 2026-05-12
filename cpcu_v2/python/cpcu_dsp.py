@@ -577,24 +577,52 @@ def process_window(window_hi):
 
 def try_load_model():
     """Returns (model, scaler) or (None, None) if either is unavailable.
-    Doesn't raise -- live drain must keep working even without ML."""
+    Doesn't raise -- live drain must keep working even without ML.
+
+    Searches in order:
+      1. Legacy separate files: MODEL_PATH + SCALER_PATH (.joblib)
+      2. Any *.pkl in MODEL_DIR — expected dict with 'model' + 'scaler' keys
+    """
     try:
         import joblib
     except ImportError:
         print("[DSP] joblib not installed -- feature-only mode", flush=True)
         return None, None
 
-    if not (os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH)):
-        print(f"[DSP] {MODEL_PATH} or scaler missing -- feature-only mode",
-              flush=True)
-        return None, None
+    model               =   None
+    scaler              =   None
 
-    try:
-        model           =   joblib.load(MODEL_PATH)
-        scaler          =   joblib.load(SCALER_PATH)
-    except Exception as e:
-        print(f"[DSP] model load failed ({e}) -- feature-only mode",
-              flush=True)
+    # Path 1: legacy separate .joblib files
+    if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
+        try:
+            model       =   joblib.load(MODEL_PATH)
+            scaler      =   joblib.load(SCALER_PATH)
+            print(f"[DSP] loaded separate files: {MODEL_PATH}", flush=True)
+        except Exception as e:
+            print(f"[DSP] legacy load failed ({e}), trying .pkl", flush=True)
+            model = scaler = None
+
+    # Path 2: combined .pkl checkpoint (dict with 'model' + 'scaler')
+    if model is None:
+        import glob
+        pkl_files       =   sorted(glob.glob(os.path.join(MODEL_DIR, "*.pkl")))
+        for pkl_path in pkl_files:
+            try:
+                checkpoint  =   joblib.load(pkl_path)
+                if isinstance(checkpoint, dict) and "model" in checkpoint and "scaler" in checkpoint:
+                    model   =   checkpoint["model"]
+                    scaler  =   checkpoint["scaler"]
+                    print(f"[DSP] loaded combined .pkl: {pkl_path}", flush=True)
+                    if "feature_names" in checkpoint:
+                        print(f"[DSP]   feature_names={checkpoint['feature_names']}", flush=True)
+                    break
+                else:
+                    print(f"[DSP] {pkl_path} not a dict with model+scaler, skipping", flush=True)
+            except Exception as e:
+                print(f"[DSP] {pkl_path} load failed ({e})", flush=True)
+
+    if model is None or scaler is None:
+        print(f"[DSP] no model found in {MODEL_DIR}/ -- feature-only mode", flush=True)
         return None, None
 
     # Sanity: model must accept 12 features. If it doesn't, the team's
