@@ -73,8 +73,10 @@ const uint16_t  SERVO_MIN[]     =   {  498, 1074, 1074, 1001, 1001,  976 };
 const uint16_t  SERVO_MAX[]     =   { 2500, 1953, 1953, 2002, 2002, 1733 };
 
 const char     *CLS_NAMES[]     =   {
-    "REST",   "H.SLO",  "H.HRD",  "H.OPN",  "A.BND<",
-    "A.BND=", "A.BND>", "A.SLO",  "A.FST",  "BICEP"
+    /* Indices 0-3 must match model.classes_ order in aleynask.pkl */
+    "EXT",    "FLEX",   "HAND",   "REST",
+    /* Indices 4-9: additional labels for dataset capture (future training) */
+    "A.BND<", "A.BND=", "A.BND>", "A.SLO",  "A.FST",  "BICEP"
 };
 
 const char *PAGE_TITLES[] = {
@@ -2016,7 +2018,7 @@ void draw_page_config(int r, IPC_Context *ipc)
     draw_lv(r, g_col_r, "Classifier:",    CP_CYAN, "RandomForest (scikit-learn)");
     r++;
     draw_lv(r, 1,       "Safety thr:",    CP_CYAN, "Radio 750/1500 ms, Vbatt 2.7/3.0 V");
-    draw_lv(r, g_col_r, "Classes:",       CP_CYAN, "%d  (REST, H.SLO, H.HRD, ...)", IPC_MAX_CLASSES);
+    draw_lv(r, g_col_r, "Classes:",       CP_CYAN, "4 active (ext, flex, hand, rest)");
     r += 2;
 
     draw_hline(r - 1, 0, g_tui_w);

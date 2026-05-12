@@ -360,6 +360,8 @@ const wsURL = (location.protocol === 'https:' ? 'wss://' : 'ws://')
 let ws = null;
 let reconnectMs = 250;
 let waveStream = 'raw';
+/* Model class names — must match aleynask.pkl model.classes_ order */
+const MODEL_CLASSES = ['ext', 'flex', 'hand', 'rest'];
 let waveZoomCh = -1;  /* -1=all, 0-7=zoomed into one channel */
 
 const $ = (sel) => document.querySelector(sel);
@@ -440,7 +442,7 @@ function applyState(d) {
             const row = document.createElement('div');
             row.className = 'confbar-row';
             if(isActive) row.style.fontWeight = '600';
-            const label = isActive && d.dsp.gesture ? d.dsp.gesture : `class ${i}`;
+            const label = MODEL_CLASSES[i] || `class ${i}`;
             row.innerHTML = `
                 <span style="color:${isActive ? 'var(--good)' : 'var(--fg-muted)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}${isActive ? ' ◄' : ''}</span>
                 <div class="confbar-track">

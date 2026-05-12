@@ -251,7 +251,7 @@ GRIP_FIRM_US_DEFAULT    =   1100
 # Default servo poses per gesture, in microseconds (6 servos).
 # Gestures the team's predict.py acknowledges in its color_map (and
 # therefore the trained SVM is known to emit):
-#     "rest", "biceps_flex", "hand_flex"
+#     "rest", "ext", "flex", "hand"
 # "hand_open" is included as future-proofing for when the team retrains
 # with more classes; if the current .joblib doesn't know that class,
 # the entry simply never fires.
@@ -262,8 +262,14 @@ GRIP_FIRM_US_DEFAULT    =   1100
 # see VELOCITY_MODE.md). Any class without a velocity entry falls back
 # to GESTURE_SERVO_MAP[label] as a fixed pose, preserving legacy
 # behaviour.
+# Class names must match aleynask.pkl model.classes_:
+#   ['ext', 'flex', 'hand', 'rest']
 GESTURE_SERVO_MAP       =   {
-    "rest":         [1500, 1500, 1500, 1500, 1500, 1500],
+    "rest":         [1500, 1500, 1500, 1500, 1500, 1500],  # all neutral
+    "ext":          [1500, 1500, 1500, 1500, 1500, 1700],  # extension (open hand)
+    "flex":         [1500, 1700, 1500, 1500, 1500, 1500],  # flexion (biceps curl)
+    "hand":         [1500, 1500, 1500, 1500, 1500, 1100],  # hand close (grip)
+    # Legacy names kept as fallback if old model is loaded
     "biceps_flex":  [1500, 1700, 1500, 1500, 1500, 1500],
     "hand_flex":    [1500, 1500, 1500, 1500, 1500, 1100],
     "hand_open":    [1500, 1500, 1500, 1500, 1500, 1700],
@@ -281,8 +287,9 @@ GESTURE_SERVO_MAP       =   {
 # Loaded from runtime.json's "gesture_velocity" object on startup.
 # Format in JSON:
 #   "gesture_velocity": {
-#       "biceps_flex": [0, 200, 0, 0, 0, 0],       // close elbow
-#       "hand_flex":   [0, 0, 0, 0, 0, -200]        // close gripper
+#       "flex": [0, 200, 0, 0, 0, 0],       // biceps curl (elbow close)
+#       "ext":  [0, -200, 0, 0, 0, 0],      // arm extend (elbow open)
+#       "hand": [0, 0, 0, 0, 0, -200]       // hand close (grip)
 #   }
 # Negative values reverse direction. Zero rates effectively disable
 # velocity mode for that channel (target += 0 = unchanged).
