@@ -11,19 +11,19 @@
     "// servo_bias_us": "OPTIONAL. Per-servo gravity-sag compensation, signed us. Added to the smoothed pulse width before clamping. Default 0. Range +/- 100 us.",
     "servo_bias_us": [ 0, 0, 0, 0, 0, 0 ],
 
-    "// smooth_velocity_us_per_s": "OPTIONAL. Per-servo trapezoidal max velocity. Default 2000 us/s.",
-    "smooth_velocity_us_per_s": [ 2000, 2000, 2000, 2000, 2000, 2000 ],
+    "// smooth_velocity_us_per_s": "OPTIONAL. Per-servo trapezoidal max velocity. Default 5000 us/s.",
+    "smooth_velocity_us_per_s": [ 5000, 5000, 5000, 5000, 5000, 5000 ],
 
-    "// smooth_accel_us_per_s2": "OPTIONAL. Per-servo trapezoidal max acceleration. Default 8000 us/s^2.",
-    "smooth_accel_us_per_s2": [ 8000, 8000, 8000, 8000, 8000, 8000 ],
+    "// smooth_accel_us_per_s2": "OPTIONAL. Per-servo trapezoidal max acceleration. Default 2000 us/s^2.",
+    "smooth_accel_us_per_s2": [ 2000, 2000,2000, 2000, 2000, 2000 ],
 
     "// smooth_deadband_us": "OPTIONAL. Per-servo hold-pose deadband. 0 = disabled. Default 10 us. See JITTER_MITIGATION.md.",
-    "smooth_deadband_us": [ 10, 10, 10, 10, 10, 10 ],
+    "smooth_deadband_us": [ 0, 0, 0, 0, 0, 0 ],
 
     "// gravity_dir": "OPTIONAL. Per-servo gravity direction. -1 = gravity helps negative motion, +1 = positive, 0 = off. Default [0,0,0,0,0,0].",
     "gravity_dir": [ 0, -1, 1, 0, 0, 0 ],
     "// gravity_scale_pct": "OPTIONAL. Per-servo gravity velocity reduction (10-100%). When moving in gravity_dir, max_velocity *= scale/100. Default 100 (no reduction).",
-    "gravity_scale_pct": [ 100, 30, 30, 100, 100, 100 ],
+    "gravity_scale_pct": [ 100, 40, 30, 100, 100, 100 ],
 
     "// interp_conf_floor_pct": "OPTIONAL. SVM probability below which 'rest' weight is 1.0. Default 40.",
     "interp_conf_floor_pct": 40,
