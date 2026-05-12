@@ -545,8 +545,7 @@ def _uart_send(gesture, confidence, features_flat):
     try:
         ts_ms           =   int(time.time() * 1000)
         feats_csv       =   ",".join(f"{v:.6f}" for v in features_flat)
-        line            =   f"{ts_ms},{gesture},{confidence:.3f},{feats_csv}
-"
+        line            =   f"{ts_ms},{gesture},{confidence:.3f},{feats_csv}\n"
         _uart_serial.write(line.encode("ascii"))
     except Exception:
         pass  # non-blocking, never stall DSP
