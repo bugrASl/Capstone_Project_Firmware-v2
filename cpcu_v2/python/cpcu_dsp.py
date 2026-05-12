@@ -188,6 +188,7 @@ from cpcu_ipc_bridge import IPCBridge
 # Default [0, 1, 2] ⇒ BSAU PA0=Forearm, PA1=Biceps, PA2=Triceps.
 # If your electrodes are wired differently, edit this — wrong mapping
 # won't crash anything, you'll just get consistently-wrong gestures.
+CLASS_REST = 3
 ACTIVE_CHANNELS         =   [0, 1, 2]
 CHANNEL_LABELS          =   ['s1', 's2', 's3']      # must match training feat names
 NUM_ACTIVE_CH           =   len(ACTIVE_CHANNELS)
