@@ -512,6 +512,44 @@ def _strip_jsonc_comments(text):
     return text
 
 
+
+# ══════════════════════════════════════════════════════════════════════
+#  UART DEBUG OUTPUT  ── optional serial output to host PC
+# ══════════════════════════════════════════════════════════════════════
+# Set CPCU_UART_DEBUG=/dev/ttyAMA0 (or /dev/serial0) to enable.
+# Sends CSV lines at inference rate (~10 Hz):
+#   timestamp_ms, gesture, confidence, ch0_rms, ch1_rms, ch2_rms,
+#   ch0_var, ch1_var, ch2_var, ch0_wl, ch1_wl, ch2_wl,
+#   ch0_env, ch1_env, ch2_env
+# Connect host PC UART RX to Pi GPIO14 (TX), baud 115200.
+UART_DEBUG_PORT         =   os.environ.get("CPCU_UART_DEBUG", "")
+UART_BAUD               =   115200
+_uart_serial            =   None
+
+def _uart_init():
+    global _uart_serial
+    if not UART_DEBUG_PORT:
+        return
+    try:
+        import serial as _pyserial
+        _uart_serial    =   _pyserial.Serial(UART_DEBUG_PORT, UART_BAUD, timeout=0)
+        print(f"[DSP] UART debug → {UART_DEBUG_PORT} @ {UART_BAUD}", flush=True)
+    except Exception as e:
+        print(f"[DSP] UART debug failed: {e}", flush=True)
+        _uart_serial    =   None
+
+def _uart_send(gesture, confidence, features_flat):
+    """Send one CSV line over UART: ts,gesture,confidence,f0,f1,...,f11"""
+    if _uart_serial is None:
+        return
+    try:
+        ts_ms           =   int(time.time() * 1000)
+        feats_csv       =   ",".join(f"{v:.6f}" for v in features_flat)
+        line            =   f"{ts_ms},{gesture},{confidence:.3f},{feats_csv}
+"
+        _uart_serial.write(line.encode("ascii"))
+    except Exception:
+        pass  # non-blocking, never stall DSP
 # ══════════════════════════════════════════════════════════════════════
 #  FILTER PRIMITIVES  ── direct ports of the team's functions
 # ══════════════════════════════════════════════════════════════════════
@@ -557,23 +595,25 @@ def extract_features(clean, env):
 
 def process_window(window_hi):
     """One full pipeline pass on a 400-sample @ 2 kHz window.
-    Decimates → DC-removes → BP → notch → envelope → 4 features.
 
-    Filter band note: the bandpass arguments below (20.0, 450.0) match
-    predict.py byte-for-byte. scipy auto-clamps the high cutoff to
-    Nyquist*0.95 = 95 Hz at Fs=200, so the actual passband is 20-95 Hz.
-    Training (feature_ex.py) used 15-90 Hz. The two filters produce
-    features that match within ~0.2% RMS on real EMG; see the header
-    docstring's TRAINING-VS-LIVE FILTER MISMATCH section for the full
-    explanation."""
+    Filter chain matches the team's 1000 Hz predict.py exactly:
+      DC removal → bandpass 20-450 Hz → notch 50/100/200 Hz → decimate → envelope
+
+    Filters are applied at INPUT_FS_HZ (2000) BEFORE decimation so the
+    full 20-450 Hz bandpass range is preserved (not clamped at Nyquist).
+    The 100 Hz and 200 Hz harmonic notches match the team's chained
+    notch_filter calls."""
+    # DC offset removal at full rate (matches predict.py: data - np.mean)
+    centered            =   window_hi - np.mean(window_hi)
+    # Bandpass 20-450 Hz at 2000 Hz (full range, no Nyquist cap)
+    bp                  =   butter_bandpass(centered, 20.0, 450.0, INPUT_FS_HZ)
+    # Chained notch: 50 Hz + harmonics at 100, 200 Hz (matches predict.py)
+    n50                 =   notch_filter(bp,  50.0, INPUT_FS_HZ)
+    n100                =   notch_filter(n50, 100.0, INPUT_FS_HZ)
+    cleaned_hi          =   notch_filter(n100, 200.0, INPUT_FS_HZ)
     # Anti-alias + downsample to 200 Hz (40 samples)
-    window_lo           =   decimate(window_hi, DECIMATE_FACTOR, zero_phase=True)
-    # DC offset removal (matches predict.py: data - np.mean)
-    centered            =   window_lo - np.mean(window_lo)
-    # Bandpass + notch (the 450 Hz cap auto-clamps to 95 Hz at Fs=200)
-    bp                  =   butter_bandpass(centered, 20.0, 450.0, TARGET_FS_HZ)
-    cleaned             =   notch_filter(bp, 50.0, TARGET_FS_HZ)
-    # Envelope on |cleaned|
+    cleaned             =   decimate(cleaned_hi, DECIMATE_FACTOR, zero_phase=True)
+    # Envelope on |cleaned| at 200 Hz
     env                 =   envelope(cleaned, TARGET_FS_HZ, cutoff=3.0)
     return cleaned, env, extract_features(cleaned, env)
 
