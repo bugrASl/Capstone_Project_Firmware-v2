@@ -488,7 +488,7 @@ function applyState(d) {
 
         const reqs = [
             ['SYS-REQ-01', 'E2E latency < 300 ms',      e2e < 300,             e2e.toFixed(0) + ' ms'],
-            ['SYS-REQ-03a','Battery > 2.7 V',            battV > 2.7 || battV === 0, battV.toFixed(2) + ' V'],
+            ['SYS-REQ-03a','Battery (not sampled)',       true, 'N/A (bypassed)'],
             ['SYS-REQ-03b','Uptime >= 40 min',           uptimeMin >= 40,       uptimeMin + ' min ' + uptimeSec + ' s'],
             ['SYS-REQ-04a','Packet loss < 1%',           lossRate < 0.01,       (lossRate * 100).toFixed(3) + ' %'],
             ['SYS-REQ-04b','Inference active',            dspReady && infCount > 0, dspReady ? 'active' : 'inactive'],

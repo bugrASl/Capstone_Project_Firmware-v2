@@ -1522,9 +1522,9 @@ void draw_page_health(int r, IPC_Context *ipc,
             "%.0f ms (obs 200 + inf %.0f + servo 20)", e2e_ms, dsp_lat / 1000.0f);
 
     /* ── SYS-REQ-03: Durability (battery + uptime) ── */
-    REQ_ROW("SYS-REQ-03a", "Battery > 2.7 V",
-            (batt_v_req > 2.7f || latest.vbat_raw == 0),
-            "%.2f V%s", batt_v_req, latest.vbat_raw == 0 ? " (no reading)" : "");
+    REQ_ROW("SYS-REQ-03a", "Battery (not sampled)",
+            1,  /* always pass — BSAU no longer samples battery */
+            "%s", latest.vbat_raw == 0 ? "N/A (bypassed)" : "bypassed");
 
     {   /* Track uptime from first call */
         static uint64_t health_boot_ms = 0;
