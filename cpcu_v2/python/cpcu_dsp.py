@@ -294,8 +294,18 @@ GESTURE_SERVO_MAP       =   {
 # Negative values reverse direction. Zero rates effectively disable
 # velocity mode for that channel (target += 0 = unchanged).
 GESTURE_BEHAVIOR        =   {
-    "rest":         {"mode": "freeze", "rate": [0]*NUM_SERVOS},
-    # Other classes populated at runtime from JSON; default freeze.
+    # rest = hold position (integrator frozen)
+    "rest":         {"mode": "freeze",    "rate": [0]*NUM_SERVOS},
+    # ext = open hand / extend arm (S5 grip opens, S1 elbow extends)
+    "ext":          {"mode": "velocity",  "rate": [0, -200, 0, 0, 0, 200]},
+    # flex = curl biceps (S1 elbow closes)
+    "flex":         {"mode": "velocity",  "rate": [0, 200, 0, 0, 0, 0]},
+    # hand = close grip (S5 gripper closes)
+    "hand":         {"mode": "velocity",  "rate": [0, 0, 0, 0, 0, -200]},
+    # Legacy names (if old model loaded)
+    "biceps_flex":  {"mode": "velocity",  "rate": [0, 200, 0, 0, 0, 0]},
+    "hand_flex":    {"mode": "velocity",  "rate": [0, 0, 0, 0, 0, -200]},
+    "hand_open":    {"mode": "velocity",  "rate": [0, -200, 0, 0, 0, 200]},
 }
 
 # Confidence interpolation for velocity scaling. When the SVM's
